@@ -1,0 +1,83 @@
+// Own MongoDB for the internal pipeline. Mirrors the shape of @ingest/contracts so the boundary stays honest.
+// Generated client is git-ignored (src/infrastructure/database/generated). Run `npm run prisma:generate`.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+enum DocumentStatus {
+  uploaded
+  queued
+  extracting
+  needs_review
+  approved
+  published
+  failed
+}
+
+type SourcePath {
+  module  String
+  chapter String
+  section String
+}
+
+model Document {
+  id            String         @id @default(auto()) @map("_id") @db.ObjectId
+  driveFileId   String         @unique
+  fileName      String
+  path          SourcePath
+  status        DocumentStatus @default(uploaded)
+  questionCount Int            @default(0)
+  questions     Question[]
+  jobs          ExtractionJob[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+type QuestionOption {
+  label     String
+  body      String
+  isCorrect Boolean
+}
+
+type QuestionImage {
+  driveFileId String
+  alt         String
+}
+
+type SourceRegion {
+  page Int
+  bbox Float[]
+}
+
+model Question {
+  id           String           @id @default(auto()) @map("_id") @db.ObjectId
+  document     Document         @relation(fields: [documentId], references: [id])
+  documentId   String           @db.ObjectId
+  path         SourcePath
+  stem         String
+  options      QuestionOption[]
+  answer       String
+  images       QuestionImage[]
+  sourceRegion SourceRegion
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+}
+
+model ExtractionJob {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  document      Document @relation(fields: [documentId], references: [id])
+  documentId    String   @db.ObjectId
+  status        String   @default("queued")
+  model         String
+  questionsFound Int     @default(0)
+  error         String?
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  createdAt     DateTime @default(now())
+}
