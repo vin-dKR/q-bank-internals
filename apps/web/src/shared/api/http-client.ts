@@ -30,7 +30,10 @@ export async function request<S extends z.ZodTypeAny>(
   options: RequestOptions<S>,
 ): Promise<z.infer<S>> {
   const init: RequestInit = { method: options.method ?? 'GET' };
-  if (options.body !== undefined) {
+  if (options.body instanceof FormData) {
+    // Let the browser set the multipart boundary; do NOT set content-type ourselves.
+    init.body = options.body;
+  } else if (options.body !== undefined) {
     init.headers = { 'content-type': 'application/json' };
     init.body = JSON.stringify(options.body);
   }

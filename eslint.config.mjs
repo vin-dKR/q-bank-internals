@@ -10,6 +10,7 @@ export default tseslint.config(
       '**/build/**',
       '**/generated/**',
       '**/node_modules/**',
+      '**/scripts/**',
       '*.config.mjs',
       '*.config.ts',
     ],

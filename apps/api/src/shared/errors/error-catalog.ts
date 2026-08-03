@@ -24,6 +24,27 @@ export const errors = {
   driveUnavailable: (): AppError =>
     new AppError('DRIVE_UNAVAILABLE', 502, 'Google Drive could not be reached.'),
 
+  driveQuotaExceeded: (): AppError =>
+    new AppError(
+      'DRIVE_QUOTA_EXCEEDED',
+      507,
+      'The Drive service account has no storage quota, so it cannot upload files. ' +
+        'Point DRIVE_ROOT_FOLDER_ID at a Shared Drive, or switch to OAuth user credentials.',
+    ),
+
+  driveWriteFailed: (reason: string): AppError =>
+    new AppError('DRIVE_WRITE_FAILED', 502, `Drive upload failed: ${reason}`),
+
+  uploadMissingFile: (): AppError =>
+    new AppError('UPLOAD_MISSING_FILE', 400, 'No PDF file was included in the upload.'),
+
+  uploadTooLarge: (maxBytes: number): AppError =>
+    new AppError(
+      'UPLOAD_TOO_LARGE',
+      413,
+      `The uploaded PDF exceeds the ${String(maxBytes)}-byte limit.`,
+    ),
+
   extractionFailed: (reason: string): AppError =>
     new AppError('EXTRACTION_FAILED', 502, `The vision model failed: ${reason}`),
 

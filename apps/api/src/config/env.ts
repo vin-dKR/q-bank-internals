@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { z } from 'zod';
 
 /**
@@ -19,6 +20,12 @@ const EnvSchema = z.object({
   // that needs them is actually called without configuration.
   GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(),
   DRIVE_ROOT_FOLDER_ID: z.string().optional(),
+
+  // OAuth2 "act as a real user" credentials. Preferred for personal Gmail accounts: uploaded files
+  // are owned by the user (who has storage quota), unlike a service account (which has none).
+  GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
+  GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_OAUTH_REFRESH_TOKEN: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   EXTRACTION_MODEL: z.string().default('gemini-2.5-pro'),

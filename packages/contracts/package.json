@@ -6,6 +6,8 @@
   "description": "Single source of truth for the api ⇄ web boundary: zod schemas + inferred DTO types.",
   "exports": {
     ".": "./src/index.ts",
+    "./drive": "./src/drive/index.ts",
+    "./ingestion": "./src/ingestion/index.ts",
     "./documents": "./src/documents/index.ts",
     "./questions": "./src/questions/index.ts",
     "./extraction": "./src/extraction/index.ts"
