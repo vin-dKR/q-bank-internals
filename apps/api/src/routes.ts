@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { createDocumentsRouter } from './modules/documents/index.js';
+import { createSessionsRouter } from './modules/sessions/index.js';
 import { createExtractionRouter } from './modules/extraction/index.js';
 import { createDriveRouter } from './modules/drive/index.js';
 import { createIngestionRouter } from './modules/ingestion/index.js';
@@ -14,6 +15,7 @@ export function createApiRouter(container: Container): Router {
   });
 
   router.use('/documents', createDocumentsRouter(container.documentsService));
+  router.use('/sessions', createSessionsRouter(container.sessionsService));
   router.use('/extraction', createExtractionRouter(container.extractionService));
   router.use('/drive', createDriveRouter(container.driveService));
   router.use('/ingestion', createIngestionRouter(container.ingestionService));

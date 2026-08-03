@@ -16,4 +16,7 @@ export interface DriveStorage {
 
   /** Upload PDF bytes as a new file inside the given folder. */
   uploadPdf(input: { name: string; bytes: Buffer; folderId: string }): Promise<DriveFile>;
+
+  /** Download a file's raw bytes by id — how the extraction worker fetches a Drive PDF. */
+  downloadPdf(fileId: string): Promise<Buffer>;
 }

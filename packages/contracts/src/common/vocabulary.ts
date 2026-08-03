@@ -13,6 +13,10 @@ export type Exam = z.infer<typeof ExamSchema>;
 export const ModuleSchema = z.enum(['Allen', 'Motion', 'Resonance', 'PW', 'Unacademy']);
 export type Module = z.infer<typeof ModuleSchema>;
 
+/** Whether a chapter PDF holds the questions, the answers, or the worked solutions. */
+export const ChapterKindSchema = z.enum(['question', 'answer', 'solution']);
+export type ChapterKind = z.infer<typeof ChapterKindSchema>;
+
 /** The commonly-used question categories, offered as first-class dropdown options. */
 export const KNOWN_QUESTION_TYPES = [
   'single_correct',

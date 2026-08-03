@@ -15,6 +15,7 @@
     "dev": "npm run dev --workspaces --if-present",
     "dev:api": "npm run dev --workspace @ingest/api",
     "dev:web": "npm run dev --workspace @ingest/web",
+    "dev:worker": "npm run worker --workspace @ingest/api",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "eslint .",

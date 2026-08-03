@@ -17,8 +17,8 @@ export function createIngestionController(service: IngestionService): {
       const body = req.body as { metadata?: unknown };
       const raw: unknown = typeof body.metadata === 'string' ? JSON.parse(body.metadata) : body.metadata;
       const metadata = parseOrThrow(ChapterUploadMetadataSchema, raw);
-      const driveFile = await service.uploadChapter({ metadata, bytes: req.file.buffer });
-      ok(res, driveFile, 201);
+      const result = await service.uploadChapter({ metadata, bytes: req.file.buffer });
+      ok(res, result, 201);
     }),
   };
 }

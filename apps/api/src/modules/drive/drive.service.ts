@@ -29,6 +29,11 @@ export class DriveService {
     return this.storage.uploadPdf(input);
   }
 
+  /** Fetch a Drive PDF's bytes by id — used by the extraction worker to rasterize it. */
+  downloadPdf(fileId: string): Promise<Buffer> {
+    return this.storage.downloadPdf(fileId);
+  }
+
   /**
    * Return the folder named `name` under `parentId`, creating it if it does not exist. The
    * idempotent building block the ingestion service chains to ensure a nested chapter path.
