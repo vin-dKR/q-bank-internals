@@ -11,6 +11,9 @@ export const errors = {
   documentNotFound: (id: string): AppError =>
     new AppError('DOCUMENT_NOT_FOUND', 404, `No document with id "${id}".`),
 
+  sessionNotFound: (id: string): AppError =>
+    new AppError('SESSION_NOT_FOUND', 404, `No session with id "${id}".`),
+
   documentAlreadyRegistered: (driveFileId: string): AppError =>
     new AppError(
       'DOCUMENT_ALREADY_REGISTERED',

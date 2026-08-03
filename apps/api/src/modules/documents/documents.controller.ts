@@ -1,5 +1,5 @@
 import type { RequestHandler } from 'express';
-import { PaginationQuerySchema, RegisterDocumentSchema } from '@ingest/contracts';
+import { DocumentListQuerySchema, RegisterDocumentSchema } from '@ingest/contracts';
 import { asyncHandler } from '../../shared/http/async-handler.js';
 import { ok } from '../../shared/http/api-response.js';
 import { parseOrThrow } from '../../shared/http/parse.js';
@@ -17,7 +17,7 @@ export function createDocumentsController(service: DocumentsService): {
 } {
   return {
     list: asyncHandler(async (req, res) => {
-      const query = parseOrThrow(PaginationQuerySchema, req.query);
+      const query = parseOrThrow(DocumentListQuerySchema, req.query);
       ok(res, await service.list(query));
     }),
 

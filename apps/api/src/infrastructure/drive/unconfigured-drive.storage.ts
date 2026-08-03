@@ -22,4 +22,8 @@ export class UnconfiguredDriveStorage implements DriveStorage {
   uploadPdf(_input: { name: string; bytes: Buffer; folderId: string }): Promise<DriveFile> {
     return Promise.reject(errors.driveUnavailable());
   }
+
+  downloadPdf(_fileId: string): Promise<Buffer> {
+    return Promise.reject(errors.driveUnavailable());
+  }
 }

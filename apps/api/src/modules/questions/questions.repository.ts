@@ -1,0 +1,22 @@
+import type { QuestionImage, QuestionOption, SourcePath } from '@ingest/contracts';
+
+/** A question draft ready to persist — the extraction worker maps model output into this shape. */
+export type NewQuestion = {
+  documentId: string;
+  path: SourcePath;
+  stem: string;
+  options: QuestionOption[];
+  answer: string;
+  images: QuestionImage[];
+  sourceRegion: { page: number; bbox: [number, number, number, number] };
+};
+
+/**
+ * Persistence PORT for extracted questions (§3). Deliberately small: the worker re-extracts a whole
+ * document at once, so it replaces that document's questions wholesale — which also makes re-running
+ * a document idempotent. Implemented in-memory (dev) and via Prisma (prod).
+ */
+export interface QuestionRepository {
+  /** Replace all questions for a document with the given drafts; returns how many were written. */
+  replaceForDocument(documentId: string, questions: NewQuestion[]): Promise<number>;
+}

@@ -8,12 +8,17 @@ import type { ExtractionService } from './extraction.service.js';
 
 export function createExtractionController(service: ExtractionService): {
   start: RequestHandler;
+  startSession: RequestHandler;
   getJob: RequestHandler;
 } {
   return {
     start: asyncHandler(async (req, res) => {
       const body = parseOrThrow(StartExtractionSchema, req.body);
-      ok(res, await service.start(body.documentId), 202);
+      ok(res, await service.enqueue(body.documentId), 202);
+    }),
+
+    startSession: asyncHandler(async (req, res) => {
+      ok(res, await service.enqueueSession(requiredParam(req, 'sessionId')), 202);
     }),
 
     getJob: asyncHandler(async (req, res) => {

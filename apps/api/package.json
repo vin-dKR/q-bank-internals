@@ -7,8 +7,10 @@
   "main": "dist/main.js",
   "scripts": {
     "dev": "tsx watch src/main.ts",
+    "worker": "tsx watch src/worker.ts",
     "build": "tsc",
     "start": "node dist/main.js",
+    "start:worker": "node dist/worker.js",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push"
@@ -16,12 +18,16 @@
   "dependencies": {
     "@ingest/contracts": "*",
     "@prisma/client": "^6.2.0",
+    "bullmq": "^5.81.3",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.21.2",
     "googleapis": "^144.0.0",
     "helmet": "^8.0.0",
+    "ioredis": "^5.11.1",
     "multer": "^2.0.1",
+    "openai": "^4.104.0",
+    "pdf-to-img": "^4.5.0",
     "pino": "^9.5.0",
     "pino-http": "^10.3.0",
     "pino-pretty": "^13.1.3",

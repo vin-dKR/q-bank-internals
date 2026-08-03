@@ -14,9 +14,11 @@ enum DocumentStatus {
   uploaded
   queued
   extracting
+  extracted
   needs_review
   approved
   published
+  completed
   failed
 }
 
@@ -26,17 +28,46 @@ type SourcePath {
   section String
 }
 
+// The page span (1-based, inclusive) a section occupies within its source PDF.
+type PageRange {
+  from Int
+  to   Int
+}
+
+// One operator's Phase-1 upload run (e.g. a whole module). The durable, resumable unit: Phase 1
+// fills it fast; Phase 2 drains it later, manually or automatically when autoRun is set.
+// Status + document/extracted counts are derived from child documents at read time, not stored,
+// so they can never drift from the documents they summarise.
+model Session {
+  id        String     @id @default(auto()) @map("_id") @db.ObjectId
+  label     String
+  exam      String
+  subject   String
+  module    String
+  autoRun   Boolean    @default(false)
+  documents Document[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
 model Document {
-  id            String         @id @default(auto()) @map("_id") @db.ObjectId
-  driveFileId   String         @unique
+  id            String          @id @default(auto()) @map("_id") @db.ObjectId
+  session       Session?        @relation(fields: [sessionId], references: [id])
+  sessionId     String?         @db.ObjectId
+  driveFileId   String          @unique
   fileName      String
   path          SourcePath
-  status        DocumentStatus @default(uploaded)
-  questionCount Int            @default(0)
+  kind          String          @default("question")
+  sectionName   String?
+  questionType  String?
+  pageRange     PageRange?
+  status        DocumentStatus  @default(uploaded)
+  questionCount Int             @default(0)
+  extractedAt   DateTime?
   questions     Question[]
   jobs          ExtractionJob[]
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
 }
 
 type QuestionOption {

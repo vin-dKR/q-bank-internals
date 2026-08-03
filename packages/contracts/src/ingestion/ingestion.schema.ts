@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { ExamSchema, ModuleSchema, QuestionTypeSchema } from '../common/vocabulary.js';
+import { ChapterKindSchema, ExamSchema, ModuleSchema, QuestionTypeSchema } from '../common/vocabulary.js';
 import { DriveFileSchema } from '../drive/drive.schema.js';
+import { DocumentSchema } from '../documents/document.schema.js';
 
 /**
  * The nested-folder trail a cut chapter is filed under in Drive: exam → subject → module → chapter.
@@ -14,21 +15,24 @@ export const ChapterPathSchema = z.object({
 });
 export type ChapterPath = z.infer<typeof ChapterPathSchema>;
 
-/** Whether an uploaded chapter PDF holds the questions or the answers. */
-export const ChapterKindSchema = z.enum(['question', 'answer']);
-export type ChapterKind = z.infer<typeof ChapterKindSchema>;
-
 /**
  * Metadata that travels as a JSON form-field alongside the multipart PDF upload. The PDF bytes are
  * built in the browser (cut + reflowed); this describes where it belongs and what it is.
+ *
+ * `sessionId` ties the upload to the durable Phase-1 session it belongs to, so the backend can
+ * persist a Document record the moment the bytes land (see the ingestion service).
  */
 export const ChapterUploadMetadataSchema = ChapterPathSchema.extend({
+  sessionId: z.string().min(1),
   sectionName: z.string().min(1),
   questionType: QuestionTypeSchema,
   kind: ChapterKindSchema,
 });
 export type ChapterUploadMetadata = z.infer<typeof ChapterUploadMetadataSchema>;
 
-/** The created Drive file returned after a successful chapter upload. */
-export const UploadChapterResponseSchema = DriveFileSchema;
+/** What a successful chapter upload returns: the durable Document row plus the created Drive file. */
+export const UploadChapterResponseSchema = z.object({
+  document: DocumentSchema,
+  driveFile: DriveFileSchema,
+});
 export type UploadChapterResponse = z.infer<typeof UploadChapterResponseSchema>;

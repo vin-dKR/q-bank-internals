@@ -17,7 +17,8 @@ standalone helpers (chapter splitter, page cutter, extractor, question editor).
 | API boundary | zod schemas in `packages/contracts` (one source of truth for both sides) |
 | Persistence | Prisma + MongoDB (prod) · in-memory adapter (dev, default) |
 | Server state | TanStack Query |
-| Heavy jobs | BullMQ + Redis worker (planned — see `apps/api/src/infrastructure/queue`) |
+| Heavy jobs | BullMQ + Redis worker (`npm run worker`) · in-process queue (dev, default) |
+| AI extraction | OpenAI `gpt-4o` vision in the worker (ported from the standalone PDF Extractor) |
 
 ## Layout
 

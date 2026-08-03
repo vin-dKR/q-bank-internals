@@ -27,9 +27,11 @@ const EnvSchema = z.object({
   GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
   GOOGLE_OAUTH_REFRESH_TOKEN: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),
+  // Vision model + key for the extraction worker (ported from the Python PDF Extractor).
   OPENAI_API_KEY: z.string().optional(),
-  EXTRACTION_MODEL: z.string().default('gemini-2.5-pro'),
+  EXTRACTION_MODEL: z.string().default('gpt-4o'),
 
+  // BullMQ (Redis) connection for the extraction queue. Absent → in-process queue (dev, no Redis).
   REDIS_URL: z.string().optional(),
 });
 

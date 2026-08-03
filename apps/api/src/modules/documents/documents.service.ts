@@ -1,4 +1,4 @@
-import type { Document, PaginationQuery, RegisterDocument } from '@ingest/contracts';
+import type { Document, DocumentListQuery, RegisterDocument } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from './documents.repository.js';
 
@@ -11,7 +11,8 @@ type Paginated<T> = { items: T[]; page: number; pageSize: number; total: number 
 export class DocumentsService {
   constructor(private readonly documents: DocumentRepository) {}
 
-  async list(query: PaginationQuery): Promise<Paginated<Document>> {
+  /** List documents, optionally narrowed by session and/or status — powers the operator filter. */
+  async list(query: DocumentListQuery): Promise<Paginated<Document>> {
     const { items, total } = await this.documents.list(query);
     return { items, total, page: query.page, pageSize: query.pageSize };
   }
@@ -25,6 +26,15 @@ export class DocumentsService {
   async register(input: RegisterDocument): Promise<Document> {
     const existing = await this.documents.findByDriveFileId(input.driveFileId);
     if (existing) throw errors.documentAlreadyRegistered(input.driveFileId);
-    return this.documents.create(input);
+    return this.documents.create({
+      sessionId: input.sessionId ?? null,
+      driveFileId: input.driveFileId,
+      fileName: input.fileName,
+      path: input.path,
+      kind: input.kind,
+      sectionName: input.sectionName ?? null,
+      questionType: input.questionType ?? null,
+      pageRange: input.pageRange ?? null,
+    });
   }
 }

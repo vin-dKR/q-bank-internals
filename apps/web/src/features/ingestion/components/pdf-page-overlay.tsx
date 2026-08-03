@@ -14,7 +14,11 @@ type PdfPageOverlayProps = {
   onToggleTag: (chapterId: string, sliceId: string) => void;
 };
 
-const KIND_LABEL: Record<ChapterKind, string> = { question: 'Question', answer: 'Answer' };
+const KIND_LABEL: Record<ChapterKind, string> = {
+  question: 'Question',
+  answer: 'Answer',
+  solution: 'Solution',
+};
 
 /**
  * Interactive layer over a rendered page. Shows every cut slice as a colour-coded band you can tag

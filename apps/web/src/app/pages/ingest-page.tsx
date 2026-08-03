@@ -11,6 +11,8 @@ import {
   useSplitPoints,
   useUploadChapter,
 } from '../../features/ingestion/index.js';
+import { SessionPicker } from '../../features/sessions/index.js';
+import { PageHeader } from '../../shared/ui/index.js';
 
 const DEFAULT_WIDTH = 640;
 const MIN_WIDTH = 320;
@@ -26,6 +28,7 @@ function errorMessage(error: unknown): string {
  * chapter's question.pdf + answer.pdf into its Drive folder (exam → subject → module → chapter).
  */
 export function IngestPage(): JSX.Element {
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [pdfBytes, setPdfBytes] = useState<ArrayBuffer | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [numPages, setNumPages] = useState(0);
@@ -76,7 +79,7 @@ export function IngestPage(): JSX.Element {
   }, [pdfBytes, undo, redo]);
 
   const handleUploadAll = async (): Promise<void> => {
-    if (!pdfBytes) return;
+    if (!pdfBytes || !sessionId) return;
     setUploading(true);
     const next: Record<string, string> = {};
 
@@ -110,6 +113,7 @@ export function IngestPage(): JSX.Element {
       }
 
       const base: Omit<ChapterUploadMetadata, 'kind'> = {
+        sessionId,
         exam: meta.exam,
         subject: meta.subject.trim(),
         module: meta.module,
@@ -127,11 +131,11 @@ export function IngestPage(): JSX.Element {
       for (const part of parts) {
         if (!part.bytes) continue;
         try {
-          const file = await upload.mutateAsync({
+          const result = await upload.mutateAsync({
             pdfBytes: part.bytes,
             metadata: { ...base, kind: part.kind },
           });
-          done.push(`✓ ${part.kind} → ${file.name}`);
+          done.push(`✓ ${part.kind} → ${result.driveFile.name} [${result.document.status}]`);
         } catch (error) {
           done.push(`✗ ${part.kind} failed: ${errorMessage(error)}`);
         }
@@ -148,24 +152,25 @@ export function IngestPage(): JSX.Element {
   };
 
   return (
-    <section className="stack">
-      <h1>Cut &amp; upload chapters</h1>
-      <p className="muted">
-        Upload a multi-chapter PDF, left-click a page to add a horizontal cut, group pages into
-        chapters, tag each slice as question or answer, then upload to Drive.
-      </p>
-
-      <DrivePathExplorer />
-
-      <PdfUploader
-        fileName={fileName}
-        onLoad={(bytes, name) => {
-          reset();
-          setPdfBytes(bytes);
-          setFileName(name);
-        }}
-        onClear={reset}
+    <section className="page">
+      <PageHeader
+        title="Cut & upload"
+        subtitle="Upload a multi-chapter PDF, cut pages, tag slices as question or answer, then file each chapter into its session and Drive folder."
       />
+
+      <div className="card">
+        <SessionPicker value={sessionId} onChange={setSessionId} />
+        <DrivePathExplorer />
+        <PdfUploader
+          fileName={fileName}
+          onLoad={(bytes, name) => {
+            reset();
+            setPdfBytes(bytes);
+            setFileName(name);
+          }}
+          onClear={reset}
+        />
+      </div>
 
       {pdfBytes ? (
         <div className="cutter-layout">
@@ -203,14 +208,19 @@ export function IngestPage(): JSX.Element {
             />
 
             {groups.length > 0 ? (
-              <button
-                type="button"
-                className="btn btn--primary btn--block"
-                disabled={uploading}
-                onClick={() => { void handleUploadAll(); }}
-              >
-                {uploading ? 'Uploading…' : 'Cut & Upload all'}
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="btn btn--primary btn--block"
+                  disabled={uploading || !sessionId}
+                  onClick={() => { void handleUploadAll(); }}
+                >
+                  {uploading ? 'Uploading…' : 'Cut & Upload all'}
+                </button>
+                {!sessionId ? (
+                  <p className="muted">Select or create a session above before uploading.</p>
+                ) : null}
+              </>
             ) : null}
 
             {Object.keys(results).length > 0 ? (

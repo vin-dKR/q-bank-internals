@@ -75,6 +75,18 @@ export class GoogleDriveStorage implements DriveStorage {
       throw driveError(error);
     }
   }
+
+  async downloadPdf(fileId: string): Promise<Buffer> {
+    try {
+      const response = await this.drive.files.get(
+        { fileId, alt: 'media', supportsAllDrives: true },
+        { responseType: 'arraybuffer' },
+      );
+      return Buffer.from(response.data as ArrayBuffer);
+    } catch (error) {
+      throw driveError(error);
+    }
+  }
 }
 
 function toDriveFile(file: drive_v3.Schema$File): DriveFile {

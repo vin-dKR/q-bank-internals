@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { Document, DocumentStatus, PaginationQuery } from '@ingest/contracts';
-import type { DocumentRepository } from '../../../modules/documents/index.js';
+import type { Document, DocumentListQuery, DocumentStatus } from '@ingest/contracts';
+import type { CreateDocumentInput, DocumentRepository } from '../../../modules/documents/index.js';
 
 /**
  * Dev/test adapter for {@link DocumentRepository}. Keeps documents in a Map so the app runs with no
@@ -21,25 +21,44 @@ export class InMemoryDocumentRepository implements DocumentRepository {
     return Promise.resolve(null);
   }
 
-  list(query: PaginationQuery): Promise<{ items: Document[]; total: number }> {
-    const all = [...this.store.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  list(query: DocumentListQuery): Promise<{ items: Document[]; total: number }> {
+    const filtered = [...this.store.values()]
+      .filter((doc) => (query.sessionId ? doc.sessionId === query.sessionId : true))
+      .filter((doc) => (query.status ? query.status.includes(doc.status) : true))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const start = (query.page - 1) * query.pageSize;
-    return Promise.resolve({ items: all.slice(start, start + query.pageSize), total: all.length });
+    return Promise.resolve({
+      items: filtered.slice(start, start + query.pageSize),
+      total: filtered.length,
+    });
   }
 
-  create(input: {
-    driveFileId: string;
-    fileName: string;
-    path: Document['path'];
-  }): Promise<Document> {
+  listStatusesBySession(sessionId: string): Promise<DocumentStatus[]> {
+    const statuses = [...this.store.values()]
+      .filter((doc) => doc.sessionId === sessionId)
+      .map((doc) => doc.status);
+    return Promise.resolve(statuses);
+  }
+
+  listBySession(sessionId: string): Promise<Document[]> {
+    return Promise.resolve([...this.store.values()].filter((doc) => doc.sessionId === sessionId));
+  }
+
+  create(input: CreateDocumentInput): Promise<Document> {
     const now = new Date().toISOString();
     const document: Document = {
       id: randomUUID(),
+      sessionId: input.sessionId,
       driveFileId: input.driveFileId,
       fileName: input.fileName,
       path: input.path,
+      kind: input.kind,
+      sectionName: input.sectionName,
+      questionType: input.questionType,
+      pageRange: input.pageRange,
       status: 'uploaded',
       questionCount: 0,
+      extractedAt: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -51,6 +70,21 @@ export class InMemoryDocumentRepository implements DocumentRepository {
     const existing = this.store.get(id);
     if (!existing) throw new Error(`Document ${id} vanished from the in-memory store.`);
     const updated: Document = { ...existing, status, updatedAt: new Date().toISOString() };
+    this.store.set(id, updated);
+    return Promise.resolve(updated);
+  }
+
+  recordExtraction(id: string, input: { questionCount: number }): Promise<Document> {
+    const existing = this.store.get(id);
+    if (!existing) throw new Error(`Document ${id} vanished from the in-memory store.`);
+    const now = new Date().toISOString();
+    const updated: Document = {
+      ...existing,
+      status: 'extracted',
+      questionCount: input.questionCount,
+      extractedAt: now,
+      updatedAt: now,
+    };
     this.store.set(id, updated);
     return Promise.resolve(updated);
   }

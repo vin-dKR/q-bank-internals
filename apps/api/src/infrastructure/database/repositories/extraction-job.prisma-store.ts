@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import type { ExtractionJob } from '@ingest/contracts';
-import type { ExtractionJobStore } from '../../../modules/extraction/index.js';
+import type { ExtractionJobPatch, ExtractionJobStore } from '../../../modules/extraction/index.js';
 
 type JobRow = {
   id: string;
@@ -40,5 +40,23 @@ export class PrismaExtractionJobStore implements ExtractionJobStore {
   async findById(id: string): Promise<ExtractionJob | null> {
     const row = await this.prisma.extractionJob.findUnique({ where: { id } });
     return row ? toJob(row) : null;
+  }
+
+  async update(id: string, patch: ExtractionJobPatch): Promise<ExtractionJob> {
+    const row = await this.prisma.extractionJob.update({
+      where: { id },
+      data: {
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.questionsFound !== undefined ? { questionsFound: patch.questionsFound } : {}),
+        ...(patch.error !== undefined ? { error: patch.error } : {}),
+        ...(patch.startedAt !== undefined
+          ? { startedAt: patch.startedAt === null ? null : new Date(patch.startedAt) }
+          : {}),
+        ...(patch.finishedAt !== undefined
+          ? { finishedAt: patch.finishedAt === null ? null : new Date(patch.finishedAt) }
+          : {}),
+      },
+    });
+    return toJob(row);
   }
 }
