@@ -42,6 +42,10 @@ export class PrismaExtractionJobStore implements ExtractionJobStore {
     return row ? toJob(row) : null;
   }
 
+  async deleteByDocument(documentId: string): Promise<void> {
+    await this.prisma.extractionJob.deleteMany({ where: { documentId } });
+  }
+
   async update(id: string, patch: ExtractionJobPatch): Promise<ExtractionJob> {
     const row = await this.prisma.extractionJob.update({
       where: { id },

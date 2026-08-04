@@ -1,181 +1,87 @@
 import { type JSX, useState } from 'react';
-import type { DocumentStatus } from '@ingest/contracts';
-import { DocumentStatusSchema } from '@ingest/contracts';
-import {
-  useRunSessionExtraction,
-  useSessions,
-  useSetAutoRun,
-} from '../../features/sessions/index.js';
-import { useDocuments } from '../../features/documents/index.js';
+import { Link } from 'react-router-dom';
+import type { SessionStatus } from '@ingest/contracts';
+import { SessionStatusSchema } from '@ingest/contracts';
+import { useDeleteSession, useSessions } from '../../features/sessions/index.js';
 import { PageHeader, StatusBadge } from '../../shared/ui/index.js';
 
-type StatusFilter = DocumentStatus | 'all';
+type StatusFilter = SessionStatus | 'all';
 
-/** Statuses that mean work is still in flight — while any exist, the table polls for live progress. */
-const ACTIVE_STATUSES = new Set<DocumentStatus>(['queued', 'extracting']);
-
-/**
- * Phase-2 console: pick a session, see its summary, run extraction, and filter its files by status
- * so an operator knows exactly what is pending, extracting, extracted, or done — and what not to redo.
- */
+/** Sessions index: a filterable card per upload run, opening its Phase-2 workspace. */
 export function SessionsPage(): JSX.Element {
-  const sessions = useSessions();
-  const setAutoRun = useSetAutoRun();
-  const runExtraction = useRunSessionExtraction();
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [status, setStatus] = useState<StatusFilter>('all');
-
-  const documents = useDocuments(
-    sessionId ? (status === 'all' ? { sessionId } : { sessionId, status: [status] }) : {},
-  );
-
-  const selected = sessions.data?.items.find((session) => session.id === sessionId) ?? null;
-  const busy = (documents.data?.items ?? []).some((doc) => ACTIVE_STATUSES.has(doc.status));
-  const pending = selected ? selected.documentCount - selected.extractedCount : 0;
+  const sessions = useSessions(status === 'all' ? undefined : status);
+  const deleteSession = useDeleteSession();
 
   return (
     <section className="page">
       <PageHeader
         title="Sessions"
-        subtitle="Each session is one Phase-1 upload run. Extraction runs later, per file — track and filter it here."
-      />
-
-      <div className="card">
-        <label className="field">
-          <span className="field__label">Active session</span>
-          {sessions.isPending ? (
-            <p className="muted">Loading sessions…</p>
-          ) : sessions.isError ? (
-            <p className="error">Could not reach the API. Is it running on :4000?</p>
-          ) : sessions.data.items.length === 0 ? (
-            <p className="muted">No sessions yet. Create one on the Cut &amp; upload screen.</p>
-          ) : (
-            <select value={sessionId ?? ''} onChange={(event) => { setSessionId(event.target.value); }}>
-              <option value="" disabled>
-                Select a session…
-              </option>
-              {sessions.data.items.map((session) => (
-                <option key={session.id} value={session.id}>
-                  {session.label} — {session.exam} › {session.subject} › {session.module}
-                </option>
-              ))}
-            </select>
-          )}
-        </label>
-
-        {selected ? (
+        subtitle="Every Phase-1 upload run. Open one to review its files and run extraction."
+        actions={
           <>
-            <div className="kpi-row">
-              <div className="kpi">
-                <span className="kpi__label">Status</span>
-                <span style={{ marginTop: 4 }}>
-                  <StatusBadge status={selected.status} />
-                </span>
-              </div>
-              <div className="kpi">
-                <span className="kpi__label">Documents</span>
-                <span className="kpi__value">{selected.documentCount}</span>
-              </div>
-              <div className="kpi">
-                <span className="kpi__label">Extracted</span>
-                <span className="kpi__value">{selected.extractedCount}</span>
-              </div>
-              <div className="kpi">
-                <span className="kpi__label">Pending</span>
-                <span className="kpi__value">{pending}</span>
-              </div>
-            </div>
-
-            <div className="row" style={{ justifyContent: 'space-between' }}>
-              <button
-                type="button"
-                className="btn btn--primary"
-                disabled={runExtraction.isPending || busy}
-                onClick={() => { runExtraction.mutate(selected.id); }}
-              >
-                {busy ? 'Extracting…' : 'Run extraction on pending'}
-              </button>
-              <label className="switch">
-                <input
-                  type="checkbox"
-                  checked={selected.autoRun}
-                  disabled={setAutoRun.isPending}
-                  onChange={(event) => {
-                    setAutoRun.mutate({ id: selected.id, autoRun: event.target.checked });
-                  }}
-                />
-                <span className="switch__track" />
-                <span>Auto-run — extract each file as it is uploaded</span>
-              </label>
-            </div>
-
-            {runExtraction.isSuccess ? (
-              <p className="muted">Queued {runExtraction.data.enqueued} document(s) for extraction.</p>
-            ) : null}
-            {runExtraction.isError ? <p className="error">{runExtraction.error.message}</p> : null}
-          </>
-        ) : null}
-      </div>
-
-      {sessionId ? (
-        <div className="card">
-          <div className="row" style={{ justifyContent: 'space-between' }}>
-            <h2>Documents</h2>
             <label className="field--inline">
               <span className="field__label">Status</span>
               <select
                 value={status}
                 style={{ width: 'auto' }}
-                onChange={(event) => { setStatus(event.target.value as StatusFilter); }}
+                onChange={(e) => { setStatus(e.target.value as StatusFilter); }}
               >
                 <option value="all">All</option>
-                {DocumentStatusSchema.options.map((option) => (
-                  <option key={option} value={option}>
-                    {option.replace(/_/g, ' ')}
-                  </option>
+                {SessionStatusSchema.options.map((option) => (
+                  <option key={option} value={option}>{option.replace(/_/g, ' ')}</option>
                 ))}
               </select>
             </label>
-          </div>
+            <Link className="btn btn--primary" to="/">＋ New session</Link>
+          </>
+        }
+      />
 
-          {documents.isPending ? (
-            <p className="muted">Loading documents…</p>
-          ) : documents.isError ? (
-            <p className="error">Could not load documents.</p>
-          ) : documents.data.items.length === 0 ? (
-            <p className="muted">No documents match this filter.</p>
-          ) : (
-            <div className="table-wrap">
-              <table className="doc-table">
-                <thead>
-                  <tr>
-                    <th>File</th>
-                    <th>Kind</th>
-                    <th>Section</th>
-                    <th>Status</th>
-                    <th>Questions</th>
-                    <th>Extracted</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {documents.data.items.map((doc) => (
-                    <tr key={doc.id}>
-                      <td>{doc.fileName}</td>
-                      <td>{doc.kind}</td>
-                      <td>{doc.sectionName ?? doc.path.section}</td>
-                      <td>
-                        <StatusBadge status={doc.status} />
-                      </td>
-                      <td>{doc.questionCount}</td>
-                      <td>{doc.extractedAt ? new Date(doc.extractedAt).toLocaleString() : '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+      {sessions.isPending ? (
+        <p className="muted">Loading sessions…</p>
+      ) : sessions.isError ? (
+        <p className="error">Could not reach the API. Is it running on :4000?</p>
+      ) : sessions.data.items.length === 0 ? (
+        <div className="card">
+          <p className="muted">
+            No sessions{status === 'all' ? '' : ` with status "${status}"`}. Head to{' '}
+            <Link to="/">Cut &amp; upload</Link> — a session is created automatically as you start.
+          </p>
         </div>
-      ) : null}
+      ) : (
+        <div className="session-grid">
+          {sessions.data.items.map((session) => {
+            const context = [session.exam, session.subject, session.module].filter(Boolean).join(' › ');
+            return (
+              <div key={session.id} className="session-card">
+                <Link to={`/sessions/${session.id}`} className="session-card__body">
+                  <div className="session-card__head">
+                    <strong>{session.label}</strong>
+                    <StatusBadge status={session.status} />
+                  </div>
+                  <div className="muted">{context || 'No context yet'}</div>
+                  <div className="session-card__meta">
+                    <span>{session.extractedCount}/{session.documentCount} extracted</span>
+                    {session.autoRun ? <span className="badge badge--info">auto-run</span> : null}
+                  </div>
+                </Link>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--xs session-card__delete"
+                  onClick={() => {
+                    if (window.confirm(`Delete session "${session.label}" and all its files?`)) {
+                      deleteSession.mutate(session.id);
+                    }
+                  }}
+                >
+                  🗑 Delete
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }

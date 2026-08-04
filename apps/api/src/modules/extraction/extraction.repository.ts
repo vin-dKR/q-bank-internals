@@ -10,4 +10,6 @@ export interface ExtractionJobStore {
   create(input: { documentId: string; model: string }): Promise<ExtractionJob>;
   findById(id: string): Promise<ExtractionJob | null>;
   update(id: string, patch: ExtractionJobPatch): Promise<ExtractionJob>;
+  /** Remove all jobs for a document — required before the document itself can be deleted. */
+  deleteByDocument(documentId: string): Promise<void>;
 }

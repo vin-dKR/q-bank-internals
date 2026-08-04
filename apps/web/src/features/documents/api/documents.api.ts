@@ -1,5 +1,5 @@
-import type { z } from 'zod';
-import type { DocumentStatus } from '@ingest/contracts';
+import { z } from 'zod';
+import type { Document, DocumentStatus } from '@ingest/contracts';
 import { DocumentSchema, paginated } from '@ingest/contracts';
 import { request } from '../../../shared/api/http-client.js';
 
@@ -24,5 +24,16 @@ export const documentsApi = {
     if (params.sessionId) query.set('sessionId', params.sessionId);
     for (const status of params.status ?? []) query.append('status', status);
     return request(`/documents?${query.toString()}`, { schema: DocumentListSchema });
+  },
+
+  get: (id: string): Promise<Document> => {
+    return request(`/documents/${id}`, { schema: DocumentSchema });
+  },
+
+  remove: (id: string): Promise<{ deleted: boolean }> => {
+    return request(`/documents/${id}`, {
+      method: 'DELETE',
+      schema: z.object({ deleted: z.boolean() }),
+    });
   },
 };

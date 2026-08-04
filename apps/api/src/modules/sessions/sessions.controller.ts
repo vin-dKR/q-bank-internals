@@ -15,6 +15,7 @@ export function createSessionsController(service: SessionsService): {
   getById: RequestHandler;
   create: RequestHandler;
   update: RequestHandler;
+  remove: RequestHandler;
 } {
   return {
     list: asyncHandler(async (req, res) => {
@@ -33,7 +34,12 @@ export function createSessionsController(service: SessionsService): {
 
     update: asyncHandler(async (req, res) => {
       const body = parseOrThrow(UpdateSessionSchema, req.body);
-      ok(res, await service.setAutoRun(requiredParam(req, 'id'), body.autoRun));
+      ok(res, await service.update(requiredParam(req, 'id'), body));
+    }),
+
+    remove: asyncHandler(async (req, res) => {
+      await service.delete(requiredParam(req, 'id'));
+      ok(res, { deleted: true });
     }),
   };
 }

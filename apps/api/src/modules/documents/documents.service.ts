@@ -1,5 +1,7 @@
 import type { Document, DocumentListQuery, RegisterDocument } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
+import type { QuestionRepository } from '../questions/index.js';
+import type { ExtractionJobStore } from '../extraction/index.js';
 import type { DocumentRepository } from './documents.repository.js';
 
 type Paginated<T> = { items: T[]; page: number; pageSize: number; total: number };
@@ -9,7 +11,11 @@ type Paginated<T> = { items: T[]; page: number; pageSize: number; total: number 
  * it has no idea whether the store is Mongo or in-memory, and it never sees an HTTP request.
  */
 export class DocumentsService {
-  constructor(private readonly documents: DocumentRepository) {}
+  constructor(
+    private readonly documents: DocumentRepository,
+    private readonly questions: QuestionRepository,
+    private readonly jobs: ExtractionJobStore,
+  ) {}
 
   /** List documents, optionally narrowed by session and/or status — powers the operator filter. */
   async list(query: DocumentListQuery): Promise<Paginated<Document>> {
@@ -21,6 +27,15 @@ export class DocumentsService {
     const document = await this.documents.findById(id);
     if (!document) throw errors.documentNotFound(id);
     return document;
+  }
+
+  /** Delete a document and everything tied to it — its questions and jobs — then the document. */
+  async delete(id: string): Promise<void> {
+    const document = await this.documents.findById(id);
+    if (!document) throw errors.documentNotFound(id);
+    await this.questions.deleteByDocument(id);
+    await this.jobs.deleteByDocument(id);
+    await this.documents.delete(id);
   }
 
   async register(input: RegisterDocument): Promise<Document> {

@@ -1,5 +1,10 @@
 // Own MongoDB for the internal pipeline. Mirrors the shape of @ingest/contracts so the boundary stays honest.
 // Generated client is git-ignored (src/infrastructure/database/generated). Run `npm run prisma:generate`.
+//
+// NOTE: this database is shared with the main Eduents app, so every ingest model is @@map'd to an
+// `ingest_*` collection. In particular the extracted questions live in `ingest_extracted_questions`
+// (a TEMPORARY staging collection) so they never collide with the main app's `Question` collection —
+// the final "publish" step is what promotes verified questions into the real bank.
 
 generator client {
   provider = "prisma-client-js"
@@ -41,13 +46,15 @@ type PageRange {
 model Session {
   id        String     @id @default(auto()) @map("_id") @db.ObjectId
   label     String
-  exam      String
-  subject   String
-  module    String
+  exam      String?
+  subject   String?
+  module    String?
   autoRun   Boolean    @default(false)
   documents Document[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+
+  @@map("ingest_sessions")
 }
 
 model Document {
@@ -68,6 +75,8 @@ model Document {
   jobs          ExtractionJob[]
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
+
+  @@map("ingest_documents")
 }
 
 type QuestionOption {
@@ -87,17 +96,27 @@ type SourceRegion {
 }
 
 model Question {
-  id           String           @id @default(auto()) @map("_id") @db.ObjectId
-  document     Document         @relation(fields: [documentId], references: [id])
-  documentId   String           @db.ObjectId
-  path         SourcePath
-  stem         String
-  options      QuestionOption[]
-  answer       String
-  images       QuestionImage[]
-  sourceRegion SourceRegion
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
+  id              String           @id @default(auto()) @map("_id") @db.ObjectId
+  document        Document         @relation(fields: [documentId], references: [id])
+  documentId      String           @db.ObjectId
+  path            SourcePath
+  stem            String
+  options         QuestionOption[]
+  answer          String
+  images          QuestionImage[]
+  isQuestionImage Boolean          @default(false)
+  questionImage   String?
+  isOptionImage   Boolean          @default(false)
+  optionImages    String[]
+  questionType    String?
+  sectionName     String?
+  topic           String?
+  sourceRegion    SourceRegion
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // TEMPORARY staging collection — verified questions are promoted to the main bank on publish.
+  @@map("ingest_extracted_questions")
 }
 
 model ExtractionJob {
@@ -111,4 +130,6 @@ model ExtractionJob {
   startedAt     DateTime?
   finishedAt    DateTime?
   createdAt     DateTime @default(now())
+
+  @@map("ingest_extraction_jobs")
 }

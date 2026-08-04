@@ -1,4 +1,5 @@
 import { type JSX, useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { ChapterKind, ChapterUploadMetadata } from '@ingest/contracts';
 import {
   ChapterGroupingPanel,
@@ -11,7 +12,8 @@ import {
   useSplitPoints,
   useUploadChapter,
 } from '../../features/ingestion/index.js';
-import { SessionPicker } from '../../features/sessions/index.js';
+import { SessionBar } from '../../features/sessions/index.js';
+import { useCurrentSession } from '../../shared/lib/current-session.js';
 import { PageHeader } from '../../shared/ui/index.js';
 
 const DEFAULT_WIDTH = 640;
@@ -28,7 +30,9 @@ function errorMessage(error: unknown): string {
  * chapter's question.pdf + answer.pdf into its Drive folder (exam → subject → module → chapter).
  */
 export function IngestPage(): JSX.Element {
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const [sessionId] = useCurrentSession();
+  const [didUpload, setDidUpload] = useState(false);
   const [pdfBytes, setPdfBytes] = useState<ArrayBuffer | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [numPages, setNumPages] = useState(0);
@@ -135,6 +139,7 @@ export function IngestPage(): JSX.Element {
             pdfBytes: part.bytes,
             metadata: { ...base, kind: part.kind },
           });
+          setDidUpload(true);
           done.push(`✓ ${part.kind} → ${result.driveFile.name} [${result.document.status}]`);
         } catch (error) {
           done.push(`✗ ${part.kind} failed: ${errorMessage(error)}`);
@@ -158,8 +163,9 @@ export function IngestPage(): JSX.Element {
         subtitle="Upload a multi-chapter PDF, cut pages, tag slices as question or answer, then file each chapter into its session and Drive folder."
       />
 
+      <SessionBar />
+
       <div className="card">
-        <SessionPicker value={sessionId} onChange={setSessionId} />
         <DrivePathExplorer />
         <PdfUploader
           fileName={fileName}
@@ -233,6 +239,25 @@ export function IngestPage(): JSX.Element {
                   ) : null,
                 )}
               </ul>
+            ) : null}
+
+            {didUpload ? (
+              <div className="phase-actions">
+                <span className="muted">Filed to the session.</span>
+                <div className="row">
+                  <button type="button" className="btn" onClick={reset}>
+                    Save &amp; add more
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--primary"
+                    disabled={!sessionId}
+                    onClick={() => { if (sessionId) void navigate(`/sessions/${sessionId}`); }}
+                  >
+                    Continue to extraction →
+                  </button>
+                </div>
+              </div>
             ) : null}
           </aside>
         </div>

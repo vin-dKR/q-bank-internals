@@ -37,4 +37,8 @@ export interface DocumentRepository {
   updateStatus(id: string, status: DocumentStatus): Promise<Document>;
   /** Mark extraction done: sets `extracted`, stamps `extractedAt`, records how many questions landed. */
   recordExtraction(id: string, input: { questionCount: number }): Promise<Document>;
+  delete(id: string): Promise<void>;
+  deleteBySession(sessionId: string): Promise<void>;
+  /** Reset documents left `queued`/`extracting` (e.g. a dead in-process worker) back to `failed`. */
+  resetInFlight(): Promise<number>;
 }

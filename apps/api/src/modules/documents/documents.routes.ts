@@ -10,6 +10,7 @@ export function createDocumentsRouter(service: DocumentsService): Router {
   router.get('/', controller.list);
   router.get('/:id', controller.getById);
   router.post('/', controller.register);
+  router.delete('/:id', controller.remove);
 
   return router;
 }

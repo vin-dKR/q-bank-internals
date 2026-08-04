@@ -1,12 +1,17 @@
 import type {
   CreateSession,
   DocumentStatus,
+  Exam,
+  Module,
   Session,
   SessionListQuery,
   SessionStatus,
+  UpdateSession,
 } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
+import type { QuestionRepository } from '../questions/index.js';
+import type { ExtractionJobStore } from '../extraction/index.js';
 import type { SessionRecord, SessionRepository } from './sessions.repository.js';
 
 type Paginated<T> = { items: T[]; page: number; pageSize: number; total: number };
@@ -22,6 +27,18 @@ const EXTRACTED_STATUSES = new Set<DocumentStatus>([
 
 /** Statuses that mean extraction is actively in flight. */
 const IN_FLIGHT_STATUSES = new Set<DocumentStatus>(['queued', 'extracting']);
+
+/** A friendly default label for an auto-created session, e.g. "Session · Aug 3, 4:30 PM". */
+function defaultLabel(): string {
+  const now = new Date();
+  const stamp = now.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return `Session · ${stamp}`;
+}
 
 /**
  * Derive a session's lifecycle status purely from the statuses of its documents. Keeping this a
@@ -51,10 +68,19 @@ export class SessionsService {
   constructor(
     private readonly sessions: SessionRepository,
     private readonly documents: DocumentRepository,
+    private readonly questions: QuestionRepository,
+    private readonly jobs: ExtractionJobStore,
   ) {}
 
+  /** Open a session. All inputs are optional — a missing label is auto-generated (Phase-1 auto-create). */
   async create(input: CreateSession): Promise<Session> {
-    const record = await this.sessions.create(input);
+    const record = await this.sessions.create({
+      label: input.label ?? defaultLabel(),
+      exam: input.exam,
+      subject: input.subject,
+      module: input.module,
+      autoRun: input.autoRun,
+    });
     return this.enrich(record);
   }
 
@@ -79,11 +105,42 @@ export class SessionsService {
     };
   }
 
-  async setAutoRun(id: string, autoRun: boolean): Promise<Session> {
+  /** Edit a session (rename / retarget / flip auto-run). */
+  async update(id: string, patch: UpdateSession): Promise<Session> {
     const existing = await this.sessions.findById(id);
     if (!existing) throw errors.sessionNotFound(id);
-    const record = await this.sessions.setAutoRun(id, autoRun);
+    const record = await this.sessions.update(id, patch);
     return this.enrich(record);
+  }
+
+  /** Delete a session and everything under it (its documents + their extracted questions). */
+  async delete(id: string): Promise<void> {
+    const existing = await this.sessions.findById(id);
+    if (!existing) throw errors.sessionNotFound(id);
+    const documents = await this.documents.listBySession(id);
+    for (const document of documents) {
+      await this.questions.deleteByDocument(document.id);
+      await this.jobs.deleteByDocument(document.id);
+    }
+    await this.documents.deleteBySession(id);
+    await this.sessions.delete(id);
+  }
+
+  /**
+   * Fill in a session's exam/subject/module from its first uploaded document, but only where they
+   * are still blank — so the session summary is informative without the operator setting it twice.
+   */
+  async backfillContext(
+    id: string,
+    context: { exam?: Exam; subject?: string; module?: Module },
+  ): Promise<void> {
+    const existing = await this.sessions.findById(id);
+    if (!existing) return;
+    const patch: { exam?: Exam; subject?: string; module?: Module } = {};
+    if (!existing.exam && context.exam) patch.exam = context.exam;
+    if (!existing.subject && context.subject) patch.subject = context.subject;
+    if (!existing.module && context.module) patch.module = context.module;
+    if (Object.keys(patch).length > 0) await this.sessions.update(id, patch);
   }
 
   /** Combine a stored session with its derived status + counts to form the contract shape. */

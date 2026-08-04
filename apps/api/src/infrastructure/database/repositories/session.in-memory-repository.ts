@@ -4,6 +4,7 @@ import type {
   CreateSessionInput,
   SessionRecord,
   SessionRepository,
+  UpdateSessionInput,
 } from '../../../modules/sessions/index.js';
 
 /**
@@ -17,10 +18,10 @@ export class InMemorySessionRepository implements SessionRepository {
     const now = new Date().toISOString();
     const record: SessionRecord = {
       id: randomUUID(),
-      label: input.label,
-      exam: input.exam,
-      subject: input.subject,
-      module: input.module,
+      label: input.label ?? `Session · ${now}`,
+      exam: input.exam ?? null,
+      subject: input.subject ?? null,
+      module: input.module ?? null,
       autoRun: input.autoRun,
       createdAt: now,
       updatedAt: now,
@@ -38,10 +39,23 @@ export class InMemorySessionRepository implements SessionRepository {
     return Promise.resolve(all);
   }
 
-  setAutoRun(id: string, autoRun: boolean): Promise<SessionRecord> {
+  delete(id: string): Promise<void> {
+    this.store.delete(id);
+    return Promise.resolve();
+  }
+
+  update(id: string, patch: UpdateSessionInput): Promise<SessionRecord> {
     const existing = this.store.get(id);
     if (!existing) throw new Error(`Session ${id} vanished from the in-memory store.`);
-    const updated: SessionRecord = { ...existing, autoRun, updatedAt: new Date().toISOString() };
+    const updated: SessionRecord = {
+      ...existing,
+      ...(patch.label !== undefined ? { label: patch.label } : {}),
+      ...(patch.exam !== undefined ? { exam: patch.exam } : {}),
+      ...(patch.subject !== undefined ? { subject: patch.subject } : {}),
+      ...(patch.module !== undefined ? { module: patch.module } : {}),
+      ...(patch.autoRun !== undefined ? { autoRun: patch.autoRun } : {}),
+      updatedAt: new Date().toISOString(),
+    };
     this.store.set(id, updated);
     return Promise.resolve(updated);
   }

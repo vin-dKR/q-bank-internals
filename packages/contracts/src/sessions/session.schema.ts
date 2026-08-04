@@ -23,9 +23,9 @@ export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 export const SessionSchema = z.object({
   id: z.string(),
   label: z.string().min(1),
-  exam: ExamSchema,
-  subject: z.string().min(1),
-  module: ModuleSchema,
+  exam: ExamSchema.nullable(),
+  subject: z.string().nullable(),
+  module: ModuleSchema.nullable(),
   status: SessionStatusSchema,
   autoRun: z.boolean(), // enqueue extraction automatically as each file is uploaded
   documentCount: z.number().int().nonnegative(),
@@ -35,20 +35,30 @@ export const SessionSchema = z.object({
 });
 export type Session = z.infer<typeof SessionSchema>;
 
-/** Body accepted when opening a new session. `autoRun` defaults to off (breakable by default). */
+/**
+ * Body accepted when opening a new session — everything is optional so the app can auto-create a
+ * session with a generated label the moment Phase 1 starts. `exam`/`subject`/`module` are backfilled
+ * from the first uploaded document if omitted. `autoRun` defaults to off (breakable by default).
+ */
 export const CreateSessionSchema = z.object({
-  label: z.string().min(1),
-  exam: ExamSchema,
-  subject: z.string().min(1),
-  module: ModuleSchema,
+  label: z.string().min(1).optional(),
+  exam: ExamSchema.optional(),
+  subject: z.string().min(1).optional(),
+  module: ModuleSchema.optional(),
   autoRun: z.boolean().default(false),
 });
 export type CreateSession = z.infer<typeof CreateSessionSchema>;
 
-/** Patch accepted when toggling the pipeline mode on an existing session. */
-export const UpdateSessionSchema = z.object({
-  autoRun: z.boolean(),
-});
+/** Patch accepted when editing a session (rename, retarget, or flip pipeline mode). */
+export const UpdateSessionSchema = z
+  .object({
+    label: z.string().min(1),
+    exam: ExamSchema,
+    subject: z.string().min(1),
+    module: ModuleSchema,
+    autoRun: z.boolean(),
+  })
+  .partial();
 export type UpdateSession = z.infer<typeof UpdateSessionSchema>;
 
 /** Query for listing sessions, optionally narrowed to one lifecycle status. */

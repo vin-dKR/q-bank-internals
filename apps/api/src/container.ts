@@ -10,7 +10,14 @@ import {
   type PdfRasterizer,
   type VisionExtractor,
 } from './modules/extraction/index.js';
-import type { QuestionRepository } from './modules/questions/index.js';
+import {
+  QuestionsService,
+  type ImageStore,
+  type LatexRefiner,
+  type QuestionRepository,
+} from './modules/questions/index.js';
+import { PagesService } from './modules/pages/index.js';
+import { PublishService } from './modules/publish/index.js';
 import { DriveService } from './modules/drive/index.js';
 import { IngestionService } from './modules/ingestion/index.js';
 import { InMemoryDocumentRepository } from './infrastructure/database/repositories/document.in-memory-repository.js';
@@ -30,6 +37,12 @@ import { BullMqJobQueue } from './infrastructure/queue/bullmq.job-queue.js';
 import { PdfToImgRasterizer } from './infrastructure/pdf/pdf-to-img.rasterizer.js';
 import { OpenAiVisionExtractor } from './infrastructure/ai/openai.vision-extractor.js';
 import { UnconfiguredVisionExtractor } from './infrastructure/ai/unconfigured.vision-extractor.js';
+import { SupabaseImageStore } from './infrastructure/storage/supabase.image-store.js';
+import { UnconfiguredImageStore } from './infrastructure/storage/unconfigured.image-store.js';
+import { OpenAiLatexRefiner } from './infrastructure/ai/openai.latex-refiner.js';
+import { UnconfiguredLatexRefiner } from './infrastructure/ai/unconfigured.latex-refiner.js';
+import { MongoBankPublisher } from './infrastructure/bank/mongo.bank-publisher.js';
+import { UnconfiguredBankPublisher } from './infrastructure/bank/unconfigured.bank-publisher.js';
 
 /**
  * The COMPOSITION ROOT (§5). The single file allowed to `new` infrastructure and decide which
@@ -38,6 +51,9 @@ import { UnconfiguredVisionExtractor } from './infrastructure/ai/unconfigured.vi
 export type Container = {
   documentsService: DocumentsService;
   sessionsService: SessionsService;
+  questionsService: QuestionsService;
+  pagesService: PagesService;
+  publishService: PublishService;
   extractionService: ExtractionService;
   extractionWorker: ExtractionWorker;
   jobQueue: JobQueue;
@@ -124,6 +140,22 @@ function buildExtractor(): VisionExtractor {
   return new UnconfiguredVisionExtractor();
 }
 
+/** Supabase image storage when a service key is present; otherwise a null-object that fails loudly. */
+function buildImageStore(): ImageStore {
+  if (env.SUPABASE_SERVICE_KEY) {
+    logger.info(`Images: Supabase bucket "${env.SUPABASE_BUCKET}"`);
+    return new SupabaseImageStore(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY, env.SUPABASE_BUCKET);
+  }
+  logger.info('Images: unconfigured. Set SUPABASE_SERVICE_KEY to upload crops.');
+  return new UnconfiguredImageStore();
+}
+
+/** OpenAI-backed "Fix LaTeX" refiner when a key is present; otherwise a null-object. */
+function buildLatexRefiner(): LatexRefiner {
+  if (env.OPENAI_API_KEY) return new OpenAiLatexRefiner(env.OPENAI_API_KEY);
+  return new UnconfiguredLatexRefiner();
+}
+
 export function createContainer(): Container {
   const { documents, sessions, jobs, questions } = buildPersistence();
   const jobQueue = buildQueue();
@@ -131,8 +163,15 @@ export function createContainer(): Container {
   const extractor = buildExtractor();
   const driveService = buildDrive();
 
-  const documentsService = new DocumentsService(documents);
-  const sessionsService = new SessionsService(sessions, documents);
+  const documentsService = new DocumentsService(documents, questions, jobs);
+  const sessionsService = new SessionsService(sessions, documents, questions, jobs);
+  const questionsService = new QuestionsService(questions, buildImageStore(), buildLatexRefiner());
+  const pagesService = new PagesService(documents, driveService, rasterizer);
+  const bankPublisher =
+    env.DB_DRIVER === 'mongo'
+      ? new MongoBankPublisher(getPrisma())
+      : new UnconfiguredBankPublisher();
+  const publishService = new PublishService(documents, questions, sessions, bankPublisher);
   const extractionService = new ExtractionService(documents, jobs, jobQueue, env.EXTRACTION_MODEL);
   const extractionWorker = new ExtractionWorker(
     documents,
@@ -153,11 +192,19 @@ export function createContainer(): Container {
   // BullMQ: the API only enqueues; the dedicated `worker.ts` process registers the consumer instead.
   if (!env.REDIS_URL) {
     jobQueue.process((payload) => extractionWorker.run(payload));
+    // The in-process worker cannot outlive the process, so any doc still `extracting`/`queued` at
+    // boot is stale — reset it to `failed` so it is re-runnable and never stuck.
+    void documents.resetInFlight().then((count) => {
+      if (count > 0) logger.info(`Recovered ${String(count)} stale extraction(s) → failed`);
+    });
   }
 
   return {
     documentsService,
     sessionsService,
+    questionsService,
+    pagesService,
+    publishService,
     extractionService,
     extractionWorker,
     jobQueue,

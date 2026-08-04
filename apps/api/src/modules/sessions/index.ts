@@ -3,6 +3,7 @@ export { SessionsService } from './sessions.service.js';
 export { createSessionsRouter } from './sessions.routes.js';
 export type {
   CreateSessionInput,
+  UpdateSessionInput,
   SessionRecord,
   SessionRepository,
 } from './sessions.repository.js';

@@ -1,8 +1,11 @@
 // Public surface of the sessions feature (§4). Other features import from here only.
-export { SessionPicker } from './components/session-picker.js';
+export { SessionBar } from './components/session-bar.js';
 export {
   useSessions,
+  useSession,
   useCreateSession,
-  useSetAutoRun,
+  useUpdateSession,
+  useDeleteSession,
   useRunSessionExtraction,
+  useRunDocumentExtraction,
 } from './hooks/use-sessions.js';

@@ -4,16 +4,17 @@ import type {
   CreateSessionInput,
   SessionRecord,
   SessionRepository,
+  UpdateSessionInput,
 } from '../../../modules/sessions/index.js';
 
 // Prisma's row shape for a Session, narrowed to what we map. `exam`/`module` are stored as free
-// strings in Mongo but are trusted to hold the controlled vocabulary written through the contract.
+// nullable strings in Mongo but are trusted to hold the controlled vocabulary written via the contract.
 type SessionRow = {
   id: string;
   label: string;
-  exam: string;
-  subject: string;
-  module: string;
+  exam: string | null;
+  subject: string | null;
+  module: string | null;
   autoRun: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -23,9 +24,9 @@ function toRecord(row: SessionRow): SessionRecord {
   return {
     id: row.id,
     label: row.label,
-    exam: row.exam as Exam,
+    exam: (row.exam as Exam | null) ?? null,
     subject: row.subject,
-    module: row.module as Module,
+    module: (row.module as Module | null) ?? null,
     autoRun: row.autoRun,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -39,10 +40,10 @@ export class PrismaSessionRepository implements SessionRepository {
   async create(input: CreateSessionInput): Promise<SessionRecord> {
     const row = await this.prisma.session.create({
       data: {
-        label: input.label,
-        exam: input.exam,
-        subject: input.subject,
-        module: input.module,
+        label: input.label ?? `Session · ${new Date().toISOString()}`,
+        exam: input.exam ?? null,
+        subject: input.subject ?? null,
+        module: input.module ?? null,
         autoRun: input.autoRun,
       },
     });
@@ -59,8 +60,21 @@ export class PrismaSessionRepository implements SessionRepository {
     return rows.map(toRecord);
   }
 
-  async setAutoRun(id: string, autoRun: boolean): Promise<SessionRecord> {
-    const row = await this.prisma.session.update({ where: { id }, data: { autoRun } });
+  async delete(id: string): Promise<void> {
+    await this.prisma.session.delete({ where: { id } });
+  }
+
+  async update(id: string, patch: UpdateSessionInput): Promise<SessionRecord> {
+    const row = await this.prisma.session.update({
+      where: { id },
+      data: {
+        ...(patch.label !== undefined ? { label: patch.label } : {}),
+        ...(patch.exam !== undefined ? { exam: patch.exam } : {}),
+        ...(patch.subject !== undefined ? { subject: patch.subject } : {}),
+        ...(patch.module !== undefined ? { module: patch.module } : {}),
+        ...(patch.autoRun !== undefined ? { autoRun: patch.autoRun } : {}),
+      },
+    });
     return toRecord(row);
   }
 }

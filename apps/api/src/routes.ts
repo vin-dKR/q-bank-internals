@@ -1,6 +1,9 @@
 import { Router } from 'express';
 import { createDocumentsRouter } from './modules/documents/index.js';
 import { createSessionsRouter } from './modules/sessions/index.js';
+import { createQuestionsRouter } from './modules/questions/index.js';
+import { createPagesRouter } from './modules/pages/index.js';
+import { createPublishRouter } from './modules/publish/index.js';
 import { createExtractionRouter } from './modules/extraction/index.js';
 import { createDriveRouter } from './modules/drive/index.js';
 import { createIngestionRouter } from './modules/ingestion/index.js';
@@ -16,6 +19,9 @@ export function createApiRouter(container: Container): Router {
 
   router.use('/documents', createDocumentsRouter(container.documentsService));
   router.use('/sessions', createSessionsRouter(container.sessionsService));
+  router.use('/questions', createQuestionsRouter(container.questionsService));
+  router.use('/pages', createPagesRouter(container.pagesService));
+  router.use('/publish', createPublishRouter(container.publishService));
   router.use('/extraction', createExtractionRouter(container.extractionService));
   router.use('/drive', createDriveRouter(container.driveService));
   router.use('/ingestion', createIngestionRouter(container.ingestionService));

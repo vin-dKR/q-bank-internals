@@ -374,6 +374,7 @@ h2 {
    Forms
    ========================================================================== */
 select,
+textarea,
 input[type='text'],
 input[type='number'] {
   padding: 9px 12px;
@@ -385,6 +386,17 @@ input[type='number'] {
   background: var(--surface);
   width: 100%;
   transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
 select {
@@ -1010,6 +1022,413 @@ input[type='number']:focus {
   background: var(--a);
   border-color: var(--a);
   color: #fff;
+}
+
+/* ============================================================================
+   Working-session bar (Cut & upload)
+   ========================================================================== */
+.session-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-sm);
+}
+
+.session-bar__main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.session-bar__eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+}
+
+.session-bar__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+}
+
+/* ============================================================================
+   Sessions index cards + phase actions
+   ========================================================================== */
+.session-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.session-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.session-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow);
+}
+
+.session-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.session-card__delete {
+  align-self: flex-start;
+}
+
+.session-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 15px;
+}
+
+.session-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* The Save / Continue block that ends a phase. */
+.phase-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* ============================================================================
+   Extracted-question preview (Verify screen)
+   ========================================================================== */
+.q-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.q-card {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 14px 16px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.q-card__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.q-card__num {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 2px 9px;
+  border-radius: var(--r-pill);
+}
+
+.q-card__stem {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.q-opts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.q-opt {
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.q-opt.is-correct {
+  border-color: #067647;
+  background: #e6f6ee;
+  color: #05603a;
+}
+
+/* Editable question card (Verify) */
+.q-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+}
+
+.q-preview {
+  padding: 8px 12px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 20px;
+}
+
+/* Click-to-edit LaTeX: rendered by default, raw editor on click. */
+.latex-view {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font-size: 14px;
+  line-height: 1.55;
+  min-height: 38px;
+  cursor: text;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.latex-view:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-muted);
+}
+
+.q-opt-edit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.q-opt-edit input {
+  flex: 1;
+}
+
+@media (max-width: 620px) {
+  .q-meta {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================================================
+   Verify crop workspace (multiCrop)
+   ========================================================================== */
+.verify {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 460px;
+  gap: 18px;
+  align-items: start;
+}
+
+.verify__canvas {
+  position: sticky;
+  top: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 14px;
+}
+
+.verify__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.crop-canvas {
+  display: flex;
+  justify-content: center;
+  background: var(--surface-muted);
+  border-radius: var(--r);
+  overflow: auto;
+  max-height: 74vh;
+}
+
+.crop-canvas__frame {
+  position: relative;
+  user-select: none;
+  line-height: 0;
+}
+
+.crop-canvas__img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* One draggable crop region drawn over the page. */
+.cropbox {
+  position: absolute;
+  border: 2px solid var(--accent);
+  background: rgba(48, 80, 224, 0.12);
+  box-sizing: border-box;
+  cursor: move;
+  z-index: 10;
+}
+
+.cropbox__label {
+  position: absolute;
+  top: -22px;
+  left: -2px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 5px 5px 0 0;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.cropbox__handle {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  background: #fff;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  z-index: 12;
+}
+
+/* Per-question image blocks in the right panel. */
+.q-imgs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface-muted);
+}
+
+.q-imgs__row,
+.q-imgs__opt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.q-imgs__row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.q-imgs__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.q-thumb {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.q-thumb img {
+  max-width: 100%;
+  max-height: 140px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: #fff;
+}
+
+@media (max-width: 1000px) {
+  .verify {
+    grid-template-columns: 1fr;
+  }
+  .verify__canvas {
+    position: static;
+  }
+}
+
+/* ============================================================================
+   Modal (configs / publish preview)
+   ========================================================================== */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(16, 20, 30, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.modal__panel {
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+  padding: 20px;
+  width: min(820px, 100%);
+  max-height: 84vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal__code {
+  margin: 0;
+  padding: 14px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  overflow: auto;
+  max-height: 60vh;
+}
+
+/* KaTeX inline sizing inside our question text */
+.q-card__stem .katex,
+.q-opt .katex {
+  font-size: 1.02em;
 }
 
 /* ============================================================================

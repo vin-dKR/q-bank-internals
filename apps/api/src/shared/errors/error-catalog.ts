@@ -14,6 +14,15 @@ export const errors = {
   sessionNotFound: (id: string): AppError =>
     new AppError('SESSION_NOT_FOUND', 404, `No session with id "${id}".`),
 
+  questionNotFound: (id: string): AppError =>
+    new AppError('QUESTION_NOT_FOUND', 404, `No question with id "${id}".`),
+
+  pageNotFound: (documentId: string, page: number): AppError =>
+    new AppError('PAGE_NOT_FOUND', 404, `Document "${documentId}" has no page ${String(page)}.`),
+
+  imageUploadFailed: (reason: string): AppError =>
+    new AppError('IMAGE_UPLOAD_FAILED', 502, `Image upload failed: ${reason}`),
+
   documentAlreadyRegistered: (driveFileId: string): AppError =>
     new AppError(
       'DOCUMENT_ALREADY_REGISTERED',

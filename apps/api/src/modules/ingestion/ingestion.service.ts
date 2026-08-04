@@ -58,6 +58,14 @@ export class IngestionService {
       pageRange: null,
     });
 
+    // Make the (possibly auto-created) session informative by filling its exam/subject/module from
+    // the first upload — only where still blank, so it never fights an operator's edit.
+    await this.sessions.backfillContext(metadata.sessionId, {
+      exam: metadata.exam,
+      subject: metadata.subject,
+      module: metadata.module,
+    });
+
     // Pipeline mode: kick off extraction now for question PDFs. It runs on the worker, so the upload
     // response is not delayed — the "don't wait on Phase 2" guarantee still holds.
     if (session.autoRun && document.kind === 'question') {

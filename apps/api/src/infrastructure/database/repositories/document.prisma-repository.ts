@@ -108,6 +108,22 @@ export class PrismaDocumentRepository implements DocumentRepository {
     return toDocument(row);
   }
 
+  async delete(id: string): Promise<void> {
+    await this.prisma.document.delete({ where: { id } });
+  }
+
+  async deleteBySession(sessionId: string): Promise<void> {
+    await this.prisma.document.deleteMany({ where: { sessionId } });
+  }
+
+  async resetInFlight(): Promise<number> {
+    const result = await this.prisma.document.updateMany({
+      where: { status: { in: ['queued', 'extracting'] } },
+      data: { status: 'failed' },
+    });
+    return result.count;
+  }
+
   async recordExtraction(id: string, input: { questionCount: number }): Promise<Document> {
     const row = await this.prisma.document.update({
       where: { id },

@@ -46,6 +46,9 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
     options: draft.options.map((option, index) => parseOption(option, index, answerLabel)),
     answer: draft.answer ?? '',
     images: [],
+    questionType: document.questionType,
+    sectionName: document.sectionName ?? document.path.section,
+    topic: null,
     sourceRegion: { page: draft.sourcePage, bbox: [0, 0, 1, 1] },
   };
 }

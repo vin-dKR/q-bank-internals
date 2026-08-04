@@ -33,6 +33,11 @@ const EnvSchema = z.object({
 
   // BullMQ (Redis) connection for the extraction queue. Absent → in-process queue (dev, no Redis).
   REDIS_URL: z.string().optional(),
+
+  // Supabase storage for verified question/option image crops (same bucket the main bank reads).
+  SUPABASE_URL: z.string().default('https://jrekcngltfkghrgzgvju.supabase.co'),
+  SUPABASE_SERVICE_KEY: z.string().optional(),
+  SUPABASE_BUCKET: z.string().default('images'),
 });
 
 const parsed = EnvSchema.safeParse(process.env);

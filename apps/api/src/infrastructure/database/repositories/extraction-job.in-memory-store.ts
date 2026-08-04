@@ -32,4 +32,11 @@ export class InMemoryExtractionJobStore implements ExtractionJobStore {
     this.store.set(id, updated);
     return Promise.resolve(updated);
   }
+
+  deleteByDocument(documentId: string): Promise<void> {
+    for (const [id, job] of this.store) {
+      if (job.documentId === documentId) this.store.delete(id);
+    }
+    return Promise.resolve();
+  }
 }

@@ -1,2 +1,6 @@
-// Public surface of the questions module (§4). No routes yet — the verify screen will add them.
+// Public surface of the questions module (§4). Others import from here, never from internals.
+export { QuestionsService } from './questions.service.js';
+export { createQuestionsRouter } from './questions.routes.js';
 export type { NewQuestion, QuestionRepository } from './questions.repository.js';
+export type { ImageStore } from './image-store.js';
+export type { LatexRefiner } from './latex-refiner.js';

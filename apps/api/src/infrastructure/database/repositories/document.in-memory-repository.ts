@@ -74,6 +74,30 @@ export class InMemoryDocumentRepository implements DocumentRepository {
     return Promise.resolve(updated);
   }
 
+  delete(id: string): Promise<void> {
+    this.store.delete(id);
+    return Promise.resolve();
+  }
+
+  deleteBySession(sessionId: string): Promise<void> {
+    for (const [id, doc] of this.store) {
+      if (doc.sessionId === sessionId) this.store.delete(id);
+    }
+    return Promise.resolve();
+  }
+
+  resetInFlight(): Promise<number> {
+    let count = 0;
+    const now = new Date().toISOString();
+    for (const [id, doc] of this.store) {
+      if (doc.status === 'queued' || doc.status === 'extracting') {
+        this.store.set(id, { ...doc, status: 'failed', updatedAt: now });
+        count += 1;
+      }
+    }
+    return Promise.resolve(count);
+  }
+
   recordExtraction(id: string, input: { questionCount: number }): Promise<Document> {
     const existing = this.store.get(id);
     if (!existing) throw new Error(`Document ${id} vanished from the in-memory store.`);
