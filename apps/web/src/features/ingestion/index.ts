@@ -14,6 +14,7 @@ export { useUploadChapter, type UploadChapterInput } from './hooks/use-upload-ch
 export { buildChapterPdfs } from './lib/build-chapter-pdfs.js';
 export { applyGridSplit } from './lib/apply-grid-split.js';
 export { applyReflow } from './lib/apply-reflow.js';
+export { deletePage } from './lib/delete-page.js';
 export type { CutMode, ReadingOrder } from './types/cut-mode.js';
 export { type ChapterGroup, emptyMetadata } from './types/chapter-group.js';
 export {

@@ -42,6 +42,7 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
   const answerLabel = normalizeAnswerLabel(draft.answer);
   return {
     documentId: document.id,
+    questionNumber: draft.questionNumber,
     path: document.path,
     stem: draft.questionText,
     options: draft.options.map((option, index) => parseOption(option, index, answerLabel)),

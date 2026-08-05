@@ -11,6 +11,7 @@ export class InMemoryQuestionRepository implements QuestionRepository {
     const rows: Question[] = questions.map((question) => ({
       id: randomUUID(),
       documentId,
+      questionNumber: question.questionNumber,
       path: question.path,
       stem: question.stem,
       options: question.options,

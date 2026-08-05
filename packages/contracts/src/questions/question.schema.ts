@@ -23,6 +23,9 @@ export type QuestionOption = z.infer<typeof QuestionOptionSchema>;
 export const QuestionSchema = z.object({
   id: z.string(),
   documentId: z.string(),
+  // The printed question number (1, 2, 3 …) as read from the page. Null when the model could not
+  // read one. Used later to map an auto-detected figure back to the question it belongs to.
+  questionNumber: z.number().int().nullable(),
   path: SourcePathSchema,
   stem: z.string(), // LaTeX-bearing
   options: z.array(QuestionOptionSchema),

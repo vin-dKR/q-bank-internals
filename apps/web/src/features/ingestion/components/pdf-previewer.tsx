@@ -27,6 +27,7 @@ type PdfPreviewerProps = {
   onHoverSlice: (sliceId: string | null) => void;
   onToggleTag: (chapterId: string, sliceId: string) => void;
   onNumPages: (numPages: number) => void;
+  onDeletePage: (pageNumber: number) => void;
   /** Forwarded to the overlay: whether pages carry a question/answer/solution tag chip. */
   taggable?: boolean;
 };
@@ -44,6 +45,7 @@ export function PdfPreviewer({
   onHoverSlice,
   onToggleTag,
   onNumPages,
+  onDeletePage,
   taggable = true,
 }: PdfPreviewerProps): JSX.Element {
   const [numPages, setNumPages] = useState(0);
@@ -72,6 +74,15 @@ export function PdfPreviewer({
               <div className="page-wrap__num">
                 <span className="muted">Page {pageNumber}</span>
                 {chapter ? <span className="chip chip--chapter">Chapter {chapter.chapterIndex + 1}</span> : null}
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--xs page-wrap__delete"
+                  title="Delete this page (Revert restores it)"
+                  disabled={numPages <= 1}
+                  onClick={() => { onDeletePage(pageNumber); }}
+                >
+                  ✕ Delete page
+                </button>
               </div>
               <div className="page-wrap__canvas">
                 <Page
