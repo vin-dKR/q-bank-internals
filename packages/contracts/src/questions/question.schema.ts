@@ -91,3 +91,28 @@ export type RefinedLatex = z.infer<typeof RefinedLatexSchema>;
 /** Result of publishing extracted questions into the main bank: how many rows were inserted. */
 export const PublishResultSchema = z.object({ published: z.number().int().nonnegative() });
 export type PublishResult = z.infer<typeof PublishResultSchema>;
+
+/** Ask the AI to locate the figures on one rendered page of a document (the Verify auto-crop). */
+export const DetectFiguresRequestSchema = z.object({
+  documentId: z.string().min(1),
+  page: z.number().int().positive(),
+});
+export type DetectFiguresRequest = z.infer<typeof DetectFiguresRequestSchema>;
+
+/** One detected figure: the question it belongs to and its bounding box in the page's natural pixels. */
+export const DetectedFigureSchema = z.object({
+  questionId: z.string(),
+  bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]), // [x, y, width, height]
+});
+export type DetectedFigure = z.infer<typeof DetectedFigureSchema>;
+
+/**
+ * Result of a figure-detection pass over one page: the page's natural pixel size (so the client can
+ * scale each bbox to the displayed image) and the detected figures mapped to their questions.
+ */
+export const DetectedFiguresSchema = z.object({
+  imageWidth: z.number().int().positive(),
+  imageHeight: z.number().int().positive(),
+  figures: z.array(DetectedFigureSchema),
+});
+export type DetectedFigures = z.infer<typeof DetectedFiguresSchema>;

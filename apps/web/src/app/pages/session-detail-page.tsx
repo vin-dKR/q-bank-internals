@@ -72,7 +72,7 @@ export function SessionDetailPage(): JSX.Element {
               type="button"
               className="btn btn--primary"
               disabled={!firstExtracted}
-              onClick={() => { if (firstExtracted) void navigate(`/verify?documentId=${firstExtracted.id}`); }}
+              onClick={() => { if (firstExtracted) void navigate(`/verify?documentId=${firstExtracted.id}&auto=1`); }}
             >
               Continue to verify →
             </button>

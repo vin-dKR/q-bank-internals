@@ -1,5 +1,10 @@
 import type { RequestHandler } from 'express';
-import { QuestionListQuerySchema, RefineLatexSchema, UpdateQuestionSchema } from '@ingest/contracts';
+import {
+  DetectFiguresRequestSchema,
+  QuestionListQuerySchema,
+  RefineLatexSchema,
+  UpdateQuestionSchema,
+} from '@ingest/contracts';
 import { asyncHandler } from '../../shared/http/async-handler.js';
 import { ok } from '../../shared/http/api-response.js';
 import { parseOrThrow } from '../../shared/http/parse.js';
@@ -12,11 +17,17 @@ export function createQuestionsController(service: QuestionsService): {
   update: RequestHandler;
   uploadImage: RequestHandler;
   refine: RequestHandler;
+  detectFigures: RequestHandler;
 } {
   return {
     list: asyncHandler(async (req, res) => {
       const { documentId } = parseOrThrow(QuestionListQuerySchema, req.query);
       ok(res, await service.listByDocument(documentId));
+    }),
+
+    detectFigures: asyncHandler(async (req, res) => {
+      const { documentId, page } = parseOrThrow(DetectFiguresRequestSchema, req.body);
+      ok(res, await service.detectFigures(documentId, page));
     }),
 
     refine: asyncHandler(async (req, res) => {

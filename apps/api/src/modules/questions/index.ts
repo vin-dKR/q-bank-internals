@@ -4,3 +4,10 @@ export { createQuestionsRouter } from './questions.routes.js';
 export type { NewQuestion, QuestionRepository } from './questions.repository.js';
 export type { ImageStore } from './image-store.js';
 export type { LatexRefiner, LatexRefinement } from './latex-refiner.js';
+export type { PageRenderer } from './page-renderer.js';
+export type {
+  DetectorPage,
+  DiagramDetection,
+  DiagramDetectionResult,
+  DiagramDetector,
+} from './diagram-detector.js';

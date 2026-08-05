@@ -11,6 +11,9 @@ import { PageHeader } from '../../shared/ui/index.js';
 export function PipelinePage(): JSX.Element {
   const [searchParams] = useSearchParams();
   const [documentId, setDocumentId] = useState<string | null>(searchParams.get('documentId'));
+  // `?auto=1` (set by the session's "Continue to verify") means: auto-crop figures on arrival. It only
+  // applies to the document we deep-linked into — picking a different one is a plain manual session.
+  const autoRun = searchParams.get('auto') === '1' && documentId === searchParams.get('documentId');
   const publish = usePublishDocument();
 
   const onPublish = (): void => {
@@ -49,7 +52,7 @@ export function PipelinePage(): JSX.Element {
         {publish.isError ? <p className="error">{publish.error.message}</p> : null}
       </div>
 
-      {documentId ? <VerifyWorkspace documentId={documentId} /> : null}
+      {documentId ? <VerifyWorkspace documentId={documentId} autoRun={autoRun} /> : null}
     </section>
   );
 }
