@@ -4,9 +4,9 @@ import type { ChapterKind, ChapterUploadMetadata } from '@ingest/contracts';
 import {
   ChapterGroupingPanel,
   type ChapterGroup,
+  ChapterMetadataForm,
   type CutMode,
   type ReadingOrder,
-  DrivePathExplorer,
   PdfModeSelector,
   PdfPreviewer,
   PdfToolbar,
@@ -18,6 +18,7 @@ import {
   applyGridSplit,
   applyReflow,
   buildChapterPdfs,
+  chapterUnitKey,
   deletePage,
   emptySeparateChapter,
   useReflowBlocks,
@@ -49,15 +50,15 @@ const KIND_TAB_LABEL: Record<ChapterKind, string> = {
 };
 
 /**
- * One PDF to crop then upload: a single chapter's file of one kind. In the separate-files flow every
+ * One PDF to crop then upload: a chapter's file of one kind. In the separate-files flow every
  * uploaded file becomes a crop item; the crop workspace edits `bytes` in place before finalizing.
+ * `chapterId` ties the item back to its chapter, whose metadata is captured after the crop.
  */
 type CropItem = {
   id: string;
   chapterId: string;
   chapterLabel: string;
   kind: ChapterKind;
-  metadata: ChapterMetadataDraft;
   fileName: string;
   bytes: Uint8Array;
 };
@@ -254,22 +255,20 @@ export function IngestPage(): JSX.Element {
   };
 
   /**
-   * Separate-files upload step: validate every chapter, read its provided PDFs into crop items, and
-   * move into the crop phase. Question is required; answer/explanation are optional per chapter.
+   * Separate-files upload step: read every chapter's provided PDFs into crop items and move into the
+   * crop phase. Each chapter's Question PDF is required; answer/explanation are optional. Chapter
+   * metadata is captured later, in the crop workspace, exactly like the single-PDF flow.
    */
   const enterSeparateCrop = async (): Promise<void> => {
     setUploadError(null);
-    const items: CropItem[] = [];
     for (const [index, chapter] of separateChapters.entries()) {
-      const invalid = metadataError(chapter.metadata);
-      if (invalid) {
-        setUploadError(`Chapter ${String(index + 1)}: ${invalid.replace('⚠ ', '')}`);
-        return;
-      }
       if (!chapter.files.question) {
         setUploadError(`Chapter ${String(index + 1)}: a Question PDF is required.`);
         return;
       }
+    }
+    const items: CropItem[] = [];
+    for (const [index, chapter] of separateChapters.entries()) {
       for (const slot of SEPARATE_FILE_SLOTS) {
         const file = chapter.files[slot.kind];
         if (!file) continue;
@@ -278,7 +277,6 @@ export function IngestPage(): JSX.Element {
           chapterId: chapter.id,
           chapterLabel: `Chapter ${String(index + 1)}`,
           kind: slot.kind,
-          metadata: chapter.metadata,
           fileName: file.name,
           bytes: new Uint8Array(await file.arrayBuffer()),
         });
@@ -292,9 +290,41 @@ export function IngestPage(): JSX.Element {
     setPhase('crop');
   };
 
-  /** Finalize the separate-files crop: upload every (cropped) item under its kind, then to extraction. */
+  /**
+   * Finalize the separate-files crop. Validate every chapter's metadata (captured in the aside), then
+   * guarantee correct question-number mapping: each chapter must resolve to a distinct unit
+   * `(module, chapter, section)`, because that unit is exactly what the extractor uses to bind a
+   * chapter's answers/explanations to its own questions. Two chapters sharing a unit would let one
+   * chapter's Q1 borrow another's — so we block that up front rather than upload a silent mistake.
+   * Only after both checks pass does each chapter's cropped parts upload under its own metadata.
+   */
   const finalizeSeparate = async (): Promise<void> => {
     if (!sessionId) return;
+
+    for (const [index, chapter] of separateChapters.entries()) {
+      const invalid = metadataError(chapter.metadata);
+      if (invalid) {
+        setUploadError(`Chapter ${String(index + 1)}: ${invalid.replace('⚠ ', '')} Fill in its details.`);
+        return;
+      }
+    }
+
+    // Distinct-unit guard: no two chapters may map to the same (module, chapter, section).
+    const seen = new Map<string, number>();
+    for (const [index, chapter] of separateChapters.entries()) {
+      const key = chapterUnitKey(chapter.metadata);
+      const prior = seen.get(key);
+      if (prior !== undefined) {
+        setUploadError(
+          `Chapters ${String(prior + 1)} and ${String(index + 1)} have the same module · chapter · section — ` +
+            'give each a distinct chapter or section name so their questions map correctly.',
+        );
+        return;
+      }
+      seen.set(key, index);
+    }
+
+    setUploadError(null);
     setUploading(true);
     const next: Record<string, string> = {};
     // Fold the active item's latest applied version back in before uploading.
@@ -302,18 +332,19 @@ export function IngestPage(): JSX.Element {
       item.id === activeItemId && workingDoc.current ? { ...item, bytes: workingDoc.current } : item,
     );
 
+    const metadataByChapter = new Map(separateChapters.map((chapter) => [chapter.id, chapter.metadata]));
     const byChapter = new Map<string, CropItem[]>();
     for (const item of items) {
       byChapter.set(item.chapterId, [...(byChapter.get(item.chapterId) ?? []), item]);
     }
 
-    for (const [, chapterItems] of byChapter) {
-      const first = chapterItems[0];
-      if (!first) continue;
-      const base = baseMetadata(sessionId, first.metadata);
+    for (const [chapterId, chapterItems] of byChapter) {
+      const metadata = metadataByChapter.get(chapterId);
+      if (!metadata) continue;
+      const base = baseMetadata(sessionId, metadata);
       const done: string[] = [];
       for (const item of chapterItems) {
-        await uploadPart(first.chapterId, { ...base, kind: item.kind }, item.bytes, done, next);
+        await uploadPart(chapterId, { ...base, kind: item.kind }, item.bytes, done, next);
       }
     }
 
@@ -370,20 +401,41 @@ export function IngestPage(): JSX.Element {
     setUploading(false);
   };
 
-  // Which file-type tabs to show, and which chapters exist under the active tab.
+  // File-type tabs (Question / Answer / Explanation) shown for the active chapter's uploaded parts.
+  const activeChapterId = activeItem?.chapterId ?? null;
   const availableKinds = SEPARATE_FILE_SLOTS.map((slot) => slot.kind).filter((kind) =>
-    cropItems.some((item) => item.kind === kind),
+    cropItems.some((item) => item.kind === kind && item.chapterId === activeChapterId),
   );
   const activeKind = activeItem?.kind ?? availableKinds[0] ?? 'question';
-  const chaptersForKind = cropItems.filter((item) => item.kind === activeKind);
+  // The chapters available to switch between (one entry per chapter that produced crop items).
+  const cropChapters = separateChapters
+    .map((chapter, index) => ({ id: chapter.id, label: `Chapter ${String(index + 1)}` }))
+    .filter((chapter) => cropItems.some((item) => item.chapterId === chapter.id));
+  const activeSeparateChapter = separateChapters.find((chapter) => chapter.id === activeChapterId) ?? null;
 
-  /** Switch to a file-type tab, keeping the same chapter when that chapter has the kind. */
+  /** Switch to a file-type tab within the active chapter, loading that part into the cut pipeline. */
   const switchKind = (kind: ChapterKind): void => {
-    const sameChapter = cropItems.find(
-      (item) => item.kind === kind && item.chapterId === activeItem?.chapterId,
-    );
-    const target = sameChapter ?? cropItems.find((item) => item.kind === kind);
+    const target = cropItems.find((item) => item.kind === kind && item.chapterId === activeChapterId);
     if (target) loadItem(target);
+  };
+
+  /** Switch chapters, keeping the same file-type tab when the target chapter has it (else its first). */
+  const switchChapter = (chapterId: string): void => {
+    const sameKind = cropItems.find((item) => item.chapterId === chapterId && item.kind === activeKind);
+    const target = sameKind ?? cropItems.find((item) => item.chapterId === chapterId);
+    if (target) loadItem(target);
+  };
+
+  /** Patch the active chapter's metadata (edited in the crop aside, after cropping). */
+  const updateActiveMetadata = (patch: Partial<ChapterMetadataDraft>): void => {
+    if (!activeChapterId) return;
+    setSeparateChapters((prev) =>
+      prev.map((chapter) =>
+        chapter.id === activeChapterId
+          ? { ...chapter, metadata: { ...chapter.metadata, ...patch } }
+          : chapter,
+      ),
+    );
   };
 
   const resultChapters: { id: string; label: string }[] =
@@ -395,7 +447,17 @@ export function IngestPage(): JSX.Element {
     <div className="phase-actions">
       <span className="muted">Filed to the session.</span>
       <div className="row">
-        <button type="button" className="btn" onClick={() => { reset(); setPhase('upload'); setCropItems([]); }}>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => {
+            reset();
+            setPhase('upload');
+            setCropItems([]);
+            setSeparateChapters([emptySeparateChapter(Math.random().toString(36).slice(2))]);
+            setUploadError(null);
+          }}
+        >
           Save &amp; add more
         </button>
         <button
@@ -433,7 +495,6 @@ export function IngestPage(): JSX.Element {
       <SessionBar />
 
       <div className="card">
-        <DrivePathExplorer />
         {phase === 'upload' ? (
           <div className="folder-select__row" role="tablist" aria-label="Upload mode">
             <button
@@ -466,15 +527,20 @@ export function IngestPage(): JSX.Element {
         ) : null}
       </div>
 
-      {/* Separate-files, step 1: collect the three PDFs + metadata per chapter. */}
+      {/* Separate-files, step 1: collect each chapter's three PDFs (metadata comes after the crop). */}
       {mode === 'separate' && phase === 'upload' ? (
         <div className="card stack">
-          <h2>Chapters</h2>
+          <h2>Files</h2>
+          <p className="muted">
+            Add a chapter for each set of PDFs. You'll crop every file, then name each chapter before
+            extraction — questions map to their own chapter's answers and explanations.
+          </p>
           <SeparateFilesPanel chapters={separateChapters} onChange={setSeparateChapters} />
           {uploadError ? <p className="error">{uploadError}</p> : null}
           <button
             type="button"
             className="btn btn--primary btn--block"
+            disabled={separateChapters.some((chapter) => !chapter.files.question)}
             onClick={() => { void enterSeparateCrop(); }}
           >
             Continue to crop →
@@ -490,6 +556,19 @@ export function IngestPage(): JSX.Element {
         <div className="cutter-layout">
           <div className="cutter-layout__preview">
             <div className="folder-select__row" role="tablist" aria-label="File type">
+              {cropChapters.length > 1 ? (
+                <select
+                  aria-label="Chapter"
+                  value={activeChapterId ?? ''}
+                  onChange={(event) => { switchChapter(event.target.value); }}
+                >
+                  {cropChapters.map((chapter) => (
+                    <option key={chapter.id} value={chapter.id}>
+                      {chapter.label}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
               {availableKinds.map((kind) => (
                 <button
                   key={kind}
@@ -502,21 +581,6 @@ export function IngestPage(): JSX.Element {
                   {KIND_TAB_LABEL[kind]}
                 </button>
               ))}
-              {chaptersForKind.length > 1 ? (
-                <select
-                  value={activeItem.chapterId}
-                  onChange={(event) => {
-                    const target = chaptersForKind.find((item) => item.chapterId === event.target.value);
-                    if (target) loadItem(target);
-                  }}
-                >
-                  {chaptersForKind.map((item) => (
-                    <option key={item.chapterId} value={item.chapterId}>
-                      {item.chapterLabel}
-                    </option>
-                  ))}
-                </select>
-              ) : null}
               <span className="muted" style={{ marginLeft: 'auto' }}>
                 {activeItem.chapterLabel} · {KIND_TAB_LABEL[activeItem.kind]} · {activeItem.fileName}
               </span>
@@ -571,10 +635,24 @@ export function IngestPage(): JSX.Element {
           <aside className="cutter-layout__panel stack">
             {isReflow ? <ReflowBlocksPanel controller={reflow} /> : null}
 
+            {activeSeparateChapter ? (
+              <div className="chapter-card">
+                <div className="chapter-card__head">
+                  <span className="chip chip--chapter">{activeItem.chapterLabel}</span>
+                </div>
+                <p className="muted">
+                  Crop each file under its tab, then name this chapter to file it.
+                  {cropChapters.length > 1 ? ' Switch chapters with the selector above the preview.' : ''}
+                </p>
+                <ChapterMetadataForm
+                  value={activeSeparateChapter.metadata}
+                  onChange={updateActiveMetadata}
+                />
+              </div>
+            ) : null}
+
             <h2>Finalize</h2>
-            <p className="muted">
-              Crop each file under its tab, then push all of this session's files to extraction.
-            </p>
+            {uploadError ? <p className="error">{uploadError}</p> : null}
             <button
               type="button"
               className="btn btn--primary btn--block"
@@ -587,7 +665,7 @@ export function IngestPage(): JSX.Element {
               type="button"
               className="btn btn--block"
               disabled={uploading}
-              onClick={() => { setPhase('upload'); }}
+              onClick={() => { setPhase('upload'); setUploadError(null); }}
             >
               ← Back to files
             </button>
