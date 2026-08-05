@@ -7,14 +7,17 @@ import { questionsApi } from '../api/questions.api.js';
 /** Live progress for the auto-extract run: which page we're on and how many figures are saved so far. */
 export type AutoExtractProgress = { page: number; totalPages: number; saved: number };
 
+/** Tallies from a completed run: how many figures the AI found vs how many were newly cropped. */
+export type AutoExtractResult = { detected: number; saved: number };
+
 export type AutoExtractFigures = {
   /** Detect + crop + save every figure across the document. Idempotent — skips questions with an image. */
-  run: () => Promise<number>;
+  run: () => Promise<AutoExtractResult>;
   isRunning: boolean;
   progress: AutoExtractProgress | null;
   error: string | null;
-  /** Figures saved by the most recent completed run, or null before the first run. */
-  lastSaved: number | null;
+  /** Tallies from the most recent completed run, or null before the first run. */
+  lastResult: AutoExtractResult | null;
 };
 
 /** True once a question already carries a question image — auto-extract leaves those alone. */
@@ -36,9 +39,9 @@ export function useAutoExtractFigures(documentId: string): AutoExtractFigures {
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState<AutoExtractProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [lastSaved, setLastSaved] = useState<number | null>(null);
+  const [lastResult, setLastResult] = useState<AutoExtractResult | null>(null);
 
-  const run = useCallback(async (): Promise<number> => {
+  const run = useCallback(async (): Promise<AutoExtractResult> => {
     setIsRunning(true);
     setError(null);
     setProgress(null);
@@ -54,14 +57,17 @@ export function useAutoExtractFigures(documentId: string): AutoExtractFigures {
         ),
       ].sort((a, b) => a - b);
 
+      let detected = 0;
       let saved = 0;
       for (const [index, page] of pages.entries()) {
         setProgress({ page: index + 1, totalPages: pages.length, saved });
 
         const { figures } = await questionsApi.detectFigures(documentId, page);
+        detected += figures.length;
         const imageSrc = questionsApi.pageImageUrl(documentId, page);
         for (const figure of figures) {
           const question = byId.get(figure.questionId);
+          // Never overwrite a crop that's already there (a human's, or an earlier run's).
           if (!question || hasQuestionImage(question)) continue;
 
           const [x, y, width, height] = figure.bbox;
@@ -82,15 +88,16 @@ export function useAutoExtractFigures(documentId: string): AutoExtractFigures {
       }
 
       await queryClient.invalidateQueries({ queryKey: ['questions', documentId] });
-      setLastSaved(saved);
-      return saved;
+      const result = { detected, saved };
+      setLastResult(result);
+      return result;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
-      return 0;
+      return { detected: 0, saved: 0 };
     } finally {
       setIsRunning(false);
     }
   }, [documentId, queryClient]);
 
-  return { run, isRunning, progress, error, lastSaved };
+  return { run, isRunning, progress, error, lastResult };
 }

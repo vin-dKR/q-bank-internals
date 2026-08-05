@@ -4,6 +4,7 @@ import { logger } from '../../shared/logger/logger.js';
 import { readPngSize } from '../../shared/image/png-size.js';
 import type { UsageService } from '../usage/index.js';
 import type { DiagramDetector } from './diagram-detector.js';
+import { matchFiguresToQuestions } from './figure-matcher.js';
 import type { ImageStore } from './image-store.js';
 import type { LatexRefiner } from './latex-refiner.js';
 import type { PageRenderer } from './page-renderer.js';
@@ -43,8 +44,9 @@ export class QuestionsService {
   /**
    * Locate the figures on one page of a document and map each back to the question it belongs to.
    * Detection only — the client crops the returned bboxes out of the same page image and uploads
-   * them via {@link uploadImage}, so cropping stays in exactly one place (the browser canvas).
-   * A detected figure is dropped when no extracted question on that page carries its printed number.
+   * them via {@link uploadImage}, so cropping stays in exactly one place (the browser canvas). Each
+   * figure is attached by printed number, then by text snippet ({@link matchFiguresToQuestions}); a
+   * figure whose question is not on this page is dropped.
    */
   async detectFigures(documentId: string, page: number): Promise<DetectedFigures> {
     const png = await this.pages.renderPage(documentId, page);
@@ -60,10 +62,11 @@ export class QuestionsService {
     const onPage = (await this.questions.findByDocument(documentId)).filter(
       (question) => question.sourceRegion.page === page,
     );
-    const figures = detections.flatMap((detection) => {
-      const question = onPage.find((candidate) => candidate.questionNumber === detection.qNo);
-      return question ? [{ questionId: question.id, bbox: detection.bbox }] : [];
-    });
+    const figures = matchFiguresToQuestions(detections, onPage);
+    logger.info(
+      { documentId, page, detected: detections.length, matched: figures.length },
+      'figure detection matched to questions',
+    );
     return { imageWidth: width, imageHeight: height, figures };
   }
 
