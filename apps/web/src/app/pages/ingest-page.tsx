@@ -18,6 +18,7 @@ import {
   applyGridSplit,
   applyReflow,
   buildChapterPdfs,
+  deletePage,
   emptySeparateChapter,
   useReflowBlocks,
   useSplitPoints,
@@ -134,6 +135,20 @@ export function IngestPage(): JSX.Element {
     } finally {
       setApplying(false);
     }
+  };
+
+  /**
+   * Drop a page from the working document as its own pipeline version. Solves the empty page a
+   * reflow merge leaves behind, and (after a grid cut turns each slice into its own page) doubles
+   * as slice deletion. Revert restores it since it just pushes another version on the stack.
+   */
+  const handleDeletePage = async (pageNumber: number): Promise<void> => {
+    if (!activeBytes) return;
+    const next = await deletePage(activeBytes, pageNumber);
+    workingDoc.apply(next, `delete page ${String(pageNumber)}`);
+    splitPoints.reset();
+    reflow.clear();
+    setGroups([]);
   };
 
   // Cycle a slice's tag question → answer → solution → question (the on-page click-through).
@@ -407,6 +422,7 @@ export function IngestPage(): JSX.Element {
                   onHoverSlice={setHoveredSliceId}
                   onToggleTag={toggleTag}
                   onNumPages={setNumPages}
+                  onDeletePage={(pageNumber) => { void handleDeletePage(pageNumber); }}
                 />
               ) : null}
             </div>
