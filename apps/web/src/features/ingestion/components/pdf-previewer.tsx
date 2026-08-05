@@ -28,6 +28,8 @@ type PdfPreviewerProps = {
   onToggleTag: (chapterId: string, sliceId: string) => void;
   onNumPages: (numPages: number) => void;
   onDeletePage: (pageNumber: number) => void;
+  /** Forwarded to the overlay: whether pages carry a question/answer/solution tag chip. */
+  taggable?: boolean;
 };
 
 /** Renders every page of the PDF with the interactive cut + slice overlay on top. */
@@ -44,6 +46,7 @@ export function PdfPreviewer({
   onToggleTag,
   onNumPages,
   onDeletePage,
+  taggable = true,
 }: PdfPreviewerProps): JSX.Element {
   const [numPages, setNumPages] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -101,6 +104,7 @@ export function PdfPreviewer({
                     hoveredSliceId={hoveredSliceId}
                     onHoverSlice={onHoverSlice}
                     onToggleTag={onToggleTag}
+                    taggable={taggable}
                   />
                 )}
               </div>
