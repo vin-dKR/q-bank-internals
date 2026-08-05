@@ -37,6 +37,30 @@ const ZOOM_STEP = 80;
 /** The two ways to bring PDFs in: three separate files (default) or one combined PDF to cut & tag. */
 type UploadMode = 'separate' | 'cut';
 
+/** Phase-1 has two steps: choose/collect files, then crop them, before pushing to extraction. */
+type Phase = 'upload' | 'crop';
+
+/** File-type tab label in the crop workspace (explanation is the `solution` kind). */
+const KIND_TAB_LABEL: Record<ChapterKind, string> = {
+  question: 'Question',
+  answer: 'Answer',
+  solution: 'Explanation',
+};
+
+/**
+ * One PDF to crop then upload: a single chapter's file of one kind. In the separate-files flow every
+ * uploaded file becomes a crop item; the crop workspace edits `bytes` in place before finalizing.
+ */
+type CropItem = {
+  id: string;
+  chapterId: string;
+  chapterLabel: string;
+  kind: ChapterKind;
+  metadata: ChapterMetadataDraft;
+  fileName: string;
+  bytes: Uint8Array;
+};
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -70,14 +94,14 @@ function baseMetadata(sessionId: string, meta: ChapterMetadataDraft): Omit<Chapt
 }
 
 /**
- * Phase 1: file each chapter's question / answer / explanation PDFs into its Drive folder
- * (exam → subject → module → chapter) under the active session. Two modes: upload three separate
- * PDFs per chapter (default), or upload one combined PDF and cut/tag its slices by kind.
+ * Phase 1: bring each chapter's question / answer / explanation PDFs in (as three separate files or
+ * one combined PDF), crop them in the shared cut workspace, then push the results to extraction.
  */
 export function IngestPage(): JSX.Element {
   const navigate = useNavigate();
   const [sessionId] = useCurrentSession();
   const [mode, setMode] = useState<UploadMode>('separate');
+  const [phase, setPhase] = useState<Phase>('upload');
   const [didUpload, setDidUpload] = useState(false);
   const [pdfBytes, setPdfBytes] = useState<ArrayBuffer | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -86,6 +110,9 @@ export function IngestPage(): JSX.Element {
   const [separateChapters, setSeparateChapters] = useState<SeparateChapter[]>([
     emptySeparateChapter(Math.random().toString(36).slice(2)),
   ]);
+  const [cropItems, setCropItems] = useState<CropItem[]>([]);
+  const [activeItemId, setActiveItemId] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, string>>({});
   const [uploading, setUploading] = useState(false);
   const [pageWidth, setPageWidth] = useState(DEFAULT_WIDTH);
@@ -101,6 +128,8 @@ export function IngestPage(): JSX.Element {
   const { undo, redo } = splitPoints;
 
   const isReflow = cutMode === 'reflow';
+  const inSeparateCrop = mode === 'separate' && phase === 'crop';
+  const activeItem = cropItems.find((item) => item.id === activeItemId) ?? null;
 
   // The PDF the cutter is working on: the latest applied version, falling back to the source bytes.
   const activeBytes: ArrayBuffer | Uint8Array | null = workingDoc.current ?? pdfBytes;
@@ -119,6 +148,17 @@ export function IngestPage(): JSX.Element {
     workingDoc.clear();
   };
 
+  /** Reload the cut pipeline onto a specific crop item's current bytes (separate-files flow). */
+  const loadItem = useCallback(
+    (item: CropItem): void => {
+      setActiveItemId(item.id);
+      workingDoc.reset(new Uint8Array(item.bytes));
+      splitPoints.reset();
+      reflow.clear();
+    },
+    [workingDoc, splitPoints, reflow],
+  );
+
   /** Materialise the current mode's edits into a fresh PDF version so modes can be chained. */
   const applyMode = async (): Promise<void> => {
     if (!activeBytes) return;
@@ -131,6 +171,12 @@ export function IngestPage(): JSX.Element {
       splitPoints.reset();
       reflow.clear();
       setGroups([]);
+      // In the separate-files flow the active file has no slice tags — persist its cropped bytes.
+      if (inSeparateCrop && activeItemId) {
+        setCropItems((prev) =>
+          prev.map((item) => (item.id === activeItemId ? { ...item, bytes: next } : item)),
+        );
+      }
     } finally {
       setApplying(false);
     }
@@ -154,7 +200,7 @@ export function IngestPage(): JSX.Element {
 
   // Undo / redo keyboard shortcuts, ignored while typing in a field.
   useEffect(() => {
-    if (!pdfBytes) return;
+    if (!activeBytes) return;
     const onKey = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null;
       if (target && ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) return;
@@ -165,7 +211,7 @@ export function IngestPage(): JSX.Element {
     };
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); };
-  }, [pdfBytes, undo, redo]);
+  }, [activeBytes, undo, redo]);
 
   /** Upload one already-built PDF part, recording a per-chapter status line. */
   const uploadPart = async (
@@ -186,32 +232,67 @@ export function IngestPage(): JSX.Element {
     setResults({ ...next });
   };
 
-  /** Default mode: upload each chapter's three separate PDFs (question required, others optional). */
-  const handleUploadSeparate = async (): Promise<void> => {
-    if (!sessionId) return;
-    setUploading(true);
-    const next: Record<string, string> = {};
-
-    for (const chapter of separateChapters) {
+  /**
+   * Separate-files upload step: validate every chapter, read its provided PDFs into crop items, and
+   * move into the crop phase. Question is required; answer/explanation are optional per chapter.
+   */
+  const enterSeparateCrop = async (): Promise<void> => {
+    setUploadError(null);
+    const items: CropItem[] = [];
+    for (const [index, chapter] of separateChapters.entries()) {
       const invalid = metadataError(chapter.metadata);
       if (invalid) {
-        next[chapter.id] = invalid;
-        setResults({ ...next });
-        continue;
+        setUploadError(`Chapter ${String(index + 1)}: ${invalid.replace('⚠ ', '')}`);
+        return;
       }
       if (!chapter.files.question) {
-        next[chapter.id] = '⚠ Question PDF is required — skipped.';
-        setResults({ ...next });
-        continue;
+        setUploadError(`Chapter ${String(index + 1)}: a Question PDF is required.`);
+        return;
       }
-
-      const base = baseMetadata(sessionId, chapter.metadata);
-      const done: string[] = [];
       for (const slot of SEPARATE_FILE_SLOTS) {
         const file = chapter.files[slot.kind];
         if (!file) continue;
-        const bytes = new Uint8Array(await file.arrayBuffer());
-        await uploadPart(chapter.id, { ...base, kind: slot.kind }, bytes, done, next);
+        items.push({
+          id: `${chapter.id}:${slot.kind}`,
+          chapterId: chapter.id,
+          chapterLabel: `Chapter ${String(index + 1)}`,
+          kind: slot.kind,
+          metadata: chapter.metadata,
+          fileName: file.name,
+          bytes: new Uint8Array(await file.arrayBuffer()),
+        });
+      }
+    }
+    setCropItems(items);
+    setResults({});
+    setDidUpload(false);
+    const first = items[0];
+    if (first) loadItem(first);
+    setPhase('crop');
+  };
+
+  /** Finalize the separate-files crop: upload every (cropped) item under its kind, then to extraction. */
+  const finalizeSeparate = async (): Promise<void> => {
+    if (!sessionId) return;
+    setUploading(true);
+    const next: Record<string, string> = {};
+    // Fold the active item's latest applied version back in before uploading.
+    const items = cropItems.map((item) =>
+      item.id === activeItemId && workingDoc.current ? { ...item, bytes: workingDoc.current } : item,
+    );
+
+    const byChapter = new Map<string, CropItem[]>();
+    for (const item of items) {
+      byChapter.set(item.chapterId, [...(byChapter.get(item.chapterId) ?? []), item]);
+    }
+
+    for (const [, chapterItems] of byChapter) {
+      const first = chapterItems[0];
+      if (!first) continue;
+      const base = baseMetadata(sessionId, first.metadata);
+      const done: string[] = [];
+      for (const item of chapterItems) {
+        await uploadPart(first.chapterId, { ...base, kind: item.kind }, item.bytes, done, next);
       }
     }
 
@@ -268,6 +349,22 @@ export function IngestPage(): JSX.Element {
     setUploading(false);
   };
 
+  // Which file-type tabs to show, and which chapters exist under the active tab.
+  const availableKinds = SEPARATE_FILE_SLOTS.map((slot) => slot.kind).filter((kind) =>
+    cropItems.some((item) => item.kind === kind),
+  );
+  const activeKind = activeItem?.kind ?? availableKinds[0] ?? 'question';
+  const chaptersForKind = cropItems.filter((item) => item.kind === activeKind);
+
+  /** Switch to a file-type tab, keeping the same chapter when that chapter has the kind. */
+  const switchKind = (kind: ChapterKind): void => {
+    const sameChapter = cropItems.find(
+      (item) => item.kind === kind && item.chapterId === activeItem?.chapterId,
+    );
+    const target = sameChapter ?? cropItems.find((item) => item.kind === kind);
+    if (target) loadItem(target);
+  };
+
   const resultChapters: { id: string; label: string }[] =
     mode === 'separate'
       ? separateChapters.map((chapter, index) => ({ id: chapter.id, label: `Chapter ${String(index + 1)}` }))
@@ -277,7 +374,7 @@ export function IngestPage(): JSX.Element {
     <div className="phase-actions">
       <span className="muted">Filed to the session.</span>
       <div className="row">
-        <button type="button" className="btn" onClick={reset}>
+        <button type="button" className="btn" onClick={() => { reset(); setPhase('upload'); setCropItems([]); }}>
           Save &amp; add more
         </button>
         <button
@@ -309,29 +406,31 @@ export function IngestPage(): JSX.Element {
     <section className="page">
       <PageHeader
         title="Cut & upload"
-        subtitle="File each chapter's question, answer, and explanation PDFs into its session and Drive folder — as three separate files, or by cutting one combined PDF."
+        subtitle="Bring in each chapter's question, answer, and explanation PDFs, crop them in the workspace, then push to extraction."
       />
 
       <SessionBar />
 
       <div className="card">
         <DrivePathExplorer />
-        <div className="folder-select__row" role="tablist" aria-label="Upload mode">
-          <button
-            type="button"
-            className={`btn ${mode === 'separate' ? 'btn--primary' : ''}`}
-            onClick={() => { setMode('separate'); }}
-          >
-            Separate files
-          </button>
-          <button
-            type="button"
-            className={`btn ${mode === 'cut' ? 'btn--primary' : ''}`}
-            onClick={() => { setMode('cut'); }}
-          >
-            Single PDF (cut &amp; tag)
-          </button>
-        </div>
+        {phase === 'upload' ? (
+          <div className="folder-select__row" role="tablist" aria-label="Upload mode">
+            <button
+              type="button"
+              className={`btn ${mode === 'separate' ? 'btn--primary' : ''}`}
+              onClick={() => { setMode('separate'); }}
+            >
+              Separate files
+            </button>
+            <button
+              type="button"
+              className={`btn ${mode === 'cut' ? 'btn--primary' : ''}`}
+              onClick={() => { setMode('cut'); }}
+            >
+              Single PDF (cut &amp; tag)
+            </button>
+          </div>
+        ) : null}
         {mode === 'cut' ? (
           <PdfUploader
             fileName={fileName}
@@ -346,26 +445,138 @@ export function IngestPage(): JSX.Element {
         ) : null}
       </div>
 
-      {mode === 'separate' ? (
+      {/* Separate-files, step 1: collect the three PDFs + metadata per chapter. */}
+      {mode === 'separate' && phase === 'upload' ? (
         <div className="card stack">
           <h2>Chapters</h2>
           <SeparateFilesPanel chapters={separateChapters} onChange={setSeparateChapters} />
+          {uploadError ? <p className="error">{uploadError}</p> : null}
           <button
             type="button"
             className="btn btn--primary btn--block"
-            disabled={uploading || !sessionId}
-            onClick={() => { void handleUploadSeparate(); }}
+            onClick={() => { void enterSeparateCrop(); }}
           >
-            {uploading ? 'Uploading…' : 'Upload all'}
+            Continue to crop →
           </button>
           {!sessionId ? (
-            <p className="muted">Select or create a session above before uploading.</p>
+            <p className="muted">Tip: select or create a session above before you finalize.</p>
           ) : null}
-          {resultsList}
-          {continueBar}
         </div>
       ) : null}
 
+      {/* Separate-files, step 2: crop each file under its own tab, then finalize to extraction. */}
+      {inSeparateCrop && activeItem ? (
+        <div className="cutter-layout">
+          <div className="cutter-layout__preview">
+            <div className="folder-select__row" role="tablist" aria-label="File type">
+              {availableKinds.map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeKind === kind}
+                  className={`btn ${activeKind === kind ? 'btn--primary' : ''}`}
+                  onClick={() => { switchKind(kind); }}
+                >
+                  {KIND_TAB_LABEL[kind]}
+                </button>
+              ))}
+              {chaptersForKind.length > 1 ? (
+                <select
+                  value={activeItem.chapterId}
+                  onChange={(event) => {
+                    const target = chaptersForKind.find((item) => item.chapterId === event.target.value);
+                    if (target) loadItem(target);
+                  }}
+                >
+                  {chaptersForKind.map((item) => (
+                    <option key={item.chapterId} value={item.chapterId}>
+                      {item.chapterLabel}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+              <span className="muted" style={{ marginLeft: 'auto' }}>
+                {activeItem.chapterLabel} · {KIND_TAB_LABEL[activeItem.kind]} · {activeItem.fileName}
+              </span>
+            </div>
+
+            <PdfToolbar
+              controller={splitPoints}
+              zoomPercent={Math.round((pageWidth / DEFAULT_WIDTH) * 100)}
+              onZoomIn={() => { setPageWidth((w) => Math.min(MAX_WIDTH, w + ZOOM_STEP)); }}
+              onZoomOut={() => { setPageWidth((w) => Math.max(MIN_WIDTH, w - ZOOM_STEP)); }}
+              onZoomReset={() => { setPageWidth(DEFAULT_WIDTH); }}
+            />
+            <PdfModeSelector
+              mode={cutMode}
+              onModeChange={setCutMode}
+              lineCount={pendingCount}
+              onApply={() => { void applyMode(); }}
+              onResetLines={isReflow ? reflow.clear : splitPoints.clearAll}
+              onNewBlock={reflow.newBlock}
+              order={readingOrder}
+              onOrderChange={setReadingOrder}
+              applying={applying}
+              steps={workingDoc.steps}
+              stepIndex={workingDoc.stepIndex}
+              canRevert={workingDoc.canRevert}
+              canRedo={workingDoc.canRedo}
+              onRevert={workingDoc.revert}
+              onRedo={workingDoc.redo}
+            />
+            <div className="cutter-layout__scroll">
+              {activeBytes ? (
+                <PdfPreviewer
+                  key={activeItem.id}
+                  pdfBytes={activeBytes}
+                  mode={cutMode}
+                  order={readingOrder}
+                  controller={splitPoints}
+                  reflow={reflow}
+                  groups={[]}
+                  taggable={false}
+                  pageWidth={pageWidth}
+                  hoveredSliceId={hoveredSliceId}
+                  onHoverSlice={setHoveredSliceId}
+                  onToggleTag={toggleTag}
+                  onNumPages={setNumPages}
+                />
+              ) : null}
+            </div>
+          </div>
+
+          <aside className="cutter-layout__panel stack">
+            {isReflow ? <ReflowBlocksPanel controller={reflow} /> : null}
+
+            <h2>Finalize</h2>
+            <p className="muted">
+              Crop each file under its tab, then push all of this session's files to extraction.
+            </p>
+            <button
+              type="button"
+              className="btn btn--primary btn--block"
+              disabled={uploading || !sessionId}
+              onClick={() => { void finalizeSeparate(); }}
+            >
+              {uploading ? 'Uploading…' : 'Finalize & push to extraction'}
+            </button>
+            <button
+              type="button"
+              className="btn btn--block"
+              disabled={uploading}
+              onClick={() => { setPhase('upload'); }}
+            >
+              ← Back to files
+            </button>
+
+            {resultsList}
+            {continueBar}
+          </aside>
+        </div>
+      ) : null}
+
+      {/* Single combined PDF: cut & tag slices as question / answer / solution, then upload. */}
       {mode === 'cut' && pdfBytes ? (
         <div className="cutter-layout">
           <div className="cutter-layout__preview">

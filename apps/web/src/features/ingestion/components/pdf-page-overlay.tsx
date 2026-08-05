@@ -15,6 +15,9 @@ type PdfPageOverlayProps = {
   hoveredSliceId: string | null;
   onHoverSlice: (sliceId: string | null) => void;
   onToggleTag: (chapterId: string, sliceId: string) => void;
+  /** Whether whole-page cells carry the question/answer/solution tag chip. Off in the
+   *  separate-files crop, where each file is already one fixed kind (chosen by its tab). */
+  taggable?: boolean;
 };
 
 const KIND_LABEL: Record<ChapterKind, string> = {
@@ -43,6 +46,7 @@ export function PdfPageOverlay({
   hoveredSliceId,
   onHoverSlice,
   onToggleTag,
+  taggable = true,
 }: PdfPageOverlayProps): JSX.Element {
   const { splitPoints, addSplit, beginMove, moveSplit, removeSplit } = controller;
   const pageSplits = splitPoints[pageNumber] ?? [];
@@ -112,20 +116,22 @@ export function PdfPageOverlay({
                 page {pageNumber}
                 {kind ? ` · ${KIND_LABEL[kind]}` : ''}
               </span>
-              <button
-                type="button"
-                className={`slice-band__chip ${kind ? `is-${kind}` : ''}`}
-                disabled={!chapter}
-                title={chapter ? 'Toggle question / answer' : 'Add this page to a chapter to tag it'}
-                onMouseEnter={() => { onHoverSlice(sliceId); }}
-                onMouseLeave={() => { onHoverSlice(null); }}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (chapter) onToggleTag(chapter.chapterId, sliceId);
-                }}
-              >
-                {kind ? KIND_LABEL[kind] : 'no chapter'}
-              </button>
+              {taggable ? (
+                <button
+                  type="button"
+                  className={`slice-band__chip ${kind ? `is-${kind}` : ''}`}
+                  disabled={!chapter}
+                  title={chapter ? 'Toggle question / answer' : 'Add this page to a chapter to tag it'}
+                  onMouseEnter={() => { onHoverSlice(sliceId); }}
+                  onMouseLeave={() => { onHoverSlice(null); }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (chapter) onToggleTag(chapter.chapterId, sliceId);
+                  }}
+                >
+                  {kind ? KIND_LABEL[kind] : 'no chapter'}
+                </button>
+              ) : null}
             </div>
           );
         }
