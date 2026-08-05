@@ -11,6 +11,7 @@ export default tseslint.config(
       '**/generated/**',
       '**/node_modules/**',
       '**/scripts/**',
+      '**/.claude/**',
       '*.config.mjs',
       '*.config.ts',
     ],

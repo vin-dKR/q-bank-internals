@@ -6,6 +6,7 @@ import {
   useQuery,
 } from '@tanstack/react-query';
 import type { Question, UpdateQuestion } from '@ingest/contracts';
+import { useToast } from '../../../shared/ui/index.js';
 import { questionsApi } from '../api/questions.api.js';
 
 /** Loads the questions extracted from a document; idle until a document is selected. */
@@ -29,13 +30,16 @@ export function usePageCount(documentId: string | null): UseQueryResult<number> 
 /** Publishes a document's questions into the main bank, then refreshes documents + sessions. */
 export function usePublishDocument(): UseMutationResult<{ published: number }, Error, string> {
   const queryClient = useQueryClient();
+  const { success, error } = useToast();
   return useMutation({
     mutationFn: (documentId: string) => questionsApi.publishDocument(documentId),
-    onSuccess: () => {
+    onSuccess: (result) => {
+      success('Published to bank', `${String(result.published)} question(s) are now live.`);
       void queryClient.invalidateQueries({ queryKey: ['documents'] });
       void queryClient.invalidateQueries({ queryKey: ['sessions'] });
       void queryClient.invalidateQueries({ queryKey: ['session'] });
     },
+    onError: (err) => { error('Publish failed', err.message); },
   });
 }
 

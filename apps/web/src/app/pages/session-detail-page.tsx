@@ -9,9 +9,9 @@ import {
   useSession,
   useUpdateSession,
 } from '../../features/sessions/index.js';
-import { useDeleteDocument, useDocuments } from '../../features/documents/index.js';
+import { DocumentUnitList, useDeleteDocument, useDocuments } from '../../features/documents/index.js';
 import { ConfigsModal, usePublishDocument } from '../../features/questions/index.js';
-import { PageHeader, StatusBadge } from '../../shared/ui/index.js';
+import { IconTrash, LoadingState, PageHeader, Spinner, StatusBadge, useConfirm } from '../../shared/ui/index.js';
 
 type StatusFilter = DocumentStatus | 'all';
 const ACTIVE_STATUSES = new Set<DocumentStatus>(['queued', 'extracting']);
@@ -33,6 +33,7 @@ export function SessionDetailPage(): JSX.Element {
   const runSession = useRunSessionExtraction();
   const runDoc = useRunDocumentExtraction();
   const publishDoc = usePublishDocument();
+  const [confirm, confirmDialog] = useConfirm();
   const [status, setStatus] = useState<StatusFilter>('all');
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState('');
@@ -42,7 +43,7 @@ export function SessionDetailPage(): JSX.Element {
     status === 'all' ? { sessionId } : { sessionId, status: [status] },
   );
 
-  if (session.isPending) return <p className="muted">Loading session…</p>;
+  if (session.isPending) return <LoadingState label="Loading session…" />;
   if (session.isError) return <p className="error">Could not load this session.</p>;
 
   const s = session.data;
@@ -56,9 +57,74 @@ export function SessionDetailPage(): JSX.Element {
     setEditing(false);
   };
   const onDeleteSession = (): void => {
-    if (!window.confirm(`Delete session "${s.label}" and all its files + questions?`)) return;
-    deleteSession.mutate(s.id, { onSuccess: () => { void navigate('/sessions'); } });
+    void confirm({
+      title: `Delete “${s.label}”?`,
+      body: 'This removes the session and all its files and questions.',
+      tone: 'danger',
+      confirmLabel: 'Delete',
+    }).then((ok) => {
+      if (ok) deleteSession.mutate(s.id, { onSuccess: () => { void navigate('/sessions'); } });
+    });
   };
+
+  const deleteDoc = (doc: Document): void => {
+    void confirm({
+      title: `Delete “${doc.fileName}”?`,
+      tone: 'danger',
+      confirmLabel: 'Delete',
+    }).then((ok) => { if (ok) deleteDocument.mutate(doc.id); });
+  };
+
+  const publish = (doc: Document): void => {
+    void confirm({
+      title: `Publish “${doc.fileName}” to the main bank?`,
+      body: 'Its verified questions become live in the main question bank.',
+      confirmLabel: 'Publish',
+    }).then((ok) => { if (ok) publishDoc.mutate(doc.id); });
+  };
+
+  /** The per-document action buttons for the unit list — decided here from kind + status. */
+  const renderActions = (doc: Document): JSX.Element => (
+    <>
+      {isExtracted(doc) ? (
+        <>
+          <Link className="btn btn--xs" to={`/verify?documentId=${doc.id}`}>View</Link>
+          <button type="button" className="btn btn--xs" onClick={() => { setConfigsFor(doc.id); }}>
+            Configs
+          </button>
+          {doc.status === 'published' ? (
+            <span className="badge badge--success">published</span>
+          ) : (
+            <button
+              type="button"
+              className="btn btn--primary btn--xs"
+              disabled={publishDoc.isPending}
+              onClick={() => { publish(doc); }}
+            >
+              Publish
+            </button>
+          )}
+        </>
+      ) : canRun(doc) ? (
+        <button
+          type="button"
+          className="btn btn--xs"
+          disabled={runDoc.isPending}
+          onClick={() => { runDoc.mutate(doc.id); }}
+        >
+          Run
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className="btn btn--ghost btn--icon-only btn--icon-only-sm btn--danger"
+        aria-label={`Delete ${doc.fileName}`}
+        onClick={() => { deleteDoc(doc); }}
+      >
+        <IconTrash />
+      </button>
+    </>
+  );
 
   return (
     <section className="page">
@@ -115,7 +181,7 @@ export function SessionDetailPage(): JSX.Element {
               <span>Auto-run</span>
             </label>
             <button type="button" className="btn btn--ghost btn--xs" onClick={onDeleteSession}>
-              🗑 Delete session
+              <IconTrash /> Delete session
             </button>
           </div>
         </div>
@@ -133,7 +199,7 @@ export function SessionDetailPage(): JSX.Element {
             disabled={runSession.isPending || busy || pending === 0}
             onClick={() => { runSession.mutate(s.id); }}
           >
-            {busy ? 'Extracting…' : 'Run extraction on all pending'}
+            {busy ? <><Spinner /> Extracting…</> : 'Run extraction on all pending'}
           </button>
         </div>
       </div>
@@ -152,78 +218,16 @@ export function SessionDetailPage(): JSX.Element {
           </label>
         </div>
         {documents.isPending ? (
-          <p className="muted">Loading files…</p>
+          <LoadingState label="Loading files…" />
         ) : items.length === 0 ? (
           <p className="muted">No files match this filter.</p>
         ) : (
-          <div className="table-wrap">
-            <table className="doc-table">
-              <thead>
-                <tr><th>File</th><th>Kind</th><th>Section</th><th>Status</th><th>Questions</th><th></th></tr>
-              </thead>
-              <tbody>
-                {items.map((doc) => (
-                  <tr key={doc.id}>
-                    <td>{doc.fileName}</td>
-                    <td>{doc.kind}</td>
-                    <td>{doc.sectionName ?? doc.path.section}</td>
-                    <td><StatusBadge status={doc.status} /></td>
-                    <td>{doc.questionCount}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      <div className="row" style={{ justifyContent: 'flex-end' }}>
-                        {isExtracted(doc) ? (
-                          <>
-                            <Link className="btn btn--xs" to={`/verify?documentId=${doc.id}`}>View</Link>
-                            <button type="button" className="btn btn--xs" onClick={() => { setConfigsFor(doc.id); }}>
-                              Configs
-                            </button>
-                            {doc.status === 'published' ? (
-                              <span className="badge badge--success">published</span>
-                            ) : (
-                              <button
-                                type="button"
-                                className="btn btn--primary btn--xs"
-                                disabled={publishDoc.isPending}
-                                onClick={() => {
-                                  if (window.confirm(`Publish "${doc.fileName}" to the main bank?`)) {
-                                    publishDoc.mutate(doc.id);
-                                  }
-                                }}
-                              >
-                                Publish
-                              </button>
-                            )}
-                          </>
-                        ) : canRun(doc) ? (
-                          <button
-                            type="button"
-                            className="btn btn--xs"
-                            disabled={runDoc.isPending}
-                            onClick={() => { runDoc.mutate(doc.id); }}
-                          >
-                            Run
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="btn btn--ghost btn--xs"
-                          onClick={() => {
-                            if (window.confirm(`Delete "${doc.fileName}"?`)) deleteDocument.mutate(doc.id);
-                          }}
-                        >
-                          🗑
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DocumentUnitList items={items} renderActions={renderActions} />
         )}
       </div>
 
       {configsFor ? <ConfigsModal documentId={configsFor} onClose={() => { setConfigsFor(null); }} /> : null}
+      {confirmDialog}
     </section>
   );
 }

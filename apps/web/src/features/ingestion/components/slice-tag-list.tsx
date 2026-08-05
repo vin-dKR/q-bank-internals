@@ -1,12 +1,19 @@
 import { type JSX, useMemo } from 'react';
 import type { ChapterKind } from '@ingest/contracts';
 import type { SplitPointsByPage } from '../types/split-point.js';
-import { type PageRange, type SliceTags, slicesForRange } from '../lib/build-chapter-pdfs.js';
+import {
+  type PageKinds,
+  type PageRange,
+  type SliceTags,
+  sliceKind,
+  slicesForRange,
+} from '../lib/build-chapter-pdfs.js';
 
 type SliceTagListProps = {
   range: PageRange;
   splitPoints: SplitPointsByPage;
   tags: SliceTags;
+  pageKinds?: PageKinds | undefined;
   hoveredSliceId: string | null;
   onHoverSlice: (sliceId: string | null) => void;
   onTag: (sliceId: string, kind: ChapterKind) => void;
@@ -14,12 +21,14 @@ type SliceTagListProps = {
 
 /**
  * Lists the cut slices in a chapter's page range with a running question/answer count and per-slice
- * toggles. Hover mirrors the highlight on the page; untagged slices default to question.
+ * toggles. Hover mirrors the highlight on the page; untagged slices fall back to their source page's
+ * default kind (`pageKinds`), then to question.
  */
 export function SliceTagList({
   range,
   splitPoints,
   tags,
+  pageKinds,
   hoveredSliceId,
   onHoverSlice,
   onTag,
@@ -30,9 +39,9 @@ export function SliceTagList({
     return <p className="muted">No slices yet — add horizontal cuts on pages {range.from}–{range.to}.</p>;
   }
 
-  const questionCount = slices.filter((s) => (tags[s.id] ?? 'question') === 'question').length;
-  const answerCount = slices.filter((s) => tags[s.id] === 'answer').length;
-  const solutionCount = slices.filter((s) => tags[s.id] === 'solution').length;
+  const questionCount = slices.filter((s) => sliceKind(s, tags, pageKinds) === 'question').length;
+  const answerCount = slices.filter((s) => sliceKind(s, tags, pageKinds) === 'answer').length;
+  const solutionCount = slices.filter((s) => sliceKind(s, tags, pageKinds) === 'solution').length;
 
   return (
     <div className="stack stack--tight">
@@ -43,7 +52,7 @@ export function SliceTagList({
       </div>
       <ul className="slice-list">
         {slices.map((slice) => {
-          const kind: ChapterKind = tags[slice.id] ?? 'question';
+          const kind: ChapterKind = sliceKind(slice, tags, pageKinds);
           const isHovered = hoveredSliceId === slice.id;
           return (
             <li

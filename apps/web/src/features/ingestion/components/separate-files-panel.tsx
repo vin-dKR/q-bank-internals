@@ -1,5 +1,6 @@
 import { type JSX, useId, useState } from 'react';
 import type { ChapterKind } from '@ingest/contracts';
+import { IconPlus } from '../../../shared/ui/index.js';
 import {
   type SeparateChapter,
   type SeparateFiles,
@@ -204,7 +205,7 @@ export function SeparateFilesPanel({ chapters, onChange }: SeparateFilesPanelPro
       ))}
 
       <button type="button" className="btn" onClick={addChapter}>
-        ＋ Add chapter
+        <IconPlus /> Add chapter
       </button>
     </div>
   );

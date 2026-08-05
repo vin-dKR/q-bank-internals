@@ -26,3 +26,6 @@ apps/api/secrets/*
 # logs
 *.log
 logs/
+
+# Claude Code local worktrees / scratch
+.claude/
