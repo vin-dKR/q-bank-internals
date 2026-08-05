@@ -5,8 +5,8 @@ export { PdfToolbar } from './components/pdf-toolbar.js';
 export { PdfModeSelector } from './components/pdf-mode-selector.js';
 export { ReflowBlocksPanel } from './components/reflow-blocks-panel.js';
 export { ChapterGroupingPanel } from './components/chapter-grouping-panel.js';
+export { ChapterMetadataForm } from './components/chapter-metadata-form.js';
 export { SeparateFilesPanel } from './components/separate-files-panel.js';
-export { DrivePathExplorer } from './components/drive-path-explorer.js';
 export { useSplitPoints, type SplitPointsController } from './hooks/use-split-points.js';
 export { useWorkingDocument, type WorkingDocument } from './hooks/use-working-document.js';
 export { useReflowBlocks, type ReflowController } from './hooks/use-reflow-blocks.js';
@@ -18,8 +18,11 @@ export { deletePage } from './lib/delete-page.js';
 export type { CutMode, ReadingOrder } from './types/cut-mode.js';
 export { type ChapterGroup, emptyMetadata } from './types/chapter-group.js';
 export {
+  type SeparateFiles,
   type SeparateChapter,
   SEPARATE_FILE_SLOTS,
+  emptySeparateFiles,
   emptySeparateChapter,
+  chapterUnitKey,
 } from './types/separate-chapter.js';
 export type { SplitPointsByPage } from './types/split-point.js';

@@ -43,7 +43,15 @@ export function useCreateSession(): UseMutationResult<Session, Error, CreateSess
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: CreateSession) => sessionsApi.create(body),
-    onSuccess: () => {
+    onSuccess: (session) => {
+      // Seed the new session into every cached list up front so a component that selects it as the
+      // active session sees it as valid *before* the refetch lands — otherwise the gap invites a
+      // duplicate-create race.
+      queryClient.setQueriesData<SessionList>({ queryKey: ['sessions'] }, (old) =>
+        old && !old.items.some((item) => item.id === session.id)
+          ? { ...old, items: [session, ...old.items], total: old.total + 1 }
+          : old,
+      );
       void queryClient.invalidateQueries({ queryKey: ['sessions'] });
     },
   });
