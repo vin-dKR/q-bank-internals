@@ -5,13 +5,12 @@ import {
   PublishResultSchema,
   QuestionSchema,
   RefinedLatexSchema,
-  UploadedImageSchema,
 } from '@ingest/contracts';
 import { request } from '../../../shared/api/http-client.js';
-import { config } from '../../../config/env.js';
+import { uploadCrop } from '../../../shared/api/upload-crop.js';
+import { fetchPageCount, pageImageUrl } from '../../../shared/api/pages.js';
 
 const QuestionListSchema = z.array(QuestionSchema);
-const PageCountSchema = z.object({ pages: z.number().int().nonnegative() });
 
 /** Feature-scoped calls to the questions + pages endpoints. The only place this feature hits the network. */
 export const questionsApi = {
@@ -48,16 +47,8 @@ export const questionsApi = {
   },
 
   /** Upload one cropped image under `name`; returns the public URL to save on the question. */
-  uploadImage: (questionId: string, name: string, blob: Blob): Promise<{ url: string }> => {
-    const form = new FormData();
-    form.append('name', name);
-    form.append('file', blob, `${name}.png`);
-    return request(`/questions/${questionId}/images`, {
-      method: 'POST',
-      body: form,
-      schema: UploadedImageSchema,
-    });
-  },
+  uploadImage: (questionId: string, name: string, blob: Blob): Promise<{ url: string }> =>
+    uploadCrop(questionId, name, blob),
 
   /** Publish this document's questions into the main bank; returns how many rows were inserted. */
   publishDocument: (documentId: string): Promise<{ published: number }> => {
@@ -67,12 +58,8 @@ export const questionsApi = {
     });
   },
 
-  pageCount: async (documentId: string): Promise<number> => {
-    const result = await request(`/pages/${documentId}/count`, { schema: PageCountSchema });
-    return result.pages;
-  },
+  pageCount: (documentId: string): Promise<number> => fetchPageCount(documentId),
 
   /** Direct <img src> URL for a document's rendered page (same-origin, proxied to the API). */
-  pageImageUrl: (documentId: string, page: number): string =>
-    `${config.apiBaseUrl}/pages/${documentId}/${String(page)}`,
+  pageImageUrl: (documentId: string, page: number): string => pageImageUrl(documentId, page),
 };

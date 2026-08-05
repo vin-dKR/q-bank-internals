@@ -33,6 +33,14 @@ function IconCheck(): JSX.Element {
   );
 }
 
+function IconWrench(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8 6.2 21l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.7-.5-.5-2.7 2.6-2.6Z" />
+    </svg>
+  );
+}
+
 function IconGauge(): JSX.Element {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
@@ -69,6 +77,10 @@ export function AppLayout(): JSX.Element {
           <NavLink to="/verify" className="nav-item">
             <IconCheck />
             Verify
+          </NavLink>
+          <NavLink to="/bank" className="nav-item">
+            <IconWrench />
+            Fix bank images
           </NavLink>
           <NavLink to="/usage" className="nav-item">
             <IconGauge />
