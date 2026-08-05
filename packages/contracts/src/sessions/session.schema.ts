@@ -66,3 +66,19 @@ export const SessionListQuerySchema = PaginationQuerySchema.extend({
   status: SessionStatusSchema.optional(),
 });
 export type SessionListQuery = z.infer<typeof SessionListQuerySchema>;
+
+/**
+ * Body for deleting several sessions in one call — the explicit `ids` the operator selected (or the
+ * full filtered set the UI resolved). Delete-by-id list rather than delete-by-filter so the server
+ * never removes a session the operator could not see when they clicked.
+ */
+export const BulkDeleteSessionsSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1),
+});
+export type BulkDeleteSessions = z.infer<typeof BulkDeleteSessionsSchema>;
+
+/** Result of a bulk delete: how many sessions were actually removed. */
+export const BulkDeleteResultSchema = z.object({
+  deleted: z.number().int().nonnegative(),
+});
+export type BulkDeleteResult = z.infer<typeof BulkDeleteResultSchema>;

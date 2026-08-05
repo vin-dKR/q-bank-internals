@@ -6,6 +6,7 @@ export {
   useCreateSession,
   useUpdateSession,
   useDeleteSession,
+  useBulkDeleteSessions,
   useRunSessionExtraction,
   useRunDocumentExtraction,
 } from './hooks/use-sessions.js';

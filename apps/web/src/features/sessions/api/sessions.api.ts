@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import type { CreateSession, ExtractionJob, Session, SessionStatus, UpdateSession } from '@ingest/contracts';
-import { CreateSessionSchema, ExtractionJobSchema, SessionSchema, paginated } from '@ingest/contracts';
+import {
+  BulkDeleteResultSchema,
+  CreateSessionSchema,
+  ExtractionJobSchema,
+  SessionSchema,
+  paginated,
+} from '@ingest/contracts';
 import { request } from '../../../shared/api/http-client.js';
 
 const SessionListSchema = paginated(SessionSchema);
@@ -37,6 +43,15 @@ export const sessionsApi = {
     return request(`/sessions/${id}`, {
       method: 'DELETE',
       schema: z.object({ deleted: z.boolean() }),
+    });
+  },
+
+  /** Delete many sessions at once (bulk selection / delete-all-filtered); returns the count removed. */
+  bulkRemove: (ids: string[]): Promise<{ deleted: number }> => {
+    return request('/sessions/bulk-delete', {
+      method: 'POST',
+      body: { ids },
+      schema: BulkDeleteResultSchema,
     });
   },
 

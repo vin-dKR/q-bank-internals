@@ -77,6 +77,17 @@ export function useDeleteSession(): UseMutationResult<{ deleted: boolean }, Erro
   });
 }
 
+/** Deletes many sessions at once (bulk selection / delete-all-filtered), then refreshes the list. */
+export function useBulkDeleteSessions(): UseMutationResult<{ deleted: number }, Error, string[]> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => sessionsApi.bulkRemove(ids),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+    },
+  });
+}
+
 /** Queues extraction for a whole session, then refreshes views to show progress. */
 export function useRunSessionExtraction(): UseMutationResult<{ enqueued: number }, Error, string> {
   const queryClient = useQueryClient();

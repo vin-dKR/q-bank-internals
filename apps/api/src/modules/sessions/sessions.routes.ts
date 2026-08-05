@@ -10,6 +10,7 @@ export function createSessionsRouter(service: SessionsService): Router {
   router.get('/', controller.list);
   router.get('/:id', controller.getById);
   router.post('/', controller.create);
+  router.post('/bulk-delete', controller.bulkRemove);
   router.patch('/:id', controller.update);
   router.delete('/:id', controller.remove);
 

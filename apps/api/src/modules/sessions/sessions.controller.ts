@@ -1,5 +1,10 @@
 import type { RequestHandler } from 'express';
-import { CreateSessionSchema, SessionListQuerySchema, UpdateSessionSchema } from '@ingest/contracts';
+import {
+  BulkDeleteSessionsSchema,
+  CreateSessionSchema,
+  SessionListQuerySchema,
+  UpdateSessionSchema,
+} from '@ingest/contracts';
 import { asyncHandler } from '../../shared/http/async-handler.js';
 import { ok } from '../../shared/http/api-response.js';
 import { parseOrThrow } from '../../shared/http/parse.js';
@@ -16,6 +21,7 @@ export function createSessionsController(service: SessionsService): {
   create: RequestHandler;
   update: RequestHandler;
   remove: RequestHandler;
+  bulkRemove: RequestHandler;
 } {
   return {
     list: asyncHandler(async (req, res) => {
@@ -40,6 +46,11 @@ export function createSessionsController(service: SessionsService): {
     remove: asyncHandler(async (req, res) => {
       await service.delete(requiredParam(req, 'id'));
       ok(res, { deleted: true });
+    }),
+
+    bulkRemove: asyncHandler(async (req, res) => {
+      const body = parseOrThrow(BulkDeleteSessionsSchema, req.body);
+      ok(res, await service.deleteMany(body.ids));
     }),
   };
 }

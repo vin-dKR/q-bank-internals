@@ -117,6 +117,27 @@ export class SessionsService {
   async delete(id: string): Promise<void> {
     const existing = await this.sessions.findById(id);
     if (!existing) throw errors.sessionNotFound(id);
+    await this.purge(id);
+  }
+
+  /**
+   * Delete several sessions in one call (bulk / delete-all-filtered). Unknown ids are skipped rather
+   * than aborting the batch, so a session another operator already removed can't fail the whole
+   * request; returns how many were actually purged.
+   */
+  async deleteMany(ids: string[]): Promise<{ deleted: number }> {
+    let deleted = 0;
+    for (const id of ids) {
+      const existing = await this.sessions.findById(id);
+      if (!existing) continue;
+      await this.purge(id);
+      deleted += 1;
+    }
+    return { deleted };
+  }
+
+  /** Cascade-delete one session's documents, their questions, and their extraction jobs, then itself. */
+  private async purge(id: string): Promise<void> {
     const documents = await this.documents.listBySession(id);
     for (const document of documents) {
       await this.questions.deleteByDocument(document.id);

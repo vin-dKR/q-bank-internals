@@ -339,6 +339,17 @@ h2 {
   color: var(--text);
 }
 
+.btn--danger {
+  background: #fdeceb;
+  border-color: #f4c4bf;
+  color: #b42318;
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: #fbdbd8;
+  border-color: #eda49c;
+}
+
 .btn--pill {
   border-radius: var(--r-pill);
   padding: 4px 12px;
@@ -1352,6 +1363,57 @@ input[type='number']:focus {
 
 .session-card__delete {
   align-self: flex-start;
+}
+
+.session-card--selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.session-card__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.session-card__select {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+/* Bulk-action bar above the session grid (select-all + delete selected / all). */
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  flex-wrap: wrap;
+}
+
+.bulk-bar__select-all {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.bulk-bar__count {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.bulk-bar__spacer {
+  margin-left: auto;
 }
 
 .session-card__head {
