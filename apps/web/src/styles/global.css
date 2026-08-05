@@ -1764,12 +1764,18 @@ input[type='number']:focus {
 }
 
 .crop-canvas {
-  display: flex;
-  justify-content: center;
+  display: block;
   background: var(--surface-muted);
   border-radius: var(--r);
   overflow: auto;
   max-height: 74vh;
+}
+
+/* Centers the page when it fits; when zoomed past the container width, margin-auto collapses so the
+   page can be scrolled from its left edge instead of being clipped. */
+.crop-canvas__sizer {
+  margin: 0 auto;
+  width: fit-content;
 }
 
 .crop-canvas__frame {
@@ -1818,6 +1824,53 @@ input[type='number']:focus {
   border: 1.5px solid var(--accent);
   border-radius: 2px;
   z-index: 12;
+}
+
+/* An unconfirmed AI-suggested crop: distinct colour + dashed border so it reads as "pending review". */
+.cropbox--ai {
+  border-style: dashed;
+  border-color: #16a34a;
+  background: rgba(22, 163, 74, 0.14);
+}
+
+.cropbox--ai .cropbox__label {
+  background: #16a34a;
+}
+
+.cropbox--ai .cropbox__handle {
+  border-color: #16a34a;
+}
+
+/* AI suggestion review list (in the auto-crop card, above the canvas). */
+.ai-review {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.ai-review__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-review__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-muted);
+}
+
+.ai-review__label {
+  font-weight: 600;
+  color: #16a34a;
+  white-space: nowrap;
 }
 
 /* Per-question image blocks in the right panel. */

@@ -9,6 +9,10 @@ type DraggableBoxProps = BoxRect & {
   label: string;
   onUpdate: (id: string, rect: Partial<BoxRect>) => void;
   onDelete: (id: string) => void;
+  /** Zoom factor the box is rendered under, so pointer deltas map back to unscaled box coords. */
+  scale?: number;
+  /** Visual style: `ai` marks an unconfirmed AI-suggested crop (distinct colour). */
+  variant?: 'manual' | 'ai';
 };
 
 const HANDLES: { dir: Dir; cursor: string; style: React.CSSProperties }[] = [
@@ -32,11 +36,15 @@ export function DraggableBox({
   label,
   onUpdate,
   onDelete,
+  scale = 1,
+  variant = 'manual',
 }: DraggableBoxProps): JSX.Element {
   const dragging = useRef(false);
   const resizing = useRef<Dir | null>(null);
   const start = useRef({ x: 0, y: 0 });
   const initial = useRef<BoxRect>({ x, y, width, height });
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
   const [active, setActive] = useState(false);
 
   const beginDrag = useCallback(
@@ -66,8 +74,9 @@ export function DraggableBox({
 
   useEffect(() => {
     const onMove = (event: globalThis.MouseEvent): void => {
-      const dx = event.clientX - start.current.x;
-      const dy = event.clientY - start.current.y;
+      // Divide screen-pixel movement by the zoom so the box tracks the cursor 1:1 while zoomed.
+      const dx = (event.clientX - start.current.x) / scaleRef.current;
+      const dy = (event.clientY - start.current.y) / scaleRef.current;
       const base = initial.current;
       if (dragging.current) {
         onUpdate(id, { x: base.x + dx, y: base.y + dy });
@@ -104,7 +113,7 @@ export function DraggableBox({
 
   return (
     <div
-      className="cropbox"
+      className={variant === 'ai' ? 'cropbox cropbox--ai' : 'cropbox'}
       onMouseDown={beginDrag}
       onContextMenu={(event) => {
         event.preventDefault();
