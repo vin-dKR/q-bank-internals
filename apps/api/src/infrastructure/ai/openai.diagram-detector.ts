@@ -10,7 +10,12 @@ import { logger } from '../../shared/logger/logger.js';
 import { detectorPrompt } from './prompts/detection-prompts.js';
 
 /** Shape the detector prompt asks the model to return, before we validate + clamp each box. */
-type RawDetection = { q_no?: unknown; has_image?: unknown; bbox?: unknown };
+type RawDetection = {
+  q_no?: unknown;
+  has_image?: unknown;
+  bbox?: unknown;
+  question_text?: unknown;
+};
 
 /** Minimum box side (px). Matches the Python cropper — degenerate slivers are almost always noise. */
 const MIN_SIDE = 10;
@@ -37,10 +42,21 @@ function clampBox(
   return [x, y, w, h];
 }
 
+/**
+ * Parse the model's reply into a `detections` array, tolerating the ways a vision model wraps JSON:
+ * a bare object, a ```json fence, or an object with prose around it. Newer detection models don't
+ * accept `response_format: json_object`, so we can't rely on the reply being clean JSON.
+ */
 function parseDetections(content: string, width: number, height: number): DiagramDetection[] {
+  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  const start = content.indexOf('{');
+  const end = content.lastIndexOf('}');
+  const candidate =
+    fenced ?? (start !== -1 && end > start ? content.slice(start, end + 1) : content);
+
   let parsed: unknown;
   try {
-    parsed = JSON.parse(content);
+    parsed = JSON.parse(candidate);
   } catch {
     return [];
   }
@@ -52,15 +68,20 @@ function parseDetections(content: string, width: number, height: number): Diagra
     const qNo = toFiniteInt(item.q_no);
     if (qNo === null || item.has_image !== true) continue;
     const bbox = clampBox(item.bbox, width, height);
-    if (bbox) out.push({ qNo, bbox });
+    if (bbox) {
+      const questionText = typeof item.question_text === 'string' ? item.question_text : '';
+      out.push({ qNo, questionText, bbox });
+    }
   }
   return out;
 }
 
 /**
  * {@link DiagramDetector} backed by an OpenAI vision model — the TypeScript port of the Python
- * image-auto-cropper's OpenAI detector. One call per page, `response_format: json_object`, low
- * temperature for stable boxes. Runs on the API request path (the Verify auto-crop is interactive).
+ * image-auto-cropper's OpenAI detector. One call per page. Uses `max_completion_tokens` and leaves
+ * `temperature`/`response_format` at their defaults so the same code works on the older gpt-4o and on
+ * the newer spatial models (e.g. gpt-5.4, which rejects `max_tokens` and custom temperature) — the
+ * upstream cropper runs on gpt-5.4 for tight boxes. Runs on the API request path (interactive).
  */
 export class OpenAiDiagramDetector implements DiagramDetector {
   private readonly client: OpenAI;
@@ -75,9 +96,7 @@ export class OpenAiDiagramDetector implements DiagramDetector {
   async detect(page: DetectorPage): Promise<DiagramDetectionResult> {
     const response = await this.client.chat.completions.create({
       model: this.model,
-      max_tokens: 2000,
-      temperature: 0.1,
-      response_format: { type: 'json_object' },
+      max_completion_tokens: 4096,
       messages: [
         {
           role: 'user',

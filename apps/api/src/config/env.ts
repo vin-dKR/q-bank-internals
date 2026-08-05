@@ -30,9 +30,10 @@ const EnvSchema = z.object({
   // Vision model + key for the extraction worker (ported from the Python PDF Extractor).
   OPENAI_API_KEY: z.string().optional(),
   EXTRACTION_MODEL: z.string().default('gpt-4o'),
-  // Vision model for the Verify auto-crop figure detector (bounding boxes, not OCR). Defaults to the
-  // same gpt-4o the extractor uses; override to a stronger spatial model if boxes come back loose.
-  DETECTION_MODEL: z.string().default('gpt-4o'),
+  // Vision model for the Verify auto-crop figure detector (bounding-box localisation, not OCR). Uses a
+  // strong spatial model — gpt-4o gives loose, mis-placed boxes here; gpt-5.4 (the model the upstream
+  // image-auto-cropper uses) produces tight boxes. Override only if you have a better spatial model.
+  DETECTION_MODEL: z.string().default('gpt-5.4'),
 
   // BullMQ (Redis) connection for the extraction queue. Absent → in-process queue (dev, no Redis).
   REDIS_URL: z.string().optional(),

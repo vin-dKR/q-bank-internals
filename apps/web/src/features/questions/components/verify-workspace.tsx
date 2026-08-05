@@ -204,8 +204,14 @@ export function VerifyWorkspace({
             Scanning page {auto.progress.page} / {auto.progress.totalPages} — {auto.progress.saved} figure(s) saved…
           </p>
         ) : null}
-        {!auto.isRunning && auto.lastSaved !== null ? (
-          <p className="note">✓ Auto-cropped {auto.lastSaved} figure(s) onto their questions.</p>
+        {!auto.isRunning && auto.lastResult ? (
+          <p className="note">
+            {auto.lastResult.saved > 0
+              ? `✓ Auto-cropped ${String(auto.lastResult.saved)} figure(s) onto their questions.`
+              : auto.lastResult.detected > 0
+                ? `Found ${String(auto.lastResult.detected)} figure(s), but those questions already have an image — clear it to re-crop, or fix by hand below.`
+                : 'No figures detected on the questions still missing an image.'}
+          </p>
         ) : null}
         {auto.error ? <p className="error">{auto.error}</p> : null}
       </div>

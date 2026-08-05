@@ -14,6 +14,9 @@ TASK: DETECT DIAGRAMS
 1. Identify every question by its number (1, 2, 3 … or Q1, Q2 …).
 2. For each question, detect if there is an associated GRAPHICAL ELEMENT (diagram, figure, graph, illustration, or shape).
 3. Provide a TIGHT bounding box around only the visual/graphical pixels of that element.
+4. For every question that HAS a diagram, also copy the first line of that question's text verbatim
+   (the words right after the question number, up to ~12 words) into "question_text". This is used to
+   attach the cropped figure to the correct question, so transcribe it exactly as printed.
 
 CORE RULES:
   1. The bbox MUST correspond to the ACTUAL POSITION of the diagram/drawing in the image.
@@ -34,11 +37,12 @@ BOUNDING BOX FORMAT
 =============================
 OUTPUT FORMAT
 =============================
-Return a JSON object with a single "detections" array in this exact shape — no prose, no markdown:
+Return a JSON object with a single "detections" array in this exact shape — no prose, no markdown.
+"question_text" may be "" for questions with no diagram:
 {
   "detections": [
-    {"q_no": 1, "has_image": false, "bbox": null},
-    {"q_no": 2, "has_image": true,  "bbox": [x, y, w, h]}
+    {"q_no": 1, "has_image": false, "bbox": null, "question_text": ""},
+    {"q_no": 2, "has_image": true,  "bbox": [x, y, w, h], "question_text": "If |P| = 20, then P in cartesian form is"}
   ]
 }`;
 }
