@@ -11,10 +11,11 @@ export { useSplitPoints, type SplitPointsController } from './hooks/use-split-po
 export { useWorkingDocument, type WorkingDocument } from './hooks/use-working-document.js';
 export { useReflowBlocks, type ReflowController } from './hooks/use-reflow-blocks.js';
 export { useUploadChapter, type UploadChapterInput } from './hooks/use-upload-chapter.js';
-export { buildChapterPdfs } from './lib/build-chapter-pdfs.js';
+export { buildChapterPdfs, type PageKinds } from './lib/build-chapter-pdfs.js';
 export { applyGridSplit } from './lib/apply-grid-split.js';
 export { applyReflow } from './lib/apply-reflow.js';
 export { deletePage } from './lib/delete-page.js';
+export { aggregateSeparateChapters } from './lib/aggregate-separate.js';
 export type { CutMode, ReadingOrder } from './types/cut-mode.js';
 export { type ChapterGroup, emptyMetadata } from './types/chapter-group.js';
 export {
@@ -23,6 +24,5 @@ export {
   SEPARATE_FILE_SLOTS,
   emptySeparateFiles,
   emptySeparateChapter,
-  chapterUnitKey,
 } from './types/separate-chapter.js';
 export type { SplitPointsByPage } from './types/split-point.js';

@@ -7,7 +7,18 @@ import {
   useDeleteSession,
   useSessions,
 } from '../../features/sessions/index.js';
-import { PageHeader, StatusBadge } from '../../shared/ui/index.js';
+import {
+  Badge,
+  Button,
+  Card,
+  IconPlus,
+  IconTrash,
+  LoadingState,
+  PageHeader,
+  StatusBadge,
+  buttonClasses,
+  useConfirm,
+} from '../../shared/ui/index.js';
 
 type StatusFilter = SessionStatus | 'all';
 
@@ -18,6 +29,7 @@ export function SessionsPage(): JSX.Element {
   const sessions = useSessions(status === 'all' ? undefined : status);
   const deleteSession = useDeleteSession();
   const bulkDelete = useBulkDeleteSessions();
+  const [confirm, confirmDialog] = useConfirm();
 
   const items: Session[] = sessions.data?.items ?? [];
   // Selection only ever refers to sessions currently in view — the filter's onChange clears it.
@@ -37,23 +49,24 @@ export function SessionsPage(): JSX.Element {
     setSelected(allSelected ? new Set() : new Set(items.map((s) => s.id)));
   };
 
-  const removeMany = (ids: string[], prompt: string): void => {
-    if (ids.length === 0 || !window.confirm(prompt)) return;
+  const removeMany = async (ids: string[], title: string): Promise<void> => {
+    if (ids.length === 0) return;
+    if (!(await confirm({ title, tone: 'danger', confirmLabel: 'Delete' }))) return;
     bulkDelete.mutate(ids, { onSuccess: () => { setSelected(new Set()); } });
   };
 
   return (
-    <section className="page">
+    <section className="flex flex-col gap-6">
       <PageHeader
         title="Sessions"
         subtitle="Every Phase-1 upload run. Open one to review its files and run extraction."
         actions={
           <>
-            <label className="field--inline">
-              <span className="field__label">Status</span>
+            <label className="flex flex-row items-center gap-2">
+              <span className="text-[13px] font-medium text-ink-2">Status</span>
               <select
                 value={status}
-                style={{ width: 'auto' }}
+                className="w-auto"
                 onChange={(e) => {
                   setStatus(e.target.value as StatusFilter);
                   setSelected(new Set());
@@ -65,80 +78,83 @@ export function SessionsPage(): JSX.Element {
                 ))}
               </select>
             </label>
-            <Link className="btn btn--primary" to="/">＋ New session</Link>
+            <Link className={buttonClasses('primary')} to="/"><IconPlus /> New session</Link>
           </>
         }
       />
 
       {sessions.isPending ? (
-        <p className="muted">Loading sessions…</p>
+        <LoadingState label="Loading sessions…" />
       ) : sessions.isError ? (
-        <p className="error">Could not reach the API. Is it running on :4000?</p>
+        <p className="m-0 text-sm text-bad">Could not reach the API. Is it running on :4000?</p>
       ) : items.length === 0 ? (
-        <div className="card">
-          <p className="muted">
+        <Card>
+          <p className="m-0 text-sm text-ink-2">
             No sessions{status === 'all' ? '' : ` with status "${status}"`}. Head to{' '}
-            <Link to="/">Cut &amp; upload</Link> — a session is created automatically as you start.
+            <Link className="text-brand hover:underline" to="/">Cut &amp; upload</Link> — a session is
+            created automatically as you start.
           </p>
-        </div>
+        </Card>
       ) : (
         <>
-          <div className="bulk-bar">
-            <label className="bulk-bar__select-all">
+          <div className="mb-1 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface px-3.5 py-2.5">
+            <label className="flex cursor-pointer items-center gap-1.5 text-[13px]">
               <input type="checkbox" checked={allSelected} onChange={toggleAll} />
               Select all
             </label>
-            <span className="bulk-bar__count">
+            <span className="text-[13px] text-ink-2">
               {selectedIds.length > 0 ? `${String(selectedIds.length)} selected` : `${String(items.length)} sessions`}
             </span>
-            <span className="bulk-bar__spacer" />
-            <button
-              type="button"
-              className="btn btn--danger btn--xs"
+            <span className="ml-auto" />
+            <Button
+              variant="danger"
+              size="xs"
               disabled={selectedIds.length === 0 || bulkDelete.isPending}
               onClick={() =>
-                { removeMany(selectedIds, `Delete ${String(selectedIds.length)} selected session(s) and all their files?`); }
+                { void removeMany(selectedIds, `Delete ${String(selectedIds.length)} selected session(s) and all their files?`); }
               }
             >
-              🗑 Delete selected
-            </button>
-            <button
-              type="button"
-              className="btn btn--danger btn--xs"
+              <IconTrash /> Delete selected
+            </Button>
+            <Button
+              variant="danger"
+              size="xs"
               disabled={bulkDelete.isPending}
               onClick={() =>
-                { removeMany(
+                { void removeMany(
                   items.map((s) => s.id),
                   `Delete all ${String(items.length)} session(s)${status === 'all' ? '' : ` with status "${status}"`} and all their files?`,
                 ); }
               }
             >
-              🗑 Delete all{status === 'all' ? '' : ' filtered'}
-            </button>
+              <IconTrash /> Delete all{status === 'all' ? '' : ' filtered'}
+            </Button>
           </div>
 
-          <div className="session-grid">
+          <div className="grid gap-3.5 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
             {items.map((session) => {
               const context = [session.exam, session.subject, session.module].filter(Boolean).join(' › ');
               const isSelected = selected.has(session.id);
               return (
                 <div
                   key={session.id}
-                  className={`session-card${isSelected ? ' session-card--selected' : ''}`}
+                  className={`flex flex-col gap-2.5 rounded-xl border bg-surface p-4 shadow-sm transition-all hover:shadow-md ${
+                    isSelected ? 'border-brand ring-1 ring-brand' : 'border-line hover:border-line-strong'
+                  }`}
                 >
-                  <Link to={`/sessions/${session.id}`} className="session-card__body">
-                    <div className="session-card__head">
+                  <Link to={`/sessions/${session.id}`} className="flex flex-col gap-2 text-inherit no-underline">
+                    <div className="flex items-center justify-between gap-2.5 text-[15px]">
                       <strong>{session.label}</strong>
                       <StatusBadge status={session.status} />
                     </div>
-                    <div className="muted">{context || 'No context yet'}</div>
-                    <div className="session-card__meta">
+                    <div className="text-sm text-ink-2">{context || 'No context yet'}</div>
+                    <div className="mt-0.5 flex items-center gap-2.5 text-[13px] text-ink-2">
                       <span>{session.extractedCount}/{session.documentCount} extracted</span>
-                      {session.autoRun ? <span className="badge badge--info">auto-run</span> : null}
+                      {session.autoRun ? <Badge tone="info">auto-run</Badge> : null}
                     </div>
                   </Link>
-                  <div className="session-card__actions">
-                    <label className="session-card__select">
+                  <div className="flex items-center justify-between gap-2.5">
+                    <label className="flex cursor-pointer items-center gap-1.5 text-xs text-ink-2">
                       <input
                         type="checkbox"
                         checked={isSelected}
@@ -146,17 +162,21 @@ export function SessionsPage(): JSX.Element {
                       />
                       Select
                     </label>
-                    <button
-                      type="button"
-                      className="btn btn--ghost btn--xs session-card__delete"
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className="self-start"
                       onClick={() => {
-                        if (window.confirm(`Delete session "${session.label}" and all its files?`)) {
-                          deleteSession.mutate(session.id);
-                        }
+                        void confirm({
+                          title: `Delete “${session.label}”?`,
+                          body: 'This removes the session and all its files.',
+                          tone: 'danger',
+                          confirmLabel: 'Delete',
+                        }).then((ok) => { if (ok) deleteSession.mutate(session.id); });
                       }}
                     >
-                      🗑 Delete
-                    </button>
+                      <IconTrash /> Delete
+                    </Button>
                   </div>
                 </div>
               );
@@ -164,6 +184,7 @@ export function SessionsPage(): JSX.Element {
           </div>
         </>
       )}
+      {confirmDialog}
     </section>
   );
 }

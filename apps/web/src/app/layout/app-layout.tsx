@@ -61,57 +61,74 @@ function IconGauge(): JSX.Element {
   );
 }
 
+const NAV_BASE =
+  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium no-underline transition-colors [&>svg]:size-[18px] [&>svg]:flex-none';
+
+function navClass({ isActive }: { isActive: boolean }): string {
+  return `${NAV_BASE} ${
+    isActive ? 'bg-brand-soft text-brand' : 'text-ink-2 hover:bg-surface-2 hover:text-ink'
+  }`;
+}
+
 /** The shell every page renders inside: a persistent sidebar + the routed content canvas. */
 export function AppLayout(): JSX.Element {
   return (
-    <div className="app">
-      <aside className="sidebar">
-        <div className="sidebar__brand">
-          <div className="sidebar__mark">E</div>
+    <div className="grid min-h-screen grid-cols-[260px_minmax(0,1fr)] max-[820px]:grid-cols-1">
+      <aside className="sticky top-0 flex h-screen flex-col gap-1 border-r border-line bg-surface p-4 max-[820px]:static max-[820px]:h-auto max-[820px]:flex-row max-[820px]:flex-wrap max-[820px]:items-center max-[820px]:border-b max-[820px]:border-r-0">
+        <div className="mb-2 flex items-center gap-2.5 px-2 py-1">
+          <div className="grid size-8 flex-none place-items-center rounded-lg bg-[linear-gradient(140deg,var(--color-brand),#7c6cf0)] text-sm font-bold text-white">
+            E
+          </div>
           <div>
-            <div className="sidebar__title">Eduents Ingest</div>
-            <div className="sidebar__subtitle">PDF → question bank</div>
+            <div className="text-sm font-semibold leading-tight">Eduents Ingest</div>
+            <div className="text-xs text-ink-3">PDF → question bank</div>
           </div>
         </div>
 
-        <div className="sidebar__section">Pipeline</div>
-        <nav className="sidebar__nav">
-          <NavLink to="/" end className="nav-item">
+        <div className="px-2 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-ink-3 max-[820px]:hidden">
+          Pipeline
+        </div>
+        <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
+          <NavLink to="/" end className={navClass}>
             <IconScissors />
             Cut &amp; upload
           </NavLink>
-          <NavLink to="/sessions" className="nav-item">
+          <NavLink to="/sessions" className={navClass}>
             <IconLayers />
             Sessions
           </NavLink>
-          <NavLink to="/verify" className="nav-item">
+          <NavLink to="/verify" className={navClass}>
             <IconCheck />
             Verify
           </NavLink>
-          <NavLink to="/bank" className="nav-item">
+          <NavLink to="/bank" className={navClass}>
             <IconWrench />
             Fix bank images
           </NavLink>
-          <NavLink to="/usage" className="nav-item">
+          <NavLink to="/usage" className={navClass}>
             <IconGauge />
             Token usage
           </NavLink>
         </nav>
 
-        <div className="sidebar__section">Masters</div>
-        <nav className="sidebar__nav">
-          <NavLink to="/masters" className="nav-item">
+        <div className="px-2 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-ink-3 max-[820px]:hidden">
+          Masters
+        </div>
+        <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
+          <NavLink to="/masters" className={navClass}>
             <IconMasters />
             All masters
           </NavLink>
         </nav>
 
-        <div className="sidebar__spacer" />
-        <div className="sidebar__foot">Phase 1 fills sessions · Phase 2 extracts them.</div>
+        <div className="flex-1 max-[820px]:hidden" />
+        <div className="border-t border-line px-2 py-3 text-xs text-ink-3 max-[820px]:hidden">
+          Phase 1 fills sessions · Phase 2 extracts them.
+        </div>
       </aside>
 
-      <div className="content">
-        <main className="content__main">
+      <div className="min-w-0">
+        <main className="w-full px-6 py-8 lg:px-10">
           <Outlet />
         </main>
       </div>

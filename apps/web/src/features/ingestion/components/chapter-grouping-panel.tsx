@@ -6,7 +6,7 @@ import {
   type ChapterMetadataDraft,
   emptyMetadata,
 } from '../types/chapter-group.js';
-import { type SliceTags, slicesForRange } from '../lib/build-chapter-pdfs.js';
+import { type PageKinds, type SliceTags, slicesForRange } from '../lib/build-chapter-pdfs.js';
 import { ChapterMetadataForm } from './chapter-metadata-form.js';
 import { SliceTagList } from './slice-tag-list.js';
 
@@ -15,6 +15,7 @@ type ChapterGroupingPanelProps = {
   onChange: (groups: ChapterGroup[]) => void;
   numPages: number;
   splitPoints: SplitPointsByPage;
+  pageKinds?: PageKinds | undefined;
   hoveredSliceId: string | null;
   onHoverSlice: (sliceId: string | null) => void;
 };
@@ -29,6 +30,7 @@ export function ChapterGroupingPanel({
   onChange,
   numPages,
   splitPoints,
+  pageKinds,
   hoveredSliceId,
   onHoverSlice,
 }: ChapterGroupingPanelProps): JSX.Element {
@@ -143,6 +145,7 @@ export function ChapterGroupingPanel({
               range={{ from: group.from, to: group.to }}
               splitPoints={splitPoints}
               tags={group.tags}
+              pageKinds={pageKinds}
               hoveredSliceId={hoveredSliceId}
               onHoverSlice={onHoverSlice}
               onTag={(sliceId, kind) => { tagSlice(group.id, sliceId, kind); }}

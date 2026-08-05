@@ -5,6 +5,7 @@ import type { PageChapterInfo } from '../types/chapter-group.js';
 import type { SplitPointsController } from '../hooks/use-split-points.js';
 import { type CutMode, type ReadingOrder, orientationForMode } from '../types/cut-mode.js';
 import { cellsForPage } from '../lib/apply-grid-split.js';
+import type { PageKinds } from '../lib/build-chapter-pdfs.js';
 
 type PdfPageOverlayProps = {
   pageNumber: number;
@@ -12,6 +13,8 @@ type PdfPageOverlayProps = {
   order: ReadingOrder;
   controller: SplitPointsController;
   chapter: PageChapterInfo;
+  /** Page → default kind, so a whole page from an answer/explanation source pre-tags accordingly. */
+  pageKinds?: PageKinds | undefined;
   hoveredSliceId: string | null;
   onHoverSlice: (sliceId: string | null) => void;
   onToggleTag: (chapterId: string, sliceId: string) => void;
@@ -43,6 +46,7 @@ export function PdfPageOverlay({
   order,
   controller,
   chapter,
+  pageKinds,
   hoveredSliceId,
   onHoverSlice,
   onToggleTag,
@@ -106,7 +110,9 @@ export function PdfPageOverlay({
         };
         if (isWholePage) {
           const sliceId = wholePageSliceId(pageNumber);
-          const kind: ChapterKind | null = chapter ? chapter.tags[sliceId] ?? 'question' : null;
+          const kind: ChapterKind | null = chapter
+            ? chapter.tags[sliceId] ?? pageKinds?.[pageNumber] ?? 'question'
+            : null;
           const kindClass = kind === null ? 'is-loose' : `is-${kind}`;
           const isHovered = hoveredSliceId === sliceId;
           return (

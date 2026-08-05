@@ -48,14 +48,29 @@ export function slicesForRange(range: PageRange, splitPoints: SplitPointsByPage)
 export type SliceTags = Record<string, ChapterKind>;
 
 /**
+ * A page → default kind map. In the separate-files flow the aggregated PDF interleaves each chapter's
+ * question / answer / explanation source pages, so a slice's *default* kind follows the page it was
+ * cut from (answer pages → answer, explanation pages → solution) instead of always `question`. Empty
+ * (the single-PDF flow) leaves every default at `question`.
+ */
+export type PageKinds = Record<number, ChapterKind>;
+
+/** Resolve a slice's kind: an explicit tag wins, else the source page's default, else `question`. */
+export function sliceKind(slice: SliceRef, tags: SliceTags, pageKinds?: PageKinds): ChapterKind {
+  return tags[slice.id] ?? pageKinds?.[slice.pageNumber] ?? 'question';
+}
+
+/**
  * Build the question, answer, and solution PDFs for one chapter: slices are routed by their tag
- * (untagged slices default to question). A side with no slices yields `null` (nothing to upload).
+ * (untagged slices fall back to their source page's default kind, then to question). A side with no
+ * slices yields `null` (nothing to upload).
  */
 export async function buildChapterPdfs(input: {
   pdfBytes: ArrayBuffer | Uint8Array;
   range: PageRange;
   splitPoints: SplitPointsByPage;
   tags: SliceTags;
+  pageKinds?: PageKinds;
 }): Promise<{ question: Uint8Array | null; answer: Uint8Array | null; solution: Uint8Array | null }> {
   const slices = slicesForRange(input.range, input.splitPoints);
   const toSlice = (s: SliceRef): Slice => ({
@@ -65,7 +80,7 @@ export async function buildChapterPdfs(input: {
   });
 
   const build = async (kind: ChapterKind): Promise<Uint8Array | null> => {
-    const picked = slices.filter((s) => (input.tags[s.id] ?? 'question') === kind);
+    const picked = slices.filter((s) => sliceKind(s, input.tags, input.pageKinds) === kind);
     return picked.length ? buildPdfFromSlices(input.pdfBytes, picked.map(toSlice)) : null;
   };
 

@@ -2,18 +2,19 @@ import { type JSX, useMemo, useState } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/TextLayer.css';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
+// Self-host the pdf.js worker via Vite's `?url` asset import — fingerprinted, served from our own
+// origin, and correctly handled in both dev and build (the `new URL(bare-specifier)` form fails to
+// load in Vite dev with "Failed to fetch dynamically imported module").
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PdfPageOverlay } from './pdf-page-overlay.js';
 import { PdfReflowOverlay } from './pdf-reflow-overlay.js';
 import type { SplitPointsController } from '../hooks/use-split-points.js';
 import type { ReflowController } from '../hooks/use-reflow-blocks.js';
 import type { CutMode, ReadingOrder } from '../types/cut-mode.js';
 import { type ChapterGroup, chapterForPage } from '../types/chapter-group.js';
+import type { PageKinds } from '../lib/build-chapter-pdfs.js';
 
-// Self-host the pdf.js worker via Vite (no CDN): fingerprinted and served from our own origin.
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 type PdfPreviewerProps = {
   pdfBytes: ArrayBuffer | Uint8Array;
@@ -22,6 +23,7 @@ type PdfPreviewerProps = {
   controller: SplitPointsController;
   reflow: ReflowController;
   groups: ChapterGroup[];
+  pageKinds?: PageKinds | undefined;
   pageWidth: number;
   hoveredSliceId: string | null;
   onHoverSlice: (sliceId: string | null) => void;
@@ -40,6 +42,7 @@ export function PdfPreviewer({
   controller,
   reflow,
   groups,
+  pageKinds,
   pageWidth,
   hoveredSliceId,
   onHoverSlice,
@@ -101,6 +104,7 @@ export function PdfPreviewer({
                     order={order}
                     controller={controller}
                     chapter={chapter}
+                    pageKinds={pageKinds}
                     hoveredSliceId={hoveredSliceId}
                     onHoverSlice={onHoverSlice}
                     onToggleTag={onToggleTag}

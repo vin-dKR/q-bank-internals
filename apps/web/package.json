@@ -25,10 +25,12 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "@types/react-katex": "^3.0.4",
     "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"
   }

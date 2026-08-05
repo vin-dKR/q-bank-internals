@@ -1,130 +1,105 @@
-import { type JSX, useState } from 'react';
+import { type JSX, useMemo } from 'react';
 import { ExamSchema, KNOWN_QUESTION_TYPES, ModuleSchema } from '@ingest/contracts';
+import { Combobox } from '../../../shared/ui/index.js';
+import { useDocuments } from '../../documents/index.js';
+import { useSessions } from '../../sessions/index.js';
 import type { ChapterMetadataDraft } from '../types/chapter-group.js';
-
-const CUSTOM = '__custom__';
 
 type ChapterMetadataFormProps = {
   value: ChapterMetadataDraft;
   onChange: (patch: Partial<ChapterMetadataDraft>) => void;
 };
 
+function distinct(values: readonly (string | null | undefined)[]): string[] {
+  return [...new Set(values.filter((v): v is string => Boolean(v && v.trim())))].sort((a, b) =>
+    a.localeCompare(b),
+  );
+}
+
 /**
  * The metadata that files a chapter into Drive: exam → subject → module → chapter (the folder path
- * the backend auto-creates), plus section name and a dynamic question type (known options or custom).
+ * the backend auto-creates), plus section name and question type. Every field is a searchable
+ * Combobox — the fixed vocabularies (exam/module) pick-only, the open ones (subject/chapter/section/
+ * question type) creatable, seeded with the values already used across existing documents/sessions.
  */
 export function ChapterMetadataForm({ value, onChange }: ChapterMetadataFormProps): JSX.Element {
-  const knownTypes: readonly string[] = KNOWN_QUESTION_TYPES;
-  const valueIsCustom = value.questionType !== '' && !knownTypes.includes(value.questionType);
-  const [customMode, setCustomMode] = useState(valueIsCustom);
-  const showCustom = customMode || valueIsCustom;
+  const documents = useDocuments();
+  const sessions = useSessions();
+
+  const suggestions = useMemo(() => {
+    const docs = documents.data?.items ?? [];
+    const sess = sessions.data?.items ?? [];
+    return {
+      subjects: distinct(sess.map((s) => s.subject)),
+      chapters: distinct(docs.map((d) => d.path.chapter)),
+      sections: distinct([...docs.map((d) => d.path.section), ...docs.map((d) => d.sectionName)]),
+      questionTypes: distinct([...KNOWN_QUESTION_TYPES, ...docs.map((d) => d.questionType)]),
+    };
+  }, [documents.data, sessions.data]);
 
   return (
     <div className="metadata-form">
       <label className="field">
         <span>Exam</span>
-        <select
+        <Combobox
           value={value.exam}
-          onChange={(event) => { onChange({ exam: event.target.value as ChapterMetadataDraft['exam'] }); }}
-        >
-          <option value="" disabled>
-            Select…
-          </option>
-          {ExamSchema.options.map((exam) => (
-            <option key={exam} value={exam}>
-              {exam}
-            </option>
-          ))}
-        </select>
+          options={ExamSchema.options}
+          allowCustom={false}
+          placeholder="Select exam…"
+          onChange={(next) => { onChange({ exam: next as ChapterMetadataDraft['exam'] }); }}
+        />
       </label>
 
       <label className="field">
         <span>Subject</span>
-        <input
-          type="text"
+        <Combobox
           value={value.subject}
+          options={suggestions.subjects}
           placeholder="e.g. Physics"
-          onChange={(event) => { onChange({ subject: event.target.value }); }}
+          onChange={(next) => { onChange({ subject: next }); }}
         />
       </label>
 
       <label className="field">
         <span>Module</span>
-        <select
+        <Combobox
           value={value.module}
-          onChange={(event) =>
-            { onChange({ module: event.target.value as ChapterMetadataDraft['module'] }); }
-          }
-        >
-          <option value="" disabled>
-            Select…
-          </option>
-          {ModuleSchema.options.map((module) => (
-            <option key={module} value={module}>
-              {module}
-            </option>
-          ))}
-        </select>
+          options={ModuleSchema.options}
+          allowCustom={false}
+          placeholder="Select module…"
+          onChange={(next) => { onChange({ module: next as ChapterMetadataDraft['module'] }); }}
+        />
       </label>
 
       <label className="field">
         <span>Chapter</span>
-        <input
-          type="text"
+        <Combobox
           value={value.chapter}
+          options={suggestions.chapters}
           placeholder="e.g. Kinematics"
-          onChange={(event) => { onChange({ chapter: event.target.value }); }}
+          onChange={(next) => { onChange({ chapter: next }); }}
         />
       </label>
 
       <label className="field">
         <span>Section</span>
-        <input
-          type="text"
+        <Combobox
           value={value.sectionName}
+          options={suggestions.sections}
           placeholder="e.g. Exercise-1"
-          onChange={(event) => { onChange({ sectionName: event.target.value }); }}
+          onChange={(next) => { onChange({ sectionName: next }); }}
         />
       </label>
 
       <label className="field">
         <span>Question type</span>
-        <select
-          value={showCustom ? CUSTOM : value.questionType}
-          onChange={(event) => {
-            const next = event.target.value;
-            if (next === CUSTOM) {
-              setCustomMode(true);
-              onChange({ questionType: '' });
-            } else {
-              setCustomMode(false);
-              onChange({ questionType: next });
-            }
-          }}
-        >
-          <option value="" disabled>
-            Select…
-          </option>
-          {KNOWN_QUESTION_TYPES.map((type) => (
-            <option key={type} value={type}>
-              {type}
-            </option>
-          ))}
-          <option value={CUSTOM}>Custom…</option>
-        </select>
+        <Combobox
+          value={value.questionType}
+          options={suggestions.questionTypes}
+          placeholder="e.g. single_correct"
+          onChange={(next) => { onChange({ questionType: next }); }}
+        />
       </label>
-
-      {showCustom ? (
-        <label className="field">
-          <span>Custom type</span>
-          <input
-            type="text"
-            value={value.questionType}
-            placeholder="e.g. assertion_reason"
-            onChange={(event) => { onChange({ questionType: event.target.value }); }}
-          />
-        </label>
-      ) : null}
     </div>
   );
 }

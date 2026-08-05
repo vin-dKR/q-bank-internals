@@ -1,6 +1,6 @@
 import { type JSX, useEffect, useState } from 'react';
 import { useCurrentSession } from '../../../shared/lib/current-session.js';
-import { StatusBadge } from '../../../shared/ui/index.js';
+import { IconPlus, StatusBadge } from '../../../shared/ui/index.js';
 import { useCreateSession, useSessions, useUpdateSession } from '../hooks/use-sessions.js';
 
 /** Bar states: showing the active session, renaming it, or naming a brand-new one. */
@@ -11,7 +11,7 @@ type Mode = 'idle' | 'rename' | 'new';
  * switch to) one explicitly and give it a name. The active session is remembered across pages so
  * the Phase 1 → 2 → 3 flow stays connected; you can rename it or open a fresh named one any time.
  */
-export function SessionBar(): JSX.Element {
+export function SessionBar({ compact = false }: { compact?: boolean } = {}): JSX.Element {
   const sessions = useSessions();
   const create = useCreateSession();
   const update = useUpdateSession();
@@ -62,6 +62,60 @@ export function SessionBar(): JSX.Element {
   const editing = mode === 'rename' && active !== null;
   const naming = mode === 'new';
   const submit = naming ? createNamed : saveRename;
+
+  // Compact variant: a single slim row (switch + status + New) for the crop workspace top bar,
+  // where the full session card would waste vertical space the PDF needs.
+  if (compact) {
+    return (
+      <div className="session-bar--compact">
+        {editing || naming ? (
+          <div className="row">
+            <input
+              type="text"
+              value={label}
+              autoFocus
+              placeholder={naming ? 'Name this session' : 'Session name'}
+              onChange={(event) => { setLabel(event.target.value); }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') submit();
+                if (event.key === 'Escape') cancel();
+              }}
+              style={{ maxWidth: 220 }}
+            />
+            <button
+              type="button"
+              className="btn btn--primary btn--xs"
+              disabled={!label.trim() || create.isPending}
+              onClick={submit}
+            >
+              {naming ? (create.isPending ? 'Creating…' : 'Create') : 'Save'}
+            </button>
+            <button type="button" className="btn btn--xs" onClick={cancel}>Cancel</button>
+          </div>
+        ) : (
+          <>
+            <select
+              value={active ? currentId ?? '' : ''}
+              onChange={(event) => { setCurrentId(event.target.value); setMode('idle'); }}
+            >
+              <option value="" disabled>Switch session…</option>
+              {items.map((session) => (
+                <option key={session.id} value={session.id}>{session.label}</option>
+              ))}
+            </select>
+            {active ? (
+              <StatusBadge status={active.status} />
+            ) : (
+              <span className="muted">No session</span>
+            )}
+            <button type="button" className="btn btn--ghost btn--xs" disabled={create.isPending} onClick={beginNew}>
+              <IconPlus /> New
+            </button>
+          </>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="session-bar">
@@ -129,7 +183,7 @@ export function SessionBar(): JSX.Element {
           disabled={naming || create.isPending}
           onClick={beginNew}
         >
-          ＋ New
+          <IconPlus /> New
         </button>
       </div>
     </div>
