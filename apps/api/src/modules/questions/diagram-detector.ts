@@ -4,11 +4,16 @@ import type { AiTokenUsage } from '../usage/index.js';
 export type DetectorPage = { png: Buffer; width: number; height: number };
 
 /**
- * One diagram the model located on the page: the printed question number it belongs to and a tight
- * bounding box `[x, y, width, height]` in the page's natural pixels. The service maps `qNo` back to
- * the extracted question so the crop attaches to the right card.
+ * One diagram the model located on the page: the printed question number, a short verbatim snippet of
+ * that question's text, and a tight bounding box `[x, y, width, height]` in the page's natural pixels.
+ * The service attaches the crop to the right question by matching `qNo` (exact, when the extracted
+ * questions carry printed numbers) and then `questionText` (for legacy questions with no number).
  */
-export type DiagramDetection = { qNo: number; bbox: [number, number, number, number] };
+export type DiagramDetection = {
+  qNo: number;
+  questionText: string;
+  bbox: [number, number, number, number];
+};
 
 /** Detection results paired with the token spend the model reported producing them. */
 export type DiagramDetectionResult = { detections: DiagramDetection[]; usage: AiTokenUsage };
