@@ -77,5 +77,18 @@ function toBankQuestion(
     // New field on the bank — no prior explanation/solution column existed in the `Question` collection.
     explanation: question.explanation,
     flagged: false,
+    // Provenance back to the ingest pipeline (session + document + question + Drive file + source
+    // region). New field on the bank — lets the "fix a published image" flow reopen the exact page
+    // and box to re-crop from. Snake-cased to match the bank's column style.
+    ingest_ref: {
+      session_id: document.sessionId,
+      document_id: document.id,
+      question_id: question.id,
+      drive_file_id: document.driveFileId,
+      source_region: {
+        page: question.sourceRegion.page,
+        bbox: question.sourceRegion.bbox,
+      },
+    },
   };
 }

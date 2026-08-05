@@ -17,6 +17,13 @@ export const errors = {
   questionNotFound: (id: string): AppError =>
     new AppError('QUESTION_NOT_FOUND', 404, `No question with id "${id}".`),
 
+  bankQuestionNotFound: (questionId: string): AppError =>
+    new AppError(
+      'BANK_QUESTION_NOT_FOUND',
+      404,
+      `No published bank question is linked to ingest question "${questionId}".`,
+    ),
+
   pageNotFound: (documentId: string, page: number): AppError =>
     new AppError('PAGE_NOT_FOUND', 404, `Document "${documentId}" has no page ${String(page)}.`),
 

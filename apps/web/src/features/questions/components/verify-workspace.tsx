@@ -4,8 +4,7 @@ import { getCroppedBlob } from '../../../shared/lib/crop-image.js';
 import { useDocument } from '../../documents/index.js';
 import { questionsApi } from '../api/questions.api.js';
 import { usePageCount, useQuestions, useUpdateQuestion } from '../hooks/use-questions.js';
-import type { BoxRect } from './draggable-box.js';
-import { type CanvasSize, CropCanvas } from './crop-canvas.js';
+import { type BoxRect, type CanvasSize, CropCanvas } from '../../../shared/ui/index.js';
 import { type CardBox, EditableQuestionCard } from './editable-question-card.js';
 
 type Box = BoxRect & {

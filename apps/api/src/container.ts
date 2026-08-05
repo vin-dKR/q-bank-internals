@@ -23,6 +23,7 @@ import {
 } from './modules/usage/index.js';
 import { PagesService } from './modules/pages/index.js';
 import { PublishService } from './modules/publish/index.js';
+import { BankService } from './modules/bank/index.js';
 import { DriveService } from './modules/drive/index.js';
 import { IngestionService } from './modules/ingestion/index.js';
 import { InMemoryDocumentRepository } from './infrastructure/database/repositories/document.in-memory-repository.js';
@@ -52,6 +53,8 @@ import { OpenAiLatexRefiner } from './infrastructure/ai/openai.latex-refiner.js'
 import { UnconfiguredLatexRefiner } from './infrastructure/ai/unconfigured.latex-refiner.js';
 import { MongoBankPublisher } from './infrastructure/bank/mongo.bank-publisher.js';
 import { UnconfiguredBankPublisher } from './infrastructure/bank/unconfigured.bank-publisher.js';
+import { MongoBankQuestionStore } from './infrastructure/bank/mongo.bank-question-store.js';
+import { UnconfiguredBankQuestionStore } from './infrastructure/bank/unconfigured.bank-question-store.js';
 
 /**
  * The COMPOSITION ROOT (§5). The single file allowed to `new` infrastructure and decide which
@@ -64,6 +67,7 @@ export type Container = {
   usageService: UsageService;
   pagesService: PagesService;
   publishService: PublishService;
+  bankService: BankService;
   extractionService: ExtractionService;
   extractionWorker: ExtractionWorker;
   jobQueue: JobQueue;
@@ -194,6 +198,11 @@ export function createContainer(): Container {
       ? new MongoBankPublisher(getPrisma())
       : new UnconfiguredBankPublisher();
   const publishService = new PublishService(documents, questions, sessions, bankPublisher);
+  const bankQuestionStore =
+    env.DB_DRIVER === 'mongo'
+      ? new MongoBankQuestionStore(getPrisma())
+      : new UnconfiguredBankQuestionStore();
+  const bankService = new BankService(bankQuestionStore);
   const extractionService = new ExtractionService(
     documents,
     jobs,
@@ -235,6 +244,7 @@ export function createContainer(): Container {
     usageService,
     pagesService,
     publishService,
+    bankService,
     extractionService,
     extractionWorker,
     jobQueue,
