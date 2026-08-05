@@ -99,6 +99,7 @@ model Question {
   id              String           @id @default(auto()) @map("_id") @db.ObjectId
   document        Document         @relation(fields: [documentId], references: [id])
   documentId      String           @db.ObjectId
+  questionNumber  Int?
   path            SourcePath
   stem            String
   options         QuestionOption[]

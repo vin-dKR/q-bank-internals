@@ -9,6 +9,7 @@ import type {
 /** A question draft ready to persist — the extraction worker maps model output into this shape. */
 export type NewQuestion = {
   documentId: string;
+  questionNumber: number | null;
   path: SourcePath;
   stem: string;
   options: QuestionOption[];

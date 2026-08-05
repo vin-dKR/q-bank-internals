@@ -6,6 +6,7 @@ import type { NewQuestion, QuestionRepository } from '../../../modules/questions
 type QuestionRow = {
   id: string;
   documentId: string;
+  questionNumber: number | null;
   path: { module: string; chapter: string; section: string };
   stem: string;
   options: { label: string; body: string; isCorrect: boolean }[];
@@ -29,6 +30,7 @@ function toQuestion(row: QuestionRow): Question {
   return {
     id: row.id,
     documentId: row.documentId,
+    questionNumber: row.questionNumber,
     path: row.path,
     stem: row.stem,
     options: row.options,
@@ -61,6 +63,7 @@ export class PrismaQuestionRepository implements QuestionRepository {
     await this.prisma.question.createMany({
       data: questions.map((question) => ({
         documentId: question.documentId,
+        questionNumber: question.questionNumber,
         path: question.path,
         stem: question.stem,
         options: question.options,
