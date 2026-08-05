@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import type { Question, UpdateQuestion } from '@ingest/contracts';
+import type { DetectedFigures, Question, UpdateQuestion } from '@ingest/contracts';
 import {
+  DetectedFiguresSchema,
   PublishResultSchema,
   QuestionSchema,
   RefinedLatexSchema,
@@ -21,6 +22,19 @@ export const questionsApi = {
 
   update: (id: string, patch: UpdateQuestion): Promise<Question> => {
     return request(`/questions/${id}`, { method: 'PATCH', body: patch, schema: QuestionSchema });
+  },
+
+  /**
+   * AI-locate the figures on one page of a document. Returns each figure's bbox in the page image's
+   * natural pixels (plus the page's size), mapped to the question it belongs to — the client crops
+   * those regions out of the same page image and uploads them via {@link uploadImage}.
+   */
+  detectFigures: (documentId: string, page: number): Promise<DetectedFigures> => {
+    return request('/questions/detect-figures', {
+      method: 'POST',
+      body: { documentId, page },
+      schema: DetectedFiguresSchema,
+    });
   },
 
   /** One-click AI "Fix LaTeX": returns the text with math wrapped in \(...\). */

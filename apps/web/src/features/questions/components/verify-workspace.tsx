@@ -1,8 +1,9 @@
-import { type JSX, useMemo, useRef, useState } from 'react';
+import { type JSX, useEffect, useMemo, useRef, useState } from 'react';
 import type { Question } from '@ingest/contracts';
 import { getCroppedBlob } from '../../../shared/lib/crop-image.js';
 import { useDocument } from '../../documents/index.js';
 import { questionsApi } from '../api/questions.api.js';
+import { useAutoExtractFigures } from '../hooks/use-auto-extract-figures.js';
 import { usePageCount, useQuestions, useUpdateQuestion } from '../hooks/use-questions.js';
 import type { BoxRect } from './draggable-box.js';
 import { type CanvasSize, CropCanvas } from './crop-canvas.js';
@@ -24,12 +25,32 @@ function splitUrls(value: string | null): string[] {
  * The Verify crop workspace: left is the source page with draggable crop regions (undo/redo/clear);
  * right is an editable card per question (metadata + per-field AI, from EditableQuestionCard) with
  * Question/Option-image cropping that uploads to Supabase and saves the URL.
+ *
+ * `autoRun` (set when the session hands off with `?auto=1`) fires the AI figure auto-crop once on
+ * arrival; the same run is also available on demand via the "Auto-detect figures" button. The manual
+ * draggable-box cropping below is untouched — it's the human fallback for anything the AI gets wrong.
  */
-export function VerifyWorkspace({ documentId }: { documentId: string }): JSX.Element {
+export function VerifyWorkspace({
+  documentId,
+  autoRun = false,
+}: {
+  documentId: string;
+  autoRun?: boolean;
+}): JSX.Element {
   const questions = useQuestions(documentId);
   const pageCount = usePageCount(documentId);
   const document = useDocument(documentId);
   const update = useUpdateQuestion();
+  const auto = useAutoExtractFigures(documentId);
+
+  // Kick off the automatic extraction exactly once when the session pushes a document straight here.
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (autoRun && !autoStarted.current && questions.isSuccess && questions.data.length > 0) {
+      autoStarted.current = true;
+      void auto.run();
+    }
+  }, [autoRun, questions.isSuccess, questions.data, auto]);
 
   const [page, setPage] = useState(1);
   const [boxes, setBoxes] = useState<Box[]>([]);
@@ -160,7 +181,37 @@ export function VerifyWorkspace({ documentId }: { documentId: string }): JSX.Ele
   const totalPages = pageCount.data ?? 1;
 
   return (
-    <div className="verify">
+    <>
+      <div className="card">
+        <div className="row" style={{ justifyContent: 'space-between', gap: 12 }}>
+          <div>
+            <strong>AI figure auto-crop</strong>
+            <p className="muted" style={{ margin: '2px 0 0' }}>
+              Detect each question&rsquo;s diagram and crop it onto the question automatically. Anything
+              the AI misses is still fixable by hand with the crop tools below.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={auto.isRunning}
+            onClick={() => { void auto.run(); }}
+          >
+            {auto.isRunning ? 'Extracting…' : '✨ Auto-detect figures'}
+          </button>
+        </div>
+        {auto.isRunning && auto.progress ? (
+          <p className="note">
+            Scanning page {auto.progress.page} / {auto.progress.totalPages} — {auto.progress.saved} figure(s) saved…
+          </p>
+        ) : null}
+        {!auto.isRunning && auto.lastSaved !== null ? (
+          <p className="note">✓ Auto-cropped {auto.lastSaved} figure(s) onto their questions.</p>
+        ) : null}
+        {auto.error ? <p className="error">{auto.error}</p> : null}
+      </div>
+
+      <div className="verify">
       <div className="verify__canvas">
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 10 }}>
           <strong>Source page</strong>
@@ -203,5 +254,6 @@ export function VerifyWorkspace({ documentId }: { documentId: string }): JSX.Ele
         )}
       </div>
     </div>
+    </>
   );
 }

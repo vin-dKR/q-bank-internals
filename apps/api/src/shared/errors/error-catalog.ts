@@ -60,6 +60,9 @@ export const errors = {
   extractionFailed: (reason: string): AppError =>
     new AppError('EXTRACTION_FAILED', 502, `The vision model failed: ${reason}`),
 
+  detectionFailed: (reason: string): AppError =>
+    new AppError('DETECTION_FAILED', 502, `Figure detection failed: ${reason}`),
+
   tokenLimitExceeded: (window: 'daily' | 'weekly', used: number, limit: number): AppError =>
     new AppError(
       'TOKEN_LIMIT_EXCEEDED',

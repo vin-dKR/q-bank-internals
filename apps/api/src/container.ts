@@ -12,6 +12,7 @@ import {
 } from './modules/extraction/index.js';
 import {
   QuestionsService,
+  type DiagramDetector,
   type ImageStore,
   type LatexRefiner,
   type QuestionRepository,
@@ -50,6 +51,8 @@ import { SupabaseImageStore } from './infrastructure/storage/supabase.image-stor
 import { UnconfiguredImageStore } from './infrastructure/storage/unconfigured.image-store.js';
 import { OpenAiLatexRefiner } from './infrastructure/ai/openai.latex-refiner.js';
 import { UnconfiguredLatexRefiner } from './infrastructure/ai/unconfigured.latex-refiner.js';
+import { OpenAiDiagramDetector } from './infrastructure/ai/openai.diagram-detector.js';
+import { UnconfiguredDiagramDetector } from './infrastructure/ai/unconfigured.diagram-detector.js';
 import { MongoBankPublisher } from './infrastructure/bank/mongo.bank-publisher.js';
 import { UnconfiguredBankPublisher } from './infrastructure/bank/unconfigured.bank-publisher.js';
 
@@ -172,6 +175,16 @@ function buildLatexRefiner(): LatexRefiner {
   return new UnconfiguredLatexRefiner();
 }
 
+/** OpenAI vision detector for the Verify auto-crop when a key is present; otherwise a null-object. */
+function buildDiagramDetector(): DiagramDetector {
+  if (env.OPENAI_API_KEY) {
+    logger.info(`Detector: OpenAI ${env.DETECTION_MODEL}`);
+    return new OpenAiDiagramDetector(env.OPENAI_API_KEY, env.DETECTION_MODEL);
+  }
+  logger.info('Detector: unconfigured. Set OPENAI_API_KEY to auto-detect figures.');
+  return new UnconfiguredDiagramDetector();
+}
+
 export function createContainer(): Container {
   const { documents, sessions, jobs, questions, usage, limits } = buildPersistence();
   const jobQueue = buildQueue();
@@ -182,13 +195,15 @@ export function createContainer(): Container {
   const usageService = new UsageService(usage, limits, sessions, documents);
   const documentsService = new DocumentsService(documents, questions, jobs);
   const sessionsService = new SessionsService(sessions, documents, questions, jobs);
+  const pagesService = new PagesService(documents, driveService, rasterizer);
   const questionsService = new QuestionsService(
     questions,
     buildImageStore(),
     buildLatexRefiner(),
     usageService,
+    buildDiagramDetector(),
+    pagesService,
   );
-  const pagesService = new PagesService(documents, driveService, rasterizer);
   const bankPublisher =
     env.DB_DRIVER === 'mongo'
       ? new MongoBankPublisher(getPrisma())
