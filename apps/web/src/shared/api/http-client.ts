@@ -14,7 +14,7 @@ export class ApiError extends Error {
 }
 
 type RequestOptions<S extends z.ZodTypeAny> = {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   /** Schema the `data` payload is validated against — reuses @ingest/contracts, so no drift (§6.1). */
   schema: S;

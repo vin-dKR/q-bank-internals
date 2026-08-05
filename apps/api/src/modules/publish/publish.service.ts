@@ -73,6 +73,9 @@ function toBankQuestion(
     subject,
     chapter: question.path.chapter,
     answer: question.answer || null,
+    // Worked explanation merged from the sibling solution/explanation PDF (null when none was given).
+    // New field on the bank — no prior explanation/solution column existed in the `Question` collection.
+    explanation: question.explanation,
     flagged: false,
   };
 }

@@ -5,8 +5,11 @@ export type { ExtractionJobPatch, ExtractionJobStore } from './extraction.reposi
 export type { JobQueue, ExtractionJobPayload } from './job-queue.js';
 export type { PdfRasterizer } from './pdf-rasterizer.js';
 export type {
+  AnswerEntry,
+  AnswerExtraction,
   AnswerSheet,
   ExtractedQuestion,
   PageImage,
+  QuestionExtraction,
   VisionExtractor,
 } from './vision-extractor.js';

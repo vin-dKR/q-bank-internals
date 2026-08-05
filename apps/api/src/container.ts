@@ -16,6 +16,11 @@ import {
   type LatexRefiner,
   type QuestionRepository,
 } from './modules/questions/index.js';
+import {
+  UsageService,
+  type TokenLimitStore,
+  type UsageRepository,
+} from './modules/usage/index.js';
 import { PagesService } from './modules/pages/index.js';
 import { PublishService } from './modules/publish/index.js';
 import { DriveService } from './modules/drive/index.js';
@@ -28,6 +33,10 @@ import { PrismaDocumentRepository } from './infrastructure/database/repositories
 import { PrismaSessionRepository } from './infrastructure/database/repositories/session.prisma-repository.js';
 import { PrismaExtractionJobStore } from './infrastructure/database/repositories/extraction-job.prisma-store.js';
 import { PrismaQuestionRepository } from './infrastructure/database/repositories/question.prisma-repository.js';
+import { InMemoryUsageRepository } from './infrastructure/database/repositories/token-usage.in-memory-repository.js';
+import { InMemoryTokenLimitStore } from './infrastructure/database/repositories/token-limit.in-memory-store.js';
+import { PrismaUsageRepository } from './infrastructure/database/repositories/token-usage.prisma-repository.js';
+import { PrismaTokenLimitStore } from './infrastructure/database/repositories/token-limit.prisma-store.js';
 import { getPrisma } from './infrastructure/database/prisma.js';
 import { GoogleDriveStorage } from './infrastructure/drive/google-drive.storage.js';
 import { UnconfiguredDriveStorage } from './infrastructure/drive/unconfigured-drive.storage.js';
@@ -52,6 +61,7 @@ export type Container = {
   documentsService: DocumentsService;
   sessionsService: SessionsService;
   questionsService: QuestionsService;
+  usageService: UsageService;
   pagesService: PagesService;
   publishService: PublishService;
   extractionService: ExtractionService;
@@ -96,6 +106,8 @@ function buildPersistence(): {
   sessions: SessionRepository;
   jobs: ExtractionJobStore;
   questions: QuestionRepository;
+  usage: UsageRepository;
+  limits: TokenLimitStore;
 } {
   if (env.DB_DRIVER === 'mongo') {
     if (!env.DATABASE_URL) {
@@ -108,6 +120,8 @@ function buildPersistence(): {
       sessions: new PrismaSessionRepository(prisma),
       jobs: new PrismaExtractionJobStore(prisma),
       questions: new PrismaQuestionRepository(prisma),
+      usage: new PrismaUsageRepository(prisma),
+      limits: new PrismaTokenLimitStore(prisma),
     };
   }
 
@@ -117,6 +131,8 @@ function buildPersistence(): {
     sessions: new InMemorySessionRepository(),
     jobs: new InMemoryExtractionJobStore(),
     questions: new InMemoryQuestionRepository(),
+    usage: new InMemoryUsageRepository(),
+    limits: new InMemoryTokenLimitStore(),
   };
 }
 
@@ -157,22 +173,34 @@ function buildLatexRefiner(): LatexRefiner {
 }
 
 export function createContainer(): Container {
-  const { documents, sessions, jobs, questions } = buildPersistence();
+  const { documents, sessions, jobs, questions, usage, limits } = buildPersistence();
   const jobQueue = buildQueue();
   const rasterizer: PdfRasterizer = new PdfToImgRasterizer();
   const extractor = buildExtractor();
   const driveService = buildDrive();
 
+  const usageService = new UsageService(usage, limits, sessions, documents);
   const documentsService = new DocumentsService(documents, questions, jobs);
   const sessionsService = new SessionsService(sessions, documents, questions, jobs);
-  const questionsService = new QuestionsService(questions, buildImageStore(), buildLatexRefiner());
+  const questionsService = new QuestionsService(
+    questions,
+    buildImageStore(),
+    buildLatexRefiner(),
+    usageService,
+  );
   const pagesService = new PagesService(documents, driveService, rasterizer);
   const bankPublisher =
     env.DB_DRIVER === 'mongo'
       ? new MongoBankPublisher(getPrisma())
       : new UnconfiguredBankPublisher();
   const publishService = new PublishService(documents, questions, sessions, bankPublisher);
-  const extractionService = new ExtractionService(documents, jobs, jobQueue, env.EXTRACTION_MODEL);
+  const extractionService = new ExtractionService(
+    documents,
+    jobs,
+    jobQueue,
+    usageService,
+    env.EXTRACTION_MODEL,
+  );
   const extractionWorker = new ExtractionWorker(
     documents,
     questions,
@@ -180,6 +208,7 @@ export function createContainer(): Container {
     driveService,
     rasterizer,
     extractor,
+    usageService,
   );
   const ingestionService = new IngestionService(
     driveService,
@@ -203,6 +232,7 @@ export function createContainer(): Container {
     documentsService,
     sessionsService,
     questionsService,
+    usageService,
     pagesService,
     publishService,
     extractionService,

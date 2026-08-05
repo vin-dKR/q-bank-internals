@@ -25,8 +25,10 @@
   /* Question / answer accents (Phase-1 cutter) */
   --q: #3050e0;
   --a: #b45309;
+  --s: #0f9d76;
   --q-soft: rgba(48, 80, 224, 0.12);
   --a-soft: rgba(180, 83, 9, 0.14);
+  --s-soft: rgba(15, 157, 118, 0.14);
   --loose-soft: rgba(90, 98, 116, 0.09);
 
   /* Radii, shadow, layout */
@@ -762,6 +764,216 @@ input[type='number']:focus {
   cursor: pointer;
 }
 
+/* Preview of a cell the current cut lines will produce, numbered in reading order. */
+.cut-cell {
+  position: absolute;
+  border: 1px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  pointer-events: none;
+}
+
+.cut-cell__order {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 9px;
+}
+
+/* Reflow mode: rubber-band crop drawing over a page. */
+.reflow-overlay {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+  z-index: 10;
+}
+
+.reflow-crop {
+  position: absolute;
+  border: 2px solid var(--accent);
+  box-sizing: border-box;
+}
+
+.reflow-crop.is-active {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6);
+}
+
+.reflow-crop__tag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.reflow-crop__remove {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  text-align: center;
+  font-size: 13px;
+  color: #fff;
+  background: #d92d20;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.reflow-rubber {
+  position: absolute;
+  border: 2px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  pointer-events: none;
+}
+
+/* Reflow blocks side-panel (select / reorder / delete). */
+.reflow-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.reflow-panel__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reflow-panel__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.reflow-panel__item.is-active {
+  border-color: var(--block-color, var(--accent));
+  box-shadow: 0 0 0 1px var(--block-color, var(--accent));
+}
+
+.reflow-panel__swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--block-color, var(--accent));
+  flex: none;
+}
+
+.reflow-panel__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.reflow-panel__title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.reflow-panel__actions {
+  display: flex;
+  gap: 2px;
+}
+
+.mode-strip__order {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* ============================================================================
+   Cut-mode strip (mode selector + apply + pipeline)
+   ========================================================================== */
+.mode-strip {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+
+.segmented__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.segmented__item:last-child {
+  border-right: none;
+}
+
+.segmented__item.is-active {
+  color: #fff;
+  background: var(--accent);
+}
+
+.segmented__item:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.segmented__soon {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.mode-strip__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mode-strip__pipeline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
 /* ============================================================================
    Toolbar
    ========================================================================== */
@@ -938,6 +1150,12 @@ input[type='number']:focus {
   color: var(--a);
 }
 
+.chip.is-solution {
+  background: var(--s-soft);
+  border-color: transparent;
+  color: var(--s);
+}
+
 /* ============================================================================
    Slice bands over the page
    ========================================================================== */
@@ -959,6 +1177,10 @@ input[type='number']:focus {
 
 .slice-band.is-answer {
   background: var(--a-soft);
+}
+
+.slice-band.is-solution {
+  background: var(--s-soft);
 }
 
 .slice-band.is-loose {
@@ -1007,6 +1229,12 @@ input[type='number']:focus {
   color: #fff;
 }
 
+.slice-band__chip.is-solution {
+  background: var(--s);
+  border-color: var(--s);
+  color: #fff;
+}
+
 .slice-band__chip:disabled {
   cursor: not-allowed;
   opacity: 0.7;
@@ -1022,6 +1250,31 @@ input[type='number']:focus {
   background: var(--a);
   border-color: var(--a);
   color: #fff;
+}
+
+.btn--pill.is-solution.is-active {
+  background: var(--s);
+  border-color: var(--s);
+  color: #fff;
+}
+
+/* ============================================================================
+   Separate-files upload slots (default mode)
+   ========================================================================== */
+.file-slot__picked {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.file-slot__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
 }
 
 /* ============================================================================
@@ -1469,4 +1722,137 @@ input[type='number']:focus {
   .content__main {
     padding: 20px 18px 48px;
   }
+}
+
+/* ============================================================================
+   Token usage dashboard
+   ========================================================================== */
+.usage-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.usage-chart {
+  width: 100%;
+  height: 300px;
+}
+
+.usage-chart__tip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow);
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.usage-budget {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.limit-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.limit-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.limit-bar__head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.limit-bar__track {
+  height: 10px;
+  background: var(--surface-muted);
+  border-radius: var(--r-pill);
+  overflow: hidden;
+}
+
+.limit-bar__fill {
+  height: 100%;
+  border-radius: var(--r-pill);
+  transition: width 0.3s ease;
+}
+
+.limit-bar__fill--ok {
+  background: var(--accent);
+}
+
+.limit-bar__fill--near {
+  background: #b45309;
+}
+
+.limit-bar__fill--over {
+  background: #c0362c;
+}
+
+.limit-bar__flag {
+  font-size: 12px;
+  font-weight: 600;
+  color: #c0362c;
+}
+
+.limit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 320px;
+}
+
+.doc-table td.num,
+.doc-table th.num,
+.doc-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-row {
+  cursor: pointer;
+}
+
+.usage-row--muted td {
+  color: var(--text-muted);
+}
+
+.usage-row__caret {
+  display: inline-block;
+  width: 14px;
+  color: var(--text-subtle);
+  transition: transform 0.15s ease;
+}
+
+.usage-row__caret--open {
+  transform: rotate(90deg);
+}
+
+.usage-row__detail > td {
+  background: var(--surface-muted);
+  padding: 8px 14px 12px;
+}
+
+.doc-table--nested {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.doc-table--nested th,
+.doc-table--nested td {
+  padding: 8px 12px;
+  font-size: 13px;
 }

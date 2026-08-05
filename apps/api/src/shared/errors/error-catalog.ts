@@ -60,5 +60,14 @@ export const errors = {
   extractionFailed: (reason: string): AppError =>
     new AppError('EXTRACTION_FAILED', 502, `The vision model failed: ${reason}`),
 
+  tokenLimitExceeded: (window: 'daily' | 'weekly', used: number, limit: number): AppError =>
+    new AppError(
+      'TOKEN_LIMIT_EXCEEDED',
+      429,
+      `Token budget exceeded: ${window} usage (${String(used)} tokens) has reached the ` +
+        `limit of ${String(limit)}. New extractions are blocked until usage rolls off the ` +
+        `window or the limit is raised.`,
+    ),
+
   internal: (): AppError => new AppError('INTERNAL', 500, 'Something went wrong.'),
 } as const;

@@ -23,6 +23,7 @@ type Props = {
 type Draft = {
   stem: string;
   answer: string;
+  explanation: string;
   questionType: string;
   sectionName: string;
   topic: string;
@@ -92,6 +93,7 @@ export function EditableQuestionCard({
   const toDraft = (q: Question): Draft => ({
     stem: q.stem,
     answer: q.answer,
+    explanation: q.explanation ?? '',
     questionType: q.questionType ?? fallbackQuestionType ?? '',
     sectionName: q.sectionName ?? fallbackSectionName ?? '',
     topic: q.topic ?? '',
@@ -124,6 +126,7 @@ export function EditableQuestionCard({
       patch: {
         stem: draft.stem,
         answer: draft.answer,
+        explanation: draft.explanation || null,
         options: draft.options,
         questionType: draft.questionType || null,
         sectionName: draft.sectionName || null,
@@ -178,6 +181,11 @@ export function EditableQuestionCard({
       <div className="field">
         <span className="field__label">Answer <AiButton busy={fixing === 'answer'} onClick={() => { void refine('answer', draft.answer, (t) => { set('answer', t); }); }} /></span>
         <EditableLatexValue value={draft.answer} onChange={(v) => { set('answer', v); }} placeholder="Click to add answer" />
+      </div>
+
+      <div className="field">
+        <span className="field__label">Explanation <AiButton busy={fixing === 'explanation'} onClick={() => { void refine('explanation', draft.explanation, (t) => { set('explanation', t); }); }} /></span>
+        <EditableLatexValue value={draft.explanation} onChange={(v) => { set('explanation', v); }} multiline placeholder="Click to add explanation" />
       </div>
 
       <div className="field">

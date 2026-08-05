@@ -5,6 +5,7 @@ import { createQuestionsRouter } from './modules/questions/index.js';
 import { createPagesRouter } from './modules/pages/index.js';
 import { createPublishRouter } from './modules/publish/index.js';
 import { createExtractionRouter } from './modules/extraction/index.js';
+import { createUsageRouter } from './modules/usage/index.js';
 import { createDriveRouter } from './modules/drive/index.js';
 import { createIngestionRouter } from './modules/ingestion/index.js';
 import type { Container } from './container.js';
@@ -23,6 +24,7 @@ export function createApiRouter(container: Container): Router {
   router.use('/pages', createPagesRouter(container.pagesService));
   router.use('/publish', createPublishRouter(container.publishService));
   router.use('/extraction', createExtractionRouter(container.extractionService));
+  router.use('/usage', createUsageRouter(container.usageService));
   router.use('/drive', createDriveRouter(container.driveService));
   router.use('/ingestion', createIngestionRouter(container.ingestionService));
 

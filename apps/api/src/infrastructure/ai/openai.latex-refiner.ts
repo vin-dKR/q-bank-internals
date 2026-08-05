@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { errors } from '../../shared/errors/error-catalog.js';
-import type { LatexRefiner } from '../../modules/questions/index.js';
+import type { LatexRefinement, LatexRefiner } from '../../modules/questions/index.js';
 
 const SYSTEM_PROMPT =
   'You are a LaTeX formatting expert. Your job is to find and correctly wrap all LaTeX/math ' +
@@ -37,7 +37,7 @@ export class OpenAiLatexRefiner implements LatexRefiner {
     this.client = new OpenAI({ apiKey });
   }
 
-  async refine(text: string): Promise<string> {
+  async refine(text: string): Promise<LatexRefinement> {
     const response = await this.client.chat.completions.create({
       model: this.model,
       temperature: 0,
@@ -47,11 +47,18 @@ export class OpenAiLatexRefiner implements LatexRefiner {
         { role: 'user', content: userPrompt(text) },
       ],
     });
+    const usage: LatexRefinement['usage'] = {
+      model: this.model,
+      promptTokens: response.usage?.prompt_tokens ?? 0,
+      completionTokens: response.usage?.completion_tokens ?? 0,
+      totalTokens: response.usage?.total_tokens ?? 0,
+      callCount: 1,
+    };
     const content = response.choices[0]?.message.content ?? '{}';
     try {
       const parsed: unknown = JSON.parse(content);
       const refined = (parsed as { refined_text?: unknown }).refined_text;
-      return typeof refined === 'string' ? refined : text;
+      return { text: typeof refined === 'string' ? refined : text, usage };
     } catch {
       throw errors.extractionFailed('The AI returned malformed JSON while refining LaTeX.');
     }

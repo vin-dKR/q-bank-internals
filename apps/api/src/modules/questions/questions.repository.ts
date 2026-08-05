@@ -13,6 +13,7 @@ export type NewQuestion = {
   stem: string;
   options: QuestionOption[];
   answer: string;
+  explanation: string | null;
   images: QuestionImage[];
   questionType: string | null;
   sectionName: string | null;

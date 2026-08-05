@@ -78,3 +78,32 @@ ANSWER RULES:
 4. If no section name is printed, use "General".
 5. Use LaTeX for math; return valid, complete JSON only — no prose, no trailing commas.`;
 }
+
+/**
+ * The worked-solution extraction prompt. A solution PDF has the reasoning/steps for each question,
+ * and usually restates the final answer. We capture BOTH so the solution can back-fill an answer the
+ * answer sheet was missing, while also giving the verifier the full explanation text.
+ */
+export function solutionPrompt(document: Document): string {
+  return `You are given an image from an exam SOLUTIONS booklet (${context(document)}).
+Extract the worked solution for EVERY question visible in the image into this exact JSON shape:
+
+{
+  "sections": [
+    {
+      "section_name": "Exercise O-1",
+      "solutions": {
+        "1": { "answer": "A", "explanation": "Step-by-step reasoning …" }
+      }
+    }
+  ]
+}
+
+SOLUTION RULES:
+1. Include ALL sections in the image; question numbers may restart per section.
+2. solutions keys are the question numbers as strings ("1", "2", …).
+3. explanation: the complete worked solution / reasoning as printed, preserving math as LaTeX (e.g. \\( \\sqrt{3} \\)). Do NOT summarise or omit steps.
+4. answer: the final answer if the solution states one (letter "A"–"D", joined letters like "AC", or a numeric/text value); use null if no final answer is given.
+5. If no section name is printed, use "General".
+6. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`;
+}

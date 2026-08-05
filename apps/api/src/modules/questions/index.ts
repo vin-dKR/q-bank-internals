@@ -3,4 +3,4 @@ export { QuestionsService } from './questions.service.js';
 export { createQuestionsRouter } from './questions.routes.js';
 export type { NewQuestion, QuestionRepository } from './questions.repository.js';
 export type { ImageStore } from './image-store.js';
-export type { LatexRefiner } from './latex-refiner.js';
+export type { LatexRefiner, LatexRefinement } from './latex-refiner.js';

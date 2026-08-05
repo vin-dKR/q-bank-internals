@@ -10,7 +10,8 @@
     "./ingestion": "./src/ingestion/index.ts",
     "./documents": "./src/documents/index.ts",
     "./questions": "./src/questions/index.ts",
-    "./extraction": "./src/extraction/index.ts"
+    "./extraction": "./src/extraction/index.ts",
+    "./usage": "./src/usage/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

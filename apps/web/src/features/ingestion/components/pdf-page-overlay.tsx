@@ -3,10 +3,13 @@ import type { ChapterKind } from '@ingest/contracts';
 import type { SplitPoint } from '../types/split-point.js';
 import type { PageChapterInfo } from '../types/chapter-group.js';
 import type { SplitPointsController } from '../hooks/use-split-points.js';
-import { slicesForPage } from '../lib/build-chapter-pdfs.js';
+import { type CutMode, type ReadingOrder, orientationForMode } from '../types/cut-mode.js';
+import { cellsForPage } from '../lib/apply-grid-split.js';
 
 type PdfPageOverlayProps = {
   pageNumber: number;
+  mode: CutMode;
+  order: ReadingOrder;
   controller: SplitPointsController;
   chapter: PageChapterInfo;
   hoveredSliceId: string | null;
@@ -20,13 +23,21 @@ const KIND_LABEL: Record<ChapterKind, string> = {
   solution: 'Solution',
 };
 
+/** Tag id of a page with no interior cuts — matches the single slice `slicesForPage` emits. */
+const wholePageSliceId = (pageNumber: number): string => `${String(pageNumber)}:0`;
+
 /**
- * Interactive layer over a rendered page. Shows every cut slice as a colour-coded band you can tag
- * question/answer in place; left-click empty space adds a horizontal cut, right-click a vertical
- * guide, and both are draggable/removable.
+ * Interactive layer over a rendered page. A plain click draws a cut line in the active mode's
+ * orientation (right-click draws the opposite axis as a quick guide); every cut line is
+ * draggable/removable. The cells the current lines will produce are shaded and numbered in
+ * column-major reading order so the operator sees the result before applying. Once cuts are
+ * materialised into their own pages, a page has one whole-page cell that carries the question /
+ * answer tag chip.
  */
 export function PdfPageOverlay({
   pageNumber,
+  mode,
+  order,
   controller,
   chapter,
   hoveredSliceId,
@@ -35,7 +46,8 @@ export function PdfPageOverlay({
 }: PdfPageOverlayProps): JSX.Element {
   const { splitPoints, addSplit, beginMove, moveSplit, removeSplit } = controller;
   const pageSplits = splitPoints[pageNumber] ?? [];
-  const slices = slicesForPage(pageNumber, pageSplits);
+  const cells = cellsForPage(pageNumber, pageSplits, order);
+  const isWholePage = cells.length === 1;
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<{ id: string; orientation: SplitPoint['orientation'] } | null>(
     null,
@@ -46,11 +58,11 @@ export function PdfPageOverlay({
     const rect = containerRef.current.getBoundingClientRect();
     const x = (event.clientX - rect.left) / rect.width;
     const y = (event.clientY - rect.top) / rect.height;
-    if (event.button === 2) {
-      addSplit(pageNumber, x, 'vertical');
-    } else {
-      addSplit(pageNumber, y, 'horizontal');
-    }
+    const active = orientationForMode(mode);
+    const opposite = active === 'horizontal' ? 'vertical' : 'horizontal';
+    // Right-click drops a guide on the other axis without leaving the current mode.
+    const orientation = event.button === 2 ? opposite : active;
+    addSplit(pageNumber, orientation === 'horizontal' ? y : x, orientation);
   };
 
   useEffect(() => {
@@ -80,36 +92,46 @@ export function PdfPageOverlay({
       onClick={handleAddSplit}
       onContextMenu={(event) => { event.preventDefault(); }}
     >
-      {/* Colour-coded slice bands (do not capture the add-cut click). */}
-      {slices.map((slice) => {
-        const kind: ChapterKind | null = chapter ? chapter.tags[slice.id] ?? 'question' : null;
-        const kindClass = kind === null ? 'is-loose' : `is-${kind}`;
-        const isHovered = hoveredSliceId === slice.id;
+      {/* Cell grid: whole-page cells carry the tag chip; multi-cut cells just preview the split. */}
+      {cells.map((cell, index) => {
         const bandStyle: CSSProperties = {
-          top: `${String(slice.start * 100)}%`,
-          height: `${String((slice.end - slice.start) * 100)}%`,
+          top: `${String(cell.start * 100)}%`,
+          height: `${String((cell.end - cell.start) * 100)}%`,
+          left: `${String((cell.x0 ?? 0) * 100)}%`,
+          width: `${String(((cell.x1 ?? 1) - (cell.x0 ?? 0)) * 100)}%`,
         };
+        if (isWholePage) {
+          const sliceId = wholePageSliceId(pageNumber);
+          const kind: ChapterKind | null = chapter ? chapter.tags[sliceId] ?? 'question' : null;
+          const kindClass = kind === null ? 'is-loose' : `is-${kind}`;
+          const isHovered = hoveredSliceId === sliceId;
+          return (
+            <div key={sliceId} className={`slice-band ${kindClass} ${isHovered ? 'is-hovered' : ''}`} style={bandStyle}>
+              <span className="slice-band__label">
+                {chapter ? `C${String(chapter.chapterIndex + 1)} · ` : ''}
+                page {pageNumber}
+                {kind ? ` · ${KIND_LABEL[kind]}` : ''}
+              </span>
+              <button
+                type="button"
+                className={`slice-band__chip ${kind ? `is-${kind}` : ''}`}
+                disabled={!chapter}
+                title={chapter ? 'Toggle question / answer' : 'Add this page to a chapter to tag it'}
+                onMouseEnter={() => { onHoverSlice(sliceId); }}
+                onMouseLeave={() => { onHoverSlice(null); }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (chapter) onToggleTag(chapter.chapterId, sliceId);
+                }}
+              >
+                {kind ? KIND_LABEL[kind] : 'no chapter'}
+              </button>
+            </div>
+          );
+        }
         return (
-          <div key={slice.id} className={`slice-band ${kindClass} ${isHovered ? 'is-hovered' : ''}`} style={bandStyle}>
-            <span className="slice-band__label">
-              {chapter ? `C${String(chapter.chapterIndex + 1)} · ` : ''}
-              slice {slice.index + 1}
-              {kind ? ` · ${KIND_LABEL[kind]}` : ''}
-            </span>
-            <button
-              type="button"
-              className={`slice-band__chip ${kind ? `is-${kind}` : ''}`}
-              disabled={!chapter}
-              title={chapter ? 'Toggle question / answer' : 'Add this page to a chapter to tag it'}
-              onMouseEnter={() => { onHoverSlice(slice.id); }}
-              onMouseLeave={() => { onHoverSlice(null); }}
-              onClick={(event) => {
-                event.stopPropagation();
-                if (chapter) onToggleTag(chapter.chapterId, slice.id);
-              }}
-            >
-              {kind ? KIND_LABEL[kind] : 'no chapter'}
-            </button>
+          <div key={`cell-${String(index)}`} className="cut-cell" style={bandStyle}>
+            <span className="cut-cell__order">{index + 1}</span>
           </div>
         );
       })}

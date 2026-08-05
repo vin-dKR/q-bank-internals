@@ -4,6 +4,7 @@ import { PipelinePage } from './pages/pipeline-page.js';
 import { IngestPage } from './pages/ingest-page.js';
 import { SessionsPage } from './pages/sessions-page.js';
 import { SessionDetailPage } from './pages/session-detail-page.js';
+import { UsagePage } from './pages/usage-page.js';
 
 /** The route map. Feature pages are composed here; features themselves stay routing-agnostic. */
 export const router = createBrowserRouter([
@@ -15,6 +16,7 @@ export const router = createBrowserRouter([
       { path: 'sessions', element: <SessionsPage /> },
       { path: 'sessions/:sessionId', element: <SessionDetailPage /> },
       { path: 'verify', element: <PipelinePage /> },
+      { path: 'usage', element: <UsagePage /> },
     ],
   },
 ]);

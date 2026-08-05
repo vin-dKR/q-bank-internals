@@ -3,7 +3,10 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/TextLayer.css';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import { PdfPageOverlay } from './pdf-page-overlay.js';
+import { PdfReflowOverlay } from './pdf-reflow-overlay.js';
 import type { SplitPointsController } from '../hooks/use-split-points.js';
+import type { ReflowController } from '../hooks/use-reflow-blocks.js';
+import type { CutMode, ReadingOrder } from '../types/cut-mode.js';
 import { type ChapterGroup, chapterForPage } from '../types/chapter-group.js';
 
 // Self-host the pdf.js worker via Vite (no CDN): fingerprinted and served from our own origin.
@@ -13,8 +16,11 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 ).toString();
 
 type PdfPreviewerProps = {
-  pdfBytes: ArrayBuffer;
+  pdfBytes: ArrayBuffer | Uint8Array;
+  mode: CutMode;
+  order: ReadingOrder;
   controller: SplitPointsController;
+  reflow: ReflowController;
   groups: ChapterGroup[];
   pageWidth: number;
   hoveredSliceId: string | null;
@@ -26,7 +32,10 @@ type PdfPreviewerProps = {
 /** Renders every page of the PDF with the interactive cut + slice overlay on top. */
 export function PdfPreviewer({
   pdfBytes,
+  mode,
+  order,
   controller,
+  reflow,
   groups,
   pageWidth,
   hoveredSliceId,
@@ -69,14 +78,20 @@ export function PdfPreviewer({
                   renderTextLayer={false}
                   loading={<div className="page-wrap__placeholder">Loading page {pageNumber}…</div>}
                 />
-                <PdfPageOverlay
-                  pageNumber={pageNumber}
-                  controller={controller}
-                  chapter={chapter}
-                  hoveredSliceId={hoveredSliceId}
-                  onHoverSlice={onHoverSlice}
-                  onToggleTag={onToggleTag}
-                />
+                {mode === 'reflow' ? (
+                  <PdfReflowOverlay pageNumber={pageNumber} controller={reflow} />
+                ) : (
+                  <PdfPageOverlay
+                    pageNumber={pageNumber}
+                    mode={mode}
+                    order={order}
+                    controller={controller}
+                    chapter={chapter}
+                    hoveredSliceId={hoveredSliceId}
+                    onHoverSlice={onHoverSlice}
+                    onToggleTag={onToggleTag}
+                  />
+                )}
               </div>
             </div>
           );

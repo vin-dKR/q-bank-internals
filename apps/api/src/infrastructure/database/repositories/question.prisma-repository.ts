@@ -10,6 +10,7 @@ type QuestionRow = {
   stem: string;
   options: { label: string; body: string; isCorrect: boolean }[];
   answer: string;
+  explanation: string | null;
   images: { driveFileId: string; alt: string }[];
   isQuestionImage: boolean;
   questionImage: string | null;
@@ -32,6 +33,7 @@ function toQuestion(row: QuestionRow): Question {
     stem: row.stem,
     options: row.options,
     answer: row.answer,
+    explanation: row.explanation,
     images: row.images,
     isQuestionImage: row.isQuestionImage,
     questionImage: row.questionImage,
@@ -63,6 +65,7 @@ export class PrismaQuestionRepository implements QuestionRepository {
         stem: question.stem,
         options: question.options,
         answer: question.answer,
+        explanation: question.explanation,
         images: question.images,
         questionType: question.questionType,
         sectionName: question.sectionName,
@@ -92,6 +95,7 @@ export class PrismaQuestionRepository implements QuestionRepository {
         ...(patch.stem !== undefined ? { stem: patch.stem } : {}),
         ...(patch.options !== undefined ? { options: patch.options } : {}),
         ...(patch.answer !== undefined ? { answer: patch.answer } : {}),
+        ...(patch.explanation !== undefined ? { explanation: patch.explanation } : {}),
         ...(patch.images !== undefined ? { images: patch.images } : {}),
         ...(patch.isQuestionImage !== undefined ? { isQuestionImage: patch.isQuestionImage } : {}),
         ...(patch.questionImage !== undefined ? { questionImage: patch.questionImage } : {}),

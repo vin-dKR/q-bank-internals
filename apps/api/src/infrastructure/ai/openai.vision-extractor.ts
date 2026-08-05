@@ -1,13 +1,16 @@
 import OpenAI from 'openai';
 import type { Document } from '@ingest/contracts';
 import type {
+  AnswerExtraction,
   AnswerSheet,
   ExtractedQuestion,
   PageImage,
+  QuestionExtraction,
   VisionExtractor,
 } from '../../modules/extraction/index.js';
+import type { AiTokenUsage } from '../../modules/usage/index.js';
 import { logger } from '../../shared/logger/logger.js';
-import { answerPrompt, questionPrompt } from './prompts/extraction-prompts.js';
+import { answerPrompt, questionPrompt, solutionPrompt } from './prompts/extraction-prompts.js';
 
 /** Shape the question prompt asks the model to return, before we enrich with section/page. */
 type RawQuestion = { question_number?: unknown; question_text?: unknown; options?: unknown };
@@ -35,6 +38,13 @@ function parseQuestions(content: string): RawQuestion[] {
   }
 }
 
+/** Non-empty string, or null — used to keep blank answers/explanations as an explicit absence. */
+function asStringOrNull(value: unknown): string | null {
+  const text = asString(value).trim();
+  return text.length > 0 ? text : null;
+}
+
+/** Parse an answer-sheet response: `answers` is a flat number→letter/value map (no explanation). */
 function parseAnswerSheets(content: string, fallbackSection: string | null): AnswerSheet[] {
   try {
     const parsed: unknown = JSON.parse(content);
@@ -42,13 +52,38 @@ function parseAnswerSheets(content: string, fallbackSection: string | null): Ans
     if (!Array.isArray(sections)) return [];
     return sections.map((section) => {
       const record = section as { section_name?: unknown; answers?: unknown };
-      const answers: Record<string, string> = {};
+      const entries: AnswerSheet['entries'] = {};
       if (record.answers && typeof record.answers === 'object') {
         for (const [key, value] of Object.entries(record.answers as Record<string, unknown>)) {
-          answers[key] = asString(value);
+          entries[key] = { answer: asStringOrNull(value), explanation: null };
         }
       }
-      return { sectionName: asString(record.section_name) || fallbackSection, answers };
+      return { sectionName: asString(record.section_name) || fallbackSection, entries };
+    });
+  } catch {
+    return [];
+  }
+}
+
+/** Parse a solution response: `solutions` is a number→{ answer, explanation } map. */
+function parseSolutionSheets(content: string, fallbackSection: string | null): AnswerSheet[] {
+  try {
+    const parsed: unknown = JSON.parse(content);
+    const sections = (parsed as { sections?: unknown }).sections;
+    if (!Array.isArray(sections)) return [];
+    return sections.map((section) => {
+      const record = section as { section_name?: unknown; solutions?: unknown };
+      const entries: AnswerSheet['entries'] = {};
+      if (record.solutions && typeof record.solutions === 'object') {
+        for (const [key, value] of Object.entries(record.solutions as Record<string, unknown>)) {
+          const entry = (value ?? {}) as { answer?: unknown; explanation?: unknown };
+          entries[key] = {
+            answer: asStringOrNull(entry.answer),
+            explanation: asStringOrNull(entry.explanation),
+          };
+        }
+      }
+      return { sectionName: asString(record.section_name) || fallbackSection, entries };
     });
   } catch {
     return [];
@@ -73,17 +108,19 @@ export class OpenAiVisionExtractor implements VisionExtractor {
   async extractQuestions(input: {
     pages: PageImage[];
     document: Document;
-  }): Promise<ExtractedQuestion[]> {
+  }): Promise<QuestionExtraction> {
     const prompt = questionPrompt(input.document);
     const results: ExtractedQuestion[] = [];
+    const usage = this.emptyUsage();
     for (const page of input.pages) {
-      const content = await this.call(prompt, page.png);
+      const { content } = await this.call(prompt, page.png, usage);
       for (const raw of parseQuestions(content)) {
         results.push({
           questionNumber: toQuestionNumber(raw.question_number),
           questionText: asString(raw.question_text),
           options: Array.isArray(raw.options) ? raw.options.map(asString).filter(Boolean) : [],
           answer: null,
+          explanation: null,
           sectionName: input.document.sectionName,
           questionType: input.document.questionType,
           sourcePage: page.pageNumber,
@@ -94,20 +131,46 @@ export class OpenAiVisionExtractor implements VisionExtractor {
       { documentId: input.document.id, pages: input.pages.length, questions: results.length },
       'gpt-4o question extraction done',
     );
-    return results;
+    return { questions: results, usage };
   }
 
-  async extractAnswers(input: { pages: PageImage[]; document: Document }): Promise<AnswerSheet[]> {
+  async extractAnswers(input: { pages: PageImage[]; document: Document }): Promise<AnswerExtraction> {
     const prompt = answerPrompt(input.document);
-    const sheets: AnswerSheet[] = [];
+    const sheets: AnswerExtraction['sheets'] = [];
+    const usage = this.emptyUsage();
     for (const page of input.pages) {
-      const content = await this.call(prompt, page.png);
+      const { content } = await this.call(prompt, page.png, usage);
       sheets.push(...parseAnswerSheets(content, input.document.sectionName));
     }
-    return sheets;
+    return { sheets, usage };
   }
 
-  private async call(prompt: string, png: Buffer): Promise<string> {
+  async extractSolutions(input: {
+    pages: PageImage[];
+    document: Document;
+  }): Promise<AnswerExtraction> {
+    const prompt = solutionPrompt(input.document);
+    const sheets: AnswerExtraction['sheets'] = [];
+    const usage = this.emptyUsage();
+    for (const page of input.pages) {
+      const { content } = await this.call(prompt, page.png, usage);
+      sheets.push(...parseSolutionSheets(content, input.document.sectionName));
+    }
+    return { sheets, usage };
+  }
+
+  private emptyUsage(): AiTokenUsage {
+    return {
+      model: this.model,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      callCount: 0,
+    };
+  }
+
+  /** One vision call. Folds the response's token usage into `usage` (mutated across the page loop). */
+  private async call(prompt: string, png: Buffer, usage: AiTokenUsage): Promise<{ content: string }> {
     const response = await this.client.chat.completions.create({
       model: this.model,
       max_tokens: 4000,
@@ -126,6 +189,10 @@ export class OpenAiVisionExtractor implements VisionExtractor {
         },
       ],
     });
-    return response.choices[0]?.message.content ?? '{}';
+    usage.promptTokens += response.usage?.prompt_tokens ?? 0;
+    usage.completionTokens += response.usage?.completion_tokens ?? 0;
+    usage.totalTokens += response.usage?.total_tokens ?? 0;
+    usage.callCount += 1;
+    return { content: response.choices[0]?.message.content ?? '{}' };
   }
 }

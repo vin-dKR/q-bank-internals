@@ -3,6 +3,7 @@ import { logger } from '../../shared/logger/logger.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { NewQuestion, QuestionRepository } from '../questions/index.js';
 import type { DriveService } from '../drive/index.js';
+import type { AiTokenUsage, UsageService } from '../usage/index.js';
 import type { ExtractionJobStore } from './extraction.repository.js';
 import type { ExtractionJobPayload } from './job-queue.js';
 import type { PdfRasterizer } from './pdf-rasterizer.js';
@@ -45,12 +46,22 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
     stem: draft.questionText,
     options: draft.options.map((option, index) => parseOption(option, index, answerLabel)),
     answer: draft.answer ?? '',
+    explanation: draft.explanation,
     images: [],
     questionType: document.questionType,
     sectionName: document.sectionName ?? document.path.section,
     topic: null,
     sourceRegion: { page: draft.sourcePage, bbox: [0, 0, 1, 1] },
   };
+}
+
+/** True when two documents describe the same chapter unit (module + chapter + section). */
+function sameUnit(a: Document, b: Document): boolean {
+  return (
+    a.path.module === b.path.module &&
+    a.path.chapter === b.path.chapter &&
+    a.path.section === b.path.section
+  );
 }
 
 /**
@@ -67,6 +78,7 @@ export class ExtractionWorker {
     private readonly drive: DriveService,
     private readonly rasterizer: PdfRasterizer,
     private readonly extractor: VisionExtractor,
+    private readonly usage: UsageService,
   ) {}
 
   async run(payload: ExtractionJobPayload): Promise<void> {
@@ -102,7 +114,8 @@ export class ExtractionWorker {
     try {
       const pdf = await this.drive.downloadPdf(document.driveFileId);
       const pages = await this.rasterizer.rasterize(pdf);
-      const drafts = await this.extractor.extractQuestions({ pages, document });
+      const { questions: drafts, usage } = await this.extractor.extractQuestions({ pages, document });
+      await this.recordUsage(document, usage);
       const answered = await this.applyAnswers(document, drafts);
       const rows = answered.map((draft) => toNewQuestion(document, draft));
       const count = await this.questions.replaceForDocument(documentId, rows);
@@ -122,34 +135,86 @@ export class ExtractionWorker {
     }
   }
 
-  /** Extract + merge answers from the sibling answer/solution PDF(s) in the same session + section. */
+  /**
+   * Record the token spend of one extractor call against its document. Best-effort: a usage-write
+   * failure is logged, never allowed to fail the extraction it is only measuring. Zero-call usage
+   * (e.g. the unconfigured extractor, or a document with no pages) is skipped.
+   */
+  private async recordUsage(document: Document, usage: AiTokenUsage): Promise<void> {
+    if (usage.callCount === 0) return;
+    try {
+      await this.usage.recordUsage({
+        source: 'extraction',
+        model: usage.model,
+        promptTokens: usage.promptTokens,
+        completionTokens: usage.completionTokens,
+        totalTokens: usage.totalTokens,
+        callCount: usage.callCount,
+        documentId: document.id,
+        sessionId: document.sessionId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn({ documentId: document.id, err: message }, 'Failed to record token usage');
+    }
+  }
+
+  /**
+   * Extract + merge answers and explanations from the sibling answer/solution PDF(s) that describe
+   * the same chapter unit (module + chapter + section) in this session. Answer PDFs supply answer
+   * letters/values; solution PDFs supply the worked explanation (and back-fill a missing answer).
+   * Both are folded into the drafts by (section, question number). Sheets are ordered answers-first
+   * so a solution PDF's answer only fills gaps the answer sheet left — the answer sheet stays canonical.
+   */
   private async applyAnswers(
     document: Document,
     drafts: ExtractedQuestion[],
   ): Promise<ExtractedQuestion[]> {
     if (!document.sessionId) return drafts;
     const siblings = await this.documents.listBySession(document.sessionId);
-    const answerDocs = siblings.filter(
-      (sibling) =>
-        (sibling.kind === 'answer' || sibling.kind === 'solution') &&
-        sibling.sectionName === document.sectionName,
-    );
-    if (answerDocs.length === 0) return drafts;
+    const answerDocs = siblings.filter((s) => s.kind === 'answer' && sameUnit(s, document));
+    const solutionDocs = siblings.filter((s) => s.kind === 'solution' && sameUnit(s, document));
+    if (answerDocs.length === 0 && solutionDocs.length === 0) return drafts;
 
     const sheets: AnswerSheet[] = [];
     for (const answerDoc of answerDocs) {
-      try {
-        const pdf = await this.drive.downloadPdf(answerDoc.driveFileId);
-        const pages = await this.rasterizer.rasterize(pdf);
-        sheets.push(...(await this.extractor.extractAnswers({ pages, document: answerDoc })));
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.warn(
-          { answerDoc: answerDoc.id, err: message },
-          'Answer extraction failed; keeping questions unanswered',
-        );
-      }
+      await this.collectSheets(answerDoc, sheets, (pages) =>
+        this.extractor.extractAnswers({ pages, document: answerDoc }),
+      );
+    }
+    for (const solutionDoc of solutionDocs) {
+      await this.collectSheets(solutionDoc, sheets, (pages) =>
+        this.extractor.extractSolutions({ pages, document: solutionDoc }),
+      );
     }
     return mergeAnswers(drafts, sheets);
+  }
+
+  /**
+   * Download + rasterize one answer/solution sibling, run the given extractor over it, record its
+   * token spend, and append the produced sheets. A failure here is logged and swallowed — a bad
+   * answer/solution PDF must never sink the questions it was only meant to enrich.
+   */
+  private async collectSheets(
+    source: Document,
+    sink: AnswerSheet[],
+    extract: (pages: Awaited<ReturnType<PdfRasterizer['rasterize']>>) => Promise<{
+      sheets: AnswerSheet[];
+      usage: AiTokenUsage;
+    }>,
+  ): Promise<void> {
+    try {
+      const pdf = await this.drive.downloadPdf(source.driveFileId);
+      const pages = await this.rasterizer.rasterize(pdf);
+      const result = await extract(pages);
+      await this.recordUsage(source, result.usage);
+      sink.push(...result.sheets);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(
+        { sourceDoc: source.id, kind: source.kind, err: message },
+        'Answer/solution extraction failed; keeping questions as-is',
+      );
+    }
   }
 }

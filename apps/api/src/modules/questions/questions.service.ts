@@ -1,5 +1,7 @@
 import type { Question, UpdateQuestion } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
+import { logger } from '../../shared/logger/logger.js';
+import type { UsageService } from '../usage/index.js';
 import type { ImageStore } from './image-store.js';
 import type { LatexRefiner } from './latex-refiner.js';
 import type { QuestionRepository } from './questions.repository.js';
@@ -13,6 +15,7 @@ export class QuestionsService {
     private readonly questions: QuestionRepository,
     private readonly images: ImageStore,
     private readonly refiner: LatexRefiner,
+    private readonly usage: UsageService,
   ) {}
 
   /** The questions extracted from a single document, in extraction order. */
@@ -32,8 +35,15 @@ export class QuestionsService {
   }
 
   /** One-click "Fix LaTeX": wrap the math in `\(...\)`. Empty text is returned unchanged. */
-  refineLatex(text: string): Promise<string> {
-    if (!text.trim()) return Promise.resolve(text);
-    return this.refiner.refine(text);
+  async refineLatex(text: string): Promise<string> {
+    if (!text.trim()) return text;
+    const { text: refined, usage } = await this.refiner.refine(text);
+    try {
+      await this.usage.recordUsage({ source: 'latex', ...usage });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn({ err: message }, 'Failed to record LaTeX refiner token usage');
+    }
+    return refined;
   }
 }

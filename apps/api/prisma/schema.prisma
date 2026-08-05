@@ -103,6 +103,7 @@ model Question {
   stem            String
   options         QuestionOption[]
   answer          String
+  explanation     String?
   images          QuestionImage[]
   isQuestionImage Boolean          @default(false)
   questionImage   String?
@@ -132,4 +133,35 @@ model ExtractionJob {
   createdAt     DateTime @default(now())
 
   @@map("ingest_extraction_jobs")
+}
+
+// One OpenAI call's token spend, appended by the extraction pipeline (vision extraction or LaTeX
+// refinement). Queried by UTC-day windows for the Usage dashboard and to enforce the global budget,
+// so createdAt is indexed. documentId/sessionId are loose string references (no relation) — a usage
+// row is an immutable fact and must outlive the document it describes.
+model TokenUsage {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  source           String
+  model            String
+  promptTokens     Int
+  completionTokens Int
+  totalTokens      Int
+  callCount        Int      @default(1)
+  documentId       String?  @db.ObjectId
+  sessionId        String?  @db.ObjectId
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("ingest_token_usage")
+}
+
+// The single global token budget. A null cap means "no limit on that window". One row; the service
+// upserts it. dailyLimit/weeklyLimit are counts of total tokens per UTC-day / trailing-7-day window.
+model TokenLimit {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  dailyLimit  Int?
+  weeklyLimit Int?
+  updatedAt   DateTime @updatedAt
+
+  @@map("ingest_token_limits")
 }

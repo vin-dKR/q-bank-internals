@@ -1,19 +1,22 @@
 import type { ExtractionJob } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
+import type { UsageService } from '../usage/index.js';
 import type { ExtractionJobStore } from './extraction.repository.js';
 import type { JobQueue } from './job-queue.js';
 
 /**
- * Owns the "hand a document to the extractor" decision. It verifies the document, records a job,
- * marks the document queued, and pushes the work onto the {@link JobQueue}. The heavy vision work
- * runs in the worker that drains the queue — the API stays fast and never blocks on the model.
+ * Owns the "hand a document to the extractor" decision. It verifies the document, enforces the token
+ * budget, records a job, marks the document queued, and pushes the work onto the {@link JobQueue}.
+ * The heavy vision work runs in the worker that drains the queue — the API stays fast and never
+ * blocks on the model.
  */
 export class ExtractionService {
   constructor(
     private readonly documents: DocumentRepository,
     private readonly jobs: ExtractionJobStore,
     private readonly queue: JobQueue,
+    private readonly usage: UsageService,
     private readonly model: string,
   ) {}
 
@@ -22,6 +25,7 @@ export class ExtractionService {
     const document = await this.documents.findById(documentId);
     if (!document) throw errors.documentNotFound(documentId);
     if (document.status === 'extracting') throw errors.extractionInProgress(documentId);
+    await this.usage.assertWithinLimit();
 
     await this.documents.updateStatus(documentId, 'queued');
     const job = await this.jobs.create({ documentId, model: this.model });

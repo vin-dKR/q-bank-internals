@@ -134,6 +134,9 @@ export function ChapterGroupingPanel({
                 <button type="button" className="btn btn--ghost btn--xs" onClick={() => { tagAll(group, 'answer'); }}>
                   All → Answer
                 </button>
+                <button type="button" className="btn btn--ghost btn--xs" onClick={() => { tagAll(group, 'solution'); }}>
+                  All → Solution
+                </button>
               </div>
             </div>
             <SliceTagList

@@ -33,6 +33,16 @@ function IconCheck(): JSX.Element {
   );
 }
 
+function IconGauge(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
+      <path d="m13.4 12.6 4-4" />
+      <path d="M4 20a8 8 0 1 1 16 0Z" />
+    </svg>
+  );
+}
+
 /** The shell every page renders inside: a persistent sidebar + the routed content canvas. */
 export function AppLayout(): JSX.Element {
   return (
@@ -59,6 +69,10 @@ export function AppLayout(): JSX.Element {
           <NavLink to="/verify" className="nav-item">
             <IconCheck />
             Verify
+          </NavLink>
+          <NavLink to="/usage" className="nav-item">
+            <IconGauge />
+            Token usage
           </NavLink>
         </nav>
 

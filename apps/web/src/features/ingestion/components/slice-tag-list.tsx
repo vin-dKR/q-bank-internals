@@ -31,13 +31,15 @@ export function SliceTagList({
   }
 
   const questionCount = slices.filter((s) => (tags[s.id] ?? 'question') === 'question').length;
-  const answerCount = slices.length - questionCount;
+  const answerCount = slices.filter((s) => tags[s.id] === 'answer').length;
+  const solutionCount = slices.filter((s) => tags[s.id] === 'solution').length;
 
   return (
     <div className="stack stack--tight">
       <div className="slice-summary">
         <span className="chip is-question">{questionCount} question</span>
         <span className="chip is-answer">{answerCount} answer</span>
+        <span className="chip is-solution">{solutionCount} solution</span>
       </div>
       <ul className="slice-list">
         {slices.map((slice) => {
@@ -67,6 +69,13 @@ export function SliceTagList({
                   onClick={() => { onTag(slice.id, 'answer'); }}
                 >
                   Answer
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn--pill ${kind === 'solution' ? 'is-solution is-active' : ''}`}
+                  onClick={() => { onTag(slice.id, 'solution'); }}
+                >
+                  Solution
                 </button>
               </div>
             </li>

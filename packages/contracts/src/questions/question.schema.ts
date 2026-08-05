@@ -27,6 +27,9 @@ export const QuestionSchema = z.object({
   stem: z.string(), // LaTeX-bearing
   options: z.array(QuestionOptionSchema),
   answer: z.string(),
+  // The worked solution / explanation text (LaTeX-bearing), merged from the sibling solution PDF.
+  // Null when no solution source was provided for the question.
+  explanation: z.string().nullable(),
   images: z.array(QuestionImageSchema),
   // Bank-aligned image fields (mirrors the main Question collection so publish is a straight copy).
   // `questionImage` is a comma-separated list of Supabase URLs; `optionImages[i]` is the URL for option i.
@@ -58,6 +61,7 @@ export const UpdateQuestionSchema = QuestionSchema.pick({
   stem: true,
   options: true,
   answer: true,
+  explanation: true,
   images: true,
   isQuestionImage: true,
   questionImage: true,

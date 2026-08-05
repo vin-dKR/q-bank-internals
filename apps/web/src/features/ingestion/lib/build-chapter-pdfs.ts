@@ -48,15 +48,15 @@ export function slicesForRange(range: PageRange, splitPoints: SplitPointsByPage)
 export type SliceTags = Record<string, ChapterKind>;
 
 /**
- * Build the question and answer PDFs for one chapter: slices tagged `answer` go into the answer
- * PDF, everything else into the question PDF. A side with no slices yields `null` (nothing to upload).
+ * Build the question, answer, and solution PDFs for one chapter: slices are routed by their tag
+ * (untagged slices default to question). A side with no slices yields `null` (nothing to upload).
  */
 export async function buildChapterPdfs(input: {
-  pdfBytes: ArrayBuffer;
+  pdfBytes: ArrayBuffer | Uint8Array;
   range: PageRange;
   splitPoints: SplitPointsByPage;
   tags: SliceTags;
-}): Promise<{ question: Uint8Array | null; answer: Uint8Array | null }> {
+}): Promise<{ question: Uint8Array | null; answer: Uint8Array | null; solution: Uint8Array | null }> {
   const slices = slicesForRange(input.range, input.splitPoints);
   const toSlice = (s: SliceRef): Slice => ({
     pageNumber: s.pageNumber,
@@ -64,15 +64,14 @@ export async function buildChapterPdfs(input: {
     end: s.end,
   });
 
-  const questionSlices = slices.filter((s) => (input.tags[s.id] ?? 'question') === 'question');
-  const answerSlices = slices.filter((s) => input.tags[s.id] === 'answer');
+  const build = async (kind: ChapterKind): Promise<Uint8Array | null> => {
+    const picked = slices.filter((s) => (input.tags[s.id] ?? 'question') === kind);
+    return picked.length ? buildPdfFromSlices(input.pdfBytes, picked.map(toSlice)) : null;
+  };
 
   return {
-    question: questionSlices.length
-      ? await buildPdfFromSlices(input.pdfBytes, questionSlices.map(toSlice))
-      : null,
-    answer: answerSlices.length
-      ? await buildPdfFromSlices(input.pdfBytes, answerSlices.map(toSlice))
-      : null,
+    question: await build('question'),
+    answer: await build('answer'),
+    solution: await build('solution'),
   };
 }
