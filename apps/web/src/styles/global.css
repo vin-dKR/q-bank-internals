@@ -704,6 +704,15 @@ input[type='number']:focus {
   color: var(--text-muted);
 }
 
+.page-wrap__delete {
+  margin-left: auto;
+}
+
+.page-wrap__delete:hover:not(:disabled) {
+  background: #fdeceb;
+  color: #b42318;
+}
+
 .page-wrap__canvas {
   position: relative;
   width: fit-content;

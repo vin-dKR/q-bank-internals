@@ -27,6 +27,7 @@ type PdfPreviewerProps = {
   onHoverSlice: (sliceId: string | null) => void;
   onToggleTag: (chapterId: string, sliceId: string) => void;
   onNumPages: (numPages: number) => void;
+  onDeletePage: (pageNumber: number) => void;
 };
 
 /** Renders every page of the PDF with the interactive cut + slice overlay on top. */
@@ -42,6 +43,7 @@ export function PdfPreviewer({
   onHoverSlice,
   onToggleTag,
   onNumPages,
+  onDeletePage,
 }: PdfPreviewerProps): JSX.Element {
   const [numPages, setNumPages] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +71,15 @@ export function PdfPreviewer({
               <div className="page-wrap__num">
                 <span className="muted">Page {pageNumber}</span>
                 {chapter ? <span className="chip chip--chapter">Chapter {chapter.chapterIndex + 1}</span> : null}
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--xs page-wrap__delete"
+                  title="Delete this page (Revert restores it)"
+                  disabled={numPages <= 1}
+                  onClick={() => { onDeletePage(pageNumber); }}
+                >
+                  ✕ Delete page
+                </button>
               </div>
               <div className="page-wrap__canvas">
                 <Page
