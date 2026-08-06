@@ -6,6 +6,7 @@ import 'react-pdf/dist/Page/AnnotationLayer.css';
 // origin, and correctly handled in both dev and build (the `new URL(bare-specifier)` form fails to
 // load in Vite dev with "Failed to fetch dynamically imported module").
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { IconTrash } from '../../../shared/ui/index.js';
 import { PdfPageOverlay } from './pdf-page-overlay.js';
 import { PdfReflowOverlay } from './pdf-reflow-overlay.js';
 import type { SplitPointsController } from '../hooks/use-split-points.js';
@@ -84,7 +85,7 @@ export function PdfPreviewer({
                   disabled={numPages <= 1}
                   onClick={() => { onDeletePage(pageNumber); }}
                 >
-                  ✕ Delete page
+                  <IconTrash /> Delete page
                 </button>
               </div>
               <div className="page-wrap__canvas">

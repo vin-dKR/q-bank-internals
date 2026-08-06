@@ -116,6 +116,41 @@ export function IconChevronDown(props: IconProps): JSX.Element {
   );
 }
 
+export function IconChevronLeft(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <path d="m15 18-6-6 6-6" />
+    </svg>
+  );
+}
+
+export function IconChevronRight(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <path d="m9 18 6-6-6-6" />
+    </svg>
+  );
+}
+
+export function IconLayers(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <path d="M12 2 2 7l10 5 10-5-10-5Z" />
+      <path d="m2 17 10 5 10-5" />
+      <path d="m2 12 10 5 10-5" />
+    </svg>
+  );
+}
+
+export function IconFileText(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
+      <path d="M14 3v5h5M9 13h6M9 17h6" />
+    </svg>
+  );
+}
+
 export function IconHelp(props: IconProps): JSX.Element {
   return (
     <svg {...base(props)}>

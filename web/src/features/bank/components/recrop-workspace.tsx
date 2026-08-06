@@ -1,6 +1,20 @@
 import { type JSX, useEffect, useState } from 'react';
 import type { BankQuestion, IngestRef } from '@ingest/contracts';
-import { type BoxRect, type CanvasBox, type CanvasSize, CropCanvas } from '../../../shared/ui/index.js';
+import {
+  type BoxRect,
+  Button,
+  type CanvasBox,
+  type CanvasSize,
+  CropCanvas,
+  IconButton,
+  IconChevronLeft,
+  IconChevronRight,
+  Toolbar,
+  ToolbarDivider,
+  ToolbarGroup,
+  ToolbarHelp,
+  ToolbarSpacer,
+} from '../../../shared/ui/index.js';
 import { getCroppedBlob } from '../../../shared/lib/crop-image.js';
 import { uploadCrop } from '../../../shared/api/upload-crop.js';
 import { fetchPageCount, pageImageUrl } from '../../../shared/api/pages.js';
@@ -78,86 +92,105 @@ export function RecropWorkspace({
   return (
     <div className="verify">
       <div className="verify__canvas">
-        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 10 }}>
-          <strong>Source page</strong>
-          <button type="button" className="btn btn--xs" onClick={() => { setBox(INITIAL_BOX); }}>
-            Reset box
-          </button>
-        </div>
-        <CropCanvas
-          imageSrc={imageSrc}
-          boxes={[box]}
-          onUpdateBox={updateBox}
-          onDeleteBox={() => { setBox(INITIAL_BOX); }}
-          onSize={setSize}
-        />
-        <div className="row" style={{ justifyContent: 'space-between', marginTop: 8 }}>
-          <span className="muted">Drag to move · handles to resize.</span>
-          <div className="row">
-            <button type="button" className="btn btn--xs" disabled={page <= 1} onClick={() => { setPage(page - 1); }}>
-              ← Prev
-            </button>
-            <span className="muted">Page {page} / {totalPages}</span>
-            <button
-              type="button"
-              className="btn btn--xs"
+        <Toolbar ariaLabel="Source page tools">
+          <ToolbarGroup>
+            <IconButton
+              icon={<IconChevronLeft />}
+              label="Previous page"
+              disabled={page <= 1}
+              onClick={() => { setPage(page - 1); }}
+            />
+            <span className="tbar__count">Page {page} / {totalPages}</span>
+            <IconButton
+              icon={<IconChevronRight />}
+              label="Next page"
               disabled={pageCount !== null && page >= pageCount}
               onClick={() => { setPage(page + 1); }}
+            />
+          </ToolbarGroup>
+
+          <ToolbarDivider />
+
+          <ToolbarGroup>
+            <button
+              type="button"
+              className="btn btn--ghost btn--xs"
+              title="Put the crop box back to its starting position"
+              onClick={() => { setBox(INITIAL_BOX); }}
             >
-              Next →
+              Reset box
             </button>
-          </div>
+          </ToolbarGroup>
+
+          <ToolbarSpacer />
+
+          <ToolbarHelp>
+            <b>Drag</b> the box to move it · <b>handles</b> to resize. Then crop into the question or
+            an option on the right.
+          </ToolbarHelp>
+        </Toolbar>
+
+        <div className="verify__stage">
+          <CropCanvas
+            imageSrc={imageSrc}
+            boxes={[box]}
+            onUpdateBox={updateBox}
+            onDeleteBox={() => { setBox(INITIAL_BOX); }}
+            onSize={setSize}
+          />
         </div>
       </div>
 
       <div className="verify__panel">
         {error ? <p className="error">{error}</p> : null}
-        {done ? <p className="note">✓ {done}</p> : null}
+        {done ? <p className="note">{done}</p> : null}
 
         <div className="card">
-          <strong>Current question image{questionImages.length === 1 ? '' : 's'}</strong>
-          <div className="row" style={{ flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+          <h2 className="card__title">Current question image{questionImages.length === 1 ? '' : 's'}</h2>
+          <div className="row">
             {questionImages.length === 0 ? (
               <span className="muted">None.</span>
             ) : (
               questionImages.map((url) => (
-                <img key={url} src={url} alt="Question figure" style={{ maxHeight: 72, borderRadius: 6 }} />
+                <img
+                  key={url}
+                  src={url}
+                  alt="Question figure"
+                  className="max-h-16 rounded-lg border border-line bg-white"
+                />
               ))
             )}
           </div>
-          <button
-            type="button"
-            className="btn btn--primary"
-            disabled={update.isPending}
-            style={{ marginTop: 10 }}
-            onClick={() => { void fix('question', null); }}
-          >
-            {update.isPending ? 'Saving…' : 'Crop → replace question image'}
-          </button>
+          <div>
+            <Button variant="primary" disabled={update.isPending} onClick={() => { void fix('question', null); }}>
+              {update.isPending ? 'Saving…' : 'Crop → replace question image'}
+            </Button>
+          </div>
         </div>
 
         {question.options.length > 0 ? (
           <div className="card">
-            <strong>Options</strong>
-            {question.options.map((option, index) => {
-              const current = question.optionImages[index] ?? '';
-              return (
-                <div key={index} className="row" style={{ justifyContent: 'space-between', gap: 8, marginTop: 8 }}>
-                  <span className="muted" style={{ flex: 1 }}>{option}</span>
-                  {current ? (
-                    <img src={current} alt={`Option ${String(index + 1)}`} style={{ maxHeight: 48, borderRadius: 6 }} />
-                  ) : null}
-                  <button
-                    type="button"
-                    className="btn btn--xs"
-                    disabled={update.isPending}
-                    onClick={() => { void fix('option', index); }}
-                  >
-                    Crop → option {index + 1}
-                  </button>
-                </div>
-              );
-            })}
+            <h2 className="card__title">Options</h2>
+            <div className="stack stack--tight">
+              {question.options.map((option, index) => {
+                const current = question.optionImages[index] ?? '';
+                return (
+                  <div key={index} className="flex items-center justify-between gap-2">
+                    <span className="muted min-w-0 flex-1">{option}</span>
+                    {current ? (
+                      <img
+                        src={current}
+                        alt={`Option ${String(index + 1)}`}
+                        className="max-h-12 rounded-lg border border-line bg-white"
+                      />
+                    ) : null}
+                    <Button size="xs" disabled={update.isPending} onClick={() => { void fix('option', index); }}>
+                      Crop → option {index + 1}
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         ) : null}
       </div>

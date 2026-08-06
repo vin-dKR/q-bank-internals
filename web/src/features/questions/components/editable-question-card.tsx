@@ -1,6 +1,6 @@
 import { type JSX, useEffect, useState } from 'react';
 import { KNOWN_QUESTION_TYPES, type Question, type QuestionOption } from '@ingest/contracts';
-import { Button, Combobox, IconPlus, IconSparkle } from '../../../shared/ui/index.js';
+import { Button, Combobox, IconButton, IconPlus, IconSparkle, IconX } from '../../../shared/ui/index.js';
 import { RenderLatex } from '../../../shared/lib/latex.js';
 import { questionsApi } from '../api/questions.api.js';
 import { useUpdateQuestion } from '../hooks/use-questions.js';
@@ -269,7 +269,12 @@ export function EditableQuestionCard({
             {question.isOptionImage ? (
               <Button size="xs" onClick={() => { onAddBox(question, 'option', i); }}>Region</Button>
             ) : null}
-            <Button variant="ghost" size="xs" aria-label="Remove option" onClick={() => { set('options', draft.options.filter((_, j) => j !== i)); }}>✕</Button>
+            <IconButton
+              icon={<IconX />}
+              label="Remove option"
+              size="sm"
+              onClick={() => { set('options', draft.options.filter((_, j) => j !== i)); }}
+            />
           </div>
         ))}
       </div>
@@ -284,10 +289,10 @@ export function EditableQuestionCard({
             <div key={box.id} className="flex items-center justify-between gap-1.5">
               <span className="text-sm text-ink-2">Region {box.label}</span>
               <div className="flex items-center gap-2">
-                <Button variant="primary" size="xs" disabled={busyBoxIds.has(box.id)} onClick={() => { onCropSave(box.id); }}>
+                <Button size="xs" disabled={busyBoxIds.has(box.id)} onClick={() => { onCropSave(box.id); }}>
                   {busyBoxIds.has(box.id) ? 'Saving…' : 'Crop & save'}
                 </Button>
-                <Button size="xs" onClick={() => { onDeleteBox(box.id); }}>Remove</Button>
+                <Button variant="ghost" size="xs" onClick={() => { onDeleteBox(box.id); }}>Remove</Button>
               </div>
             </div>
           ))}
@@ -312,7 +317,7 @@ export function EditableQuestionCard({
               <div key={option.label} className="flex flex-col gap-1.5">
                 <span><strong>{option.label}.</strong></span>
                 {oBoxes.map((box) => (
-                  <Button key={box.id} variant="primary" size="xs" disabled={busyBoxIds.has(box.id)} onClick={() => { onCropSave(box.id); }}>
+                  <Button key={box.id} size="xs" disabled={busyBoxIds.has(box.id)} onClick={() => { onCropSave(box.id); }}>
                     {busyBoxIds.has(box.id) ? 'Saving…' : 'Crop & save option'}
                   </Button>
                 ))}
@@ -329,7 +334,7 @@ export function EditableQuestionCard({
 
       <div className="flex items-center justify-end gap-2">
         {update.isSuccess ? <span className="text-sm text-ink-2">Saved</span> : null}
-        <Button variant="primary" size="xs" disabled={update.isPending} onClick={save}>
+        <Button size="xs" disabled={update.isPending} onClick={save}>
           {update.isPending ? 'Saving…' : 'Update question'}
         </Button>
       </div>

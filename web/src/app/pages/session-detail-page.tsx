@@ -97,7 +97,7 @@ export function SessionDetailPage(): JSX.Element {
           ) : (
             <button
               type="button"
-              className="btn btn--primary btn--xs"
+              className="btn btn--xs"
               disabled={publishDoc.isPending}
               onClick={() => { publish(doc); }}
             >
@@ -147,7 +147,7 @@ export function SessionDetailPage(): JSX.Element {
       />
 
       <div className="card">
-        <div className="row" style={{ justifyContent: 'space-between' }}>
+        <div className="row justify-between">
           {editing ? (
             <div className="row">
               <input
@@ -156,7 +156,7 @@ export function SessionDetailPage(): JSX.Element {
                 autoFocus
                 onChange={(e) => { setLabel(e.target.value); }}
                 onKeyDown={(e) => { if (e.key === 'Enter') saveLabel(); }}
-                style={{ maxWidth: 340 }}
+                className="min-w-0 flex-1 max-w-[340px]"
               />
               <button type="button" className="btn btn--primary btn--xs" onClick={saveLabel}>Save</button>
               <button type="button" className="btn btn--xs" onClick={() => { setEditing(false); }}>Cancel</button>
@@ -195,7 +195,7 @@ export function SessionDetailPage(): JSX.Element {
         <div>
           <button
             type="button"
-            className="btn btn--primary"
+            className="btn"
             disabled={runSession.isPending || busy || pending === 0}
             onClick={() => { runSession.mutate(s.id); }}
           >
@@ -205,11 +205,11 @@ export function SessionDetailPage(): JSX.Element {
       </div>
 
       <div className="card">
-        <div className="row" style={{ justifyContent: 'space-between' }}>
+        <div className="row justify-between">
           <h2>Files</h2>
           <label className="field--inline">
             <span className="field__label">Status</span>
-            <select value={status} style={{ width: 'auto' }} onChange={(e) => { setStatus(e.target.value as StatusFilter); }}>
+            <select value={status} className="w-auto" onChange={(e) => { setStatus(e.target.value as StatusFilter); }}>
               <option value="all">All</option>
               {DocumentStatusSchema.options.map((option) => (
                 <option key={option} value={option}>{option.replace(/_/g, ' ')}</option>

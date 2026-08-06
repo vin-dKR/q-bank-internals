@@ -4,7 +4,30 @@ import { getCroppedBlob } from '../../../shared/lib/crop-image.js';
 import { useDocument } from '../../documents/index.js';
 import { questionsApi } from '../api/questions.api.js';
 import { usePageCount, useQuestions, useUpdateQuestion } from '../hooks/use-questions.js';
-import { type BoxRect, type CanvasBox, type CanvasSize, CropCanvas } from '../../../shared/ui/index.js';
+import {
+  type BoxRect,
+  Button,
+  type CanvasBox,
+  type CanvasSize,
+  CropCanvas,
+  EmptyState,
+  IconButton,
+  IconCheck,
+  IconChevronLeft,
+  IconChevronRight,
+  IconFileText,
+  IconRedo,
+  IconSparkle,
+  IconUndo,
+  IconX,
+  LoadingState,
+  Spinner,
+  Toolbar,
+  ToolbarDivider,
+  ToolbarGroup,
+  ToolbarHelp,
+  ToolbarSpacer,
+} from '../../../shared/ui/index.js';
 import { type CardBox, EditableQuestionCard } from './editable-question-card.js';
 
 type Box = BoxRect & {
@@ -293,7 +316,7 @@ export function VerifyWorkspace({
           optionIndex: figure.optionIndex,
           source: 'ai',
           snippet: figure.snippet,
-          label: `✨ Q${String(displayedQuestionNumberById.get(figure.questionId) ?? '?')}${figure.target === 'option' ? ` · option ${String(figure.optionIndex + 1)}` : ''}`,
+          label: `AI · Q${String(displayedQuestionNumberById.get(figure.questionId) ?? '?')}${figure.target === 'option' ? ` · option ${String(figure.optionIndex + 1)}` : ''}`,
           x: x * sx,
           y: y * sy,
           width: w * sx,
@@ -346,36 +369,90 @@ export function VerifyWorkspace({
       .filter((b) => b.questionId === questionId && b.source === 'manual')
       .map((b) => ({ id: b.id, type: b.type, optionIndex: b.optionIndex, label: b.label }));
 
-  if (questions.isPending) return <p className="muted">Loading questions…</p>;
-  if (questions.isError) return <p className="error">Could not load questions.</p>;
+  if (questions.isPending) {
+    return (
+      <div className="card">
+        <LoadingState label="Loading questions…" />
+      </div>
+    );
+  }
+  if (questions.isError) {
+    return (
+      <div className="card">
+        <p className="error">Could not load questions.</p>
+      </div>
+    );
+  }
   if (questions.data.length === 0) {
-    return <p className="muted">No questions yet — run extraction on this document first.</p>;
+    return (
+      <EmptyState
+        icon={<IconFileText />}
+        title="No questions extracted yet"
+        body="Run extraction on this document from its session, then come back to verify."
+      />
+    );
   }
 
   const totalPages = pageCount.data ?? 1;
 
   return (
-    <>
-      <div className="card">
-        <div className="row" style={{ justifyContent: 'space-between', gap: 12 }}>
-          <div>
-            <strong>AI figure auto-crop</strong>
-            <p className="muted" style={{ margin: '2px 0 0' }}>
-              Detect each question&rsquo;s diagram on this page. The results are marked on the page for
-              you to review — nothing is saved until you <strong>Confirm</strong>.
-            </p>
-          </div>
-          <button
-            type="button"
-            className="btn btn--primary"
-            disabled={aiBusy || !size}
-            onClick={() => { void detectCurrentPage(); }}
-          >
-            {aiBusy ? 'Detecting…' : '✨ Auto-detect figures'}
-          </button>
-        </div>
+    <div className="verify">
+      <div className="verify__canvas">
+        <Toolbar ariaLabel="Source page tools">
+          <ToolbarGroup>
+            <IconButton
+              icon={<IconChevronLeft />}
+              label="Previous page"
+              disabled={page <= 1}
+              onClick={() => { goToPage(page - 1); }}
+            />
+            <span className="tbar__count">Page {page} / {totalPages}</span>
+            <IconButton
+              icon={<IconChevronRight />}
+              label="Next page"
+              disabled={page >= totalPages}
+              onClick={() => { goToPage(page + 1); }}
+            />
+          </ToolbarGroup>
 
+          <ToolbarDivider />
+
+          <ToolbarGroup>
+            <IconButton icon={<IconUndo />} label="Undo" disabled={past.current.length === 0} onClick={undo} />
+            <IconButton icon={<IconRedo />} label="Redo" disabled={future.current.length === 0} onClick={redo} />
+            <button
+              type="button"
+              className="btn btn--ghost btn--xs"
+              title="Remove every box on this page"
+              disabled={boxes.length === 0}
+              onClick={() => { commit(() => []); }}
+            >
+              Clear
+            </button>
+          </ToolbarGroup>
+
+          <ToolbarSpacer />
+
+          <ToolbarGroup>
+            <Button size="xs" disabled={aiBusy || !size} onClick={() => { void detectCurrentPage(); }}>
+              {aiBusy ? <><Spinner /> Detecting…</> : <><IconSparkle /> Auto-detect figures</>}
+            </Button>
+            <ToolbarHelp>
+              <b>Auto-detect</b> marks each question&rsquo;s diagram on this page for review — nothing
+              is saved until you Confirm. Boxes: <b>drag</b> to move · <b>handles</b> to resize ·{' '}
+              <b>right-click</b> to delete.
+            </ToolbarHelp>
+          </ToolbarGroup>
+        </Toolbar>
+
+        <div className="verify__stage">
+          <CropCanvas imageSrc={imageSrc} boxes={canvasBoxes} onUpdateBox={updateBox} onDeleteBox={deleteBox} onSize={handleSize} />
+        </div>
+      </div>
+
+      <div className="verify__panel">
         {aiError ? <p className="error">{aiError}</p> : null}
+        {error ? <p className="error">{error}</p> : null}
         {!aiBusy && pendingAi.length === 0 && aiResult ? (
           <p className="note">
             {aiResult.placed === 0 && aiResult.detected === 0
@@ -387,14 +464,18 @@ export function VerifyWorkspace({
         ) : null}
 
         {pendingAi.length > 0 ? (
-          <div className="ai-review">
-            <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
-              <strong>Review {pendingAi.length} AI crop(s)</strong>
+          <div className="card">
+            <div className="card__head">
+              <h2 className="card__title">
+                Review {pendingAi.length} AI crop{pendingAi.length === 1 ? '' : 's'}
+              </h2>
               <div className="row">
-                <button type="button" className="btn btn--xs btn--primary" onClick={() => { void confirmAll(); }}>
-                  ✔ Confirm all
-                </button>
-                <button type="button" className="btn btn--xs" onClick={discardAll}>✖ Discard all</button>
+                <Button size="xs" onClick={() => { void confirmAll(); }}>
+                  <IconCheck /> Confirm all
+                </Button>
+                <Button variant="ghost" size="xs" onClick={discardAll}>
+                  <IconX /> Discard all
+                </Button>
               </div>
             </div>
             <ul className="ai-review__list">
@@ -411,7 +492,8 @@ export function VerifyWorkspace({
                       title="Show the matched question"
                     >
                       <span className="ai-review__label">
-                        ✨ Q{displayedQuestionNumberById.get(b.questionId) ?? '?'}
+                        <IconSparkle />
+                        Q{displayedQuestionNumberById.get(b.questionId) ?? '?'}
                         {b.type === 'option' ? ` · option ${String(b.optionIndex + 1)}` : ''}
                       </span>
                       {stemLine ? <span className="ai-review__stem">{stemLine}</span> : null}
@@ -420,17 +502,15 @@ export function VerifyWorkspace({
                       ) : null}
                     </button>
                     <div className="row">
-                      <button
-                        type="button"
-                        className="btn btn--xs btn--primary"
-                        disabled={busy.has(b.id)}
-                        onClick={() => { confirmBox(b.id); }}
-                      >
-                        {busy.has(b.id) ? 'Saving…' : '✔ Confirm'}
-                      </button>
-                      <button type="button" className="btn btn--xs" onClick={() => { deleteBox(b.id); }}>
-                        ✖ Discard
-                      </button>
+                      <Button size="xs" disabled={busy.has(b.id)} onClick={() => { confirmBox(b.id); }}>
+                        {busy.has(b.id) ? 'Saving…' : <><IconCheck /> Confirm</>}
+                      </Button>
+                      <IconButton
+                        icon={<IconX />}
+                        label="Discard this suggestion"
+                        size="sm"
+                        onClick={() => { deleteBox(b.id); }}
+                      />
                     </div>
                   </li>
                 );
@@ -438,59 +518,38 @@ export function VerifyWorkspace({
             </ul>
           </div>
         ) : null}
-      </div>
 
-      <div className="verify">
-        <div className="verify__canvas">
-          <div className="row" style={{ justifyContent: 'space-between', marginBottom: 10 }}>
-            <strong>Source page</strong>
-            <div className="row">
-              <button type="button" className="btn btn--xs" disabled={past.current.length === 0} onClick={undo}>↶ Undo</button>
-              <button type="button" className="btn btn--xs" disabled={future.current.length === 0} onClick={redo}>↷ Redo</button>
-              <button type="button" className="btn btn--xs" disabled={boxes.length === 0} onClick={() => { commit(() => []); }}>Clear</button>
+        {onThisPage.length === 0 ? (
+          <EmptyState
+            icon={<IconFileText />}
+            title="No questions on this page"
+            body="Use the page arrows above the source page to move to a page with extracted questions."
+          />
+        ) : (
+          onThisPage.map((question, index) => (
+            <div
+              key={question.id}
+              ref={(el) => {
+                if (el) cardRefs.current.set(question.id, el);
+                else cardRefs.current.delete(question.id);
+              }}
+              className={highlightId === question.id ? 'q-card-wrap is-highlighted' : 'q-card-wrap'}
+            >
+              <EditableQuestionCard
+                question={question}
+                index={(question.questionNumber ?? index + 1) - 1}
+                boxes={cardBoxesFor(question.id)}
+                busyBoxIds={busy}
+                fallbackQuestionType={document.data?.questionType ?? null}
+                fallbackSectionName={document.data?.sectionName ?? null}
+                onAddBox={addBox}
+                onCropSave={cropSaveById}
+                onDeleteBox={deleteBox}
+              />
             </div>
-          </div>
-          <CropCanvas imageSrc={imageSrc} boxes={canvasBoxes} onUpdateBox={updateBox} onDeleteBox={deleteBox} onSize={handleSize} />
-          <div className="row" style={{ justifyContent: 'space-between', marginTop: 8 }}>
-            <span className="muted">Drag to move · handles to resize · right-click to delete.</span>
-            <div className="row">
-              <button type="button" className="btn btn--xs" disabled={page <= 1} onClick={() => { goToPage(page - 1); }}>← Prev</button>
-              <span className="muted">Page {page} / {totalPages}</span>
-              <button type="button" className="btn btn--xs" disabled={page >= totalPages} onClick={() => { goToPage(page + 1); }}>Next →</button>
-            </div>
-          </div>
-        </div>
-
-        <div className="verify__panel">
-          {error ? <p className="error">{error}</p> : null}
-          {onThisPage.length === 0 ? (
-            <p className="muted">No questions on this page.</p>
-          ) : (
-            onThisPage.map((question, index) => (
-              <div
-                key={question.id}
-                ref={(el) => {
-                  if (el) cardRefs.current.set(question.id, el);
-                  else cardRefs.current.delete(question.id);
-                }}
-                className={highlightId === question.id ? 'q-card-wrap is-highlighted' : 'q-card-wrap'}
-              >
-                <EditableQuestionCard
-                  question={question}
-                  index={(question.questionNumber ?? index + 1) - 1}
-                  boxes={cardBoxesFor(question.id)}
-                  busyBoxIds={busy}
-                  fallbackQuestionType={document.data?.questionType ?? null}
-                  fallbackSectionName={document.data?.sectionName ?? null}
-                  onAddBox={addBox}
-                  onCropSave={cropSaveById}
-                  onDeleteBox={deleteBox}
-                />
-              </div>
-            ))
-          )}
-        </div>
+          ))
+        )}
       </div>
-    </>
+    </div>
   );
 }
