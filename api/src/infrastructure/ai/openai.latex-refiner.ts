@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import { OpenAI } from 'openai';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { LatexRefinement, LatexRefiner } from '../../modules/questions/index.js';
 
