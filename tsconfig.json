@@ -1,11 +1,33 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
-  "extends": "./tsconfig.base.json",
   "compilerOptions": {
+    // Vercel's @vercel/node type-checks `api/index.ts` and its whole import graph using the tsconfig
+    // it finds walking up from the entry (this file) — but it does NOT resolve an `extends` chain.
+    // So every option that `apps/api` (which type-checks clean) relies on must be inlined here
+    // verbatim: dropping `esModuleInterop` breaks the CJS `helmet` default import (TS2349), and
+    // dropping `exactOptionalPropertyTypes`/`strict` collapses Prisma's Mongo composite input types
+    // to `never`. This block mirrors tsconfig.base.json + apps/api/tsconfig.json exactly.
+    "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
     "types": ["node"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+
     "noEmit": true
   },
-  "include": ["api"]
+  "include": ["api", "apps/api/src", "packages/contracts/src"]
 }

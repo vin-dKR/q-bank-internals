@@ -1,9 +1,8 @@
-# API-only Vercel project: the web app is deployed separately, so keep it out of the build context.
-apps/web
-
-# Never ship secrets or local artifacts.
+# NOTE: Vercel reads this file from the repository root for EVERY project in the repo, regardless of
+# each project's Root Directory. Do NOT exclude apps/web here — the frontend project builds from this
+# same repo and needs its source. Keep this to artifacts/secrets only.
+dist
+build
 .env
 .env.*
 !.env.example
-dist
-build
