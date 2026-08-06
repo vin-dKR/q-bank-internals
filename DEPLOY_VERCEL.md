@@ -5,10 +5,16 @@ The Express API runs on Vercel as a single serverless function. This is **API-on
 
 ## What makes it work
 
-- `api/index.ts` — the serverless entry. Exports the Express app (an Express app *is* a `(req,res)`
-  handler). Counterpart to `apps/api/src/main.ts` (the long-running `app.listen` server used locally).
-- `vercel.json` — a catch-all rewrite sends every request to the function; Express routes internally.
-  Sets `maxDuration` and bundles the Prisma engine.
+- `apps/api/src/serverless.ts` — the serverless entry. Exports the Express app (an Express app *is* a
+  `(req,res)` handler). Counterpart to `apps/api/src/main.ts` (the long-running `app.listen` server).
+- `apps/api/scripts/build-vercel.mjs` — esbuild bundles `serverless.ts` → repo-root `api/index.js`
+  (a git-ignored build artifact). We bundle to JS ourselves on purpose: it stops Vercel's function
+  builder from type-checking our TS source with its own tsconfig (which lacks `esModuleInterop` and
+  fails on the CJS `helmet` default import). Workspace source (incl. `@ingest/contracts`, whose
+  package entry is uncompiled `.ts`) is bundled; every real npm dep stays external and is traced from
+  `node_modules`, so native/dynamic packages (`canvas`, the Prisma engine) are never bundled.
+- `vercel.json` — `buildCommand` runs the bundle; a catch-all rewrite sends every request to
+  `api/index.js`; sets `maxDuration` and ships the Prisma engine via `includeFiles`.
 - Serverless mode is auto-detected (`VERCEL` is set in Vercel's runtime; `SERVERLESS=true` forces it
   locally). In this mode the composition root wires **`SynchronousJobQueue`**: extraction runs
   **inline inside the request** instead of as detached background work, because Vercel freezes the
@@ -50,5 +56,6 @@ The Express API runs on Vercel as a single serverless function. This is **API-on
 ## Local check
 
 ```bash
-SERVERLESS=true npm run dev:api   # boots with the synchronous queue; logs "Queue: synchronous in-request"
+SERVERLESS=true npm run dev:api        # boots with the synchronous queue; logs "Queue: synchronous in-request"
+npm --workspace @ingest/api run build:vercel   # reproduce the exact bundle Vercel builds → api/index.js
 ```

@@ -1,9 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "npm install",
-  "buildCommand": "npm --workspace @ingest/api run prisma:generate",
+  "buildCommand": "npm --workspace @ingest/api run build:vercel",
   "functions": {
-    "api/index.ts": {
+    "api/index.js": {
       "maxDuration": 300,
       "includeFiles": "node_modules/.prisma/client/**"
     }
