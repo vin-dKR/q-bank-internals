@@ -6,8 +6,10 @@
   "description": "Express backend: registers Drive PDFs, runs AI extraction, serves questions for verification. Standalone app.",
   "main": "dist/src/main.js",
   "scripts": {
-    "dev": "tsx watch src/main.ts",
-    "worker": "tsx watch src/worker.ts",
+    "dev": "tsx watch --conditions=development src/main.ts",
+    "worker": "tsx watch --conditions=development src/worker.ts",
+    "build:contracts": "tsc -p contracts",
+    "prebuild": "npm run build:contracts",
     "build": "tsc",
     "start": "node dist/src/main.js",
     "start:worker": "node dist/src/worker.js",
