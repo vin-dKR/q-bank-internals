@@ -20,20 +20,27 @@ Everything below is a consequence of that sentence.
 
 ## 1. Repository shape
 
-This is an npm-workspaces monorepo. There are exactly three kinds of workspace and nothing else may be invented:
+This repo holds **two independent apps** — no npm workspace. Each installs, builds, runs, and deploys
+on its own, from its own directory:
 
 ```
 ingest/
-├── apps/          Deployable programs. Have a main(). Depend on packages. Never depended upon.
-│   ├── api/       Express + Node backend.
-│   └── web/       Vite + React frontend.
-└── packages/      Shared libraries. No main(). No side effects on import. Depended upon by apps.
-    └── contracts/ The single source of truth for the API boundary (types + zod schemas).
+├── api/   Express + Node backend. Has a main(). Deploys as its own Vercel project (Root Directory: api).
+│   └── contracts/   vendored copy of @ingest/contracts, installed via "file:./contracts".
+└── web/   Vite + React frontend. Deploys as its own Vercel project (Root Directory: web).
+    └── contracts/   vendored copy of @ingest/contracts, installed via "file:./contracts".
 ```
 
-**Dependency direction is a one-way street:** `apps → packages`. A package may **never** import from an app.
-Two apps may **never** import from each other. If `web` and `api` need to share something, it goes in a package.
-This is the mechanism that kills duplication of DTOs, validation, and enums across the frontend/backend seam.
+**The API boundary is `@ingest/contracts`** — zod schemas + inferred DTO types, the single source of
+truth for the api ⇄ web seam. Because the apps are independent (no workspace to link a shared package,
+and Vercel cannot reach a sibling directory outside a project's Root Directory), contracts is **copied
+into each app**. The rule that replaces "apps → packages":
+
+- Types crossing the api/web boundary are defined **once in `@ingest/contracts`** and imported as
+  `@ingest/contracts` on both sides — never re-typed by hand in a component or a service.
+- A change to the boundary must be applied to **both** `api/contracts` and `web/contracts` (they are
+  copies). Keep them identical.
+- The two apps **never** import from each other. Anything shared crosses only through `@ingest/contracts`.
 
 ---
 

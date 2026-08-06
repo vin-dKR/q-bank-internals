@@ -1,0 +1,1367 @@
+@import 'tailwindcss';
+
+/* ============================================================================
+   Eduents Ingest — Tailwind v4 design system.
+   Tokens live in @theme (so `bg-surface`, `text-ink-2`, … utilities exist and
+   markup can use Tailwind directly); the semantic component classes below are
+   built purely from Tailwind utilities via @apply. One place, one language.
+   ========================================================================== */
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+
+  /* Surfaces & lines */
+  --color-canvas: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-surface-2: #f1f3f7;
+  --color-line: #e7e9ef;
+  --color-line-strong: #d5d9e2;
+
+  /* Text */
+  --color-ink: #14161c;
+  --color-ink-2: #5b6472;
+  --color-ink-3: #8b93a3;
+
+  /* Brand (single indigo) */
+  --color-brand: #4f46e5;
+  --color-brand-hover: #4338ca;
+  --color-brand-soft: #eef0ff;
+
+  /* Semantic status */
+  --color-ok: #067647;
+  --color-ok-soft: #e7f6ee;
+  --color-warn: #b45309;
+  --color-warn-soft: #fdf1e0;
+  --color-bad: #d92d20;
+  --color-bad-soft: #fdecea;
+
+  /* Question / answer / solution domain colours */
+  --color-q: #4f46e5;
+  --color-a: #b45309;
+  --color-s: #0f9d76;
+}
+
+/* ============================================================================
+   Base
+   ========================================================================== */
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    @apply m-0 bg-canvas text-ink antialiased;
+    font-family: var(--font-sans);
+    text-rendering: optimizeLegibility;
+  }
+  h1 {
+    @apply m-0 text-2xl font-semibold tracking-tight;
+  }
+  h2 {
+    @apply m-0 text-base font-semibold;
+  }
+  a {
+    color: inherit;
+  }
+  code {
+    @apply rounded bg-surface-2 px-1.5 py-0.5 text-[0.86em];
+    font-family: var(--font-mono);
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--color-brand) 22%, transparent);
+  }
+  :focus-visible {
+    outline: none;
+  }
+
+  /* Raw form controls carry their look at the element level, so every input/select/textarea is
+     consistent without a class (primitives layer utilities on top for variants). */
+  input[type='text'],
+  input[type='number'],
+  select,
+  textarea {
+    @apply w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-ink transition-colors;
+    font-family: inherit;
+  }
+  select {
+    @apply cursor-pointer;
+  }
+  textarea {
+    @apply resize-y leading-relaxed;
+  }
+  input[type='text']:focus,
+  input[type='number']:focus,
+  select:focus,
+  textarea:focus {
+    @apply border-brand ring-2 ring-indigo-500/30;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    @apply text-ink-3;
+  }
+}
+
+@layer components {
+  /* ==========================================================================
+     Page scaffold
+     ========================================================================== */
+  .page {
+    @apply flex flex-col gap-6;
+  }
+  .page-header {
+    @apply flex items-start justify-between gap-4 border-b border-line pb-5;
+  }
+  .page-header__text {
+    @apply flex flex-col gap-1;
+  }
+  .page-header__actions {
+    @apply flex flex-wrap items-center gap-2;
+  }
+  .stack {
+    @apply flex flex-col gap-3.5;
+  }
+  .stack--tight {
+    @apply gap-2;
+  }
+  .row {
+    @apply flex flex-wrap items-center gap-2;
+  }
+  .row--end {
+    @apply justify-end;
+  }
+  .muted {
+    @apply m-0 text-sm text-ink-2;
+  }
+  .error {
+    @apply m-0 text-sm text-bad;
+  }
+  .note {
+    @apply rounded-lg border border-line bg-surface-2 px-3.5 py-2.5 text-sm text-ink;
+    border-left: 3px solid var(--color-brand);
+  }
+
+  /* ==========================================================================
+     Card
+     ========================================================================== */
+  .card {
+    @apply flex flex-col gap-4 rounded-xl border border-line bg-surface p-5 shadow-sm;
+  }
+  .card__title {
+    @apply text-[15px] font-semibold;
+  }
+  .card__head {
+    @apply flex items-center justify-between gap-2.5;
+  }
+
+  /* ==========================================================================
+     Buttons
+     ========================================================================== */
+  .btn {
+    @apply inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-line-strong bg-surface px-3.5 py-2 text-sm font-medium text-ink no-underline transition-colors;
+  }
+  .btn:hover:not(:disabled) {
+    @apply bg-surface-2;
+  }
+  .btn:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+  .btn:focus-visible {
+    @apply ring-2 ring-indigo-500/40;
+  }
+  .btn svg {
+    @apply size-4 flex-none;
+  }
+  .btn--primary {
+    @apply border-brand bg-brand text-white;
+  }
+  .btn--primary:hover:not(:disabled) {
+    @apply border-brand-hover bg-brand-hover;
+  }
+  .btn--ghost {
+    @apply border-transparent bg-transparent text-ink-2;
+  }
+  .btn--ghost:hover:not(:disabled) {
+    @apply bg-surface-2 text-ink;
+  }
+  .btn--danger {
+    @apply text-bad;
+    border-color: color-mix(in srgb, var(--color-bad) 30%, var(--color-surface));
+    background: var(--color-bad-soft);
+  }
+  .btn--danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-bad) 14%, var(--color-surface));
+  }
+  .btn--pill {
+    @apply rounded-full border-line bg-surface px-3 py-1 text-[13px] text-ink-2;
+  }
+  .btn--pill.is-active {
+    @apply border-brand bg-brand text-white;
+  }
+  .btn--xs {
+    @apply px-2.5 py-1 text-xs;
+  }
+  .btn--block {
+    @apply w-full py-2.5 text-[15px];
+  }
+  .btn--icon {
+    @apply min-w-[36px] px-2.5 text-base;
+  }
+  .btn--icon-only {
+    @apply inline-grid flex-none place-items-center p-0 leading-none;
+  }
+  .btn--icon-only svg {
+    @apply size-[1.15em];
+  }
+  .btn--icon-only-md {
+    @apply size-9 text-[15px];
+  }
+  .btn--icon-only-sm {
+    @apply size-7 text-[13px];
+  }
+
+  /* ==========================================================================
+     Forms (raw element styling lives in @layer base; these are layout classes)
+     ========================================================================== */
+  .field {
+    @apply flex flex-col gap-1.5;
+  }
+  .field > span,
+  .field__label {
+    @apply text-[13px] font-medium text-ink-2;
+  }
+  .field--inline {
+    @apply flex flex-row items-center gap-2;
+  }
+  .field--inline input,
+  .field--inline select {
+    @apply w-auto;
+  }
+  .folder-select {
+    @apply flex flex-col gap-1.5;
+  }
+  .folder-select__label {
+    @apply text-[13px] font-medium text-ink-2;
+  }
+  .folder-select__row {
+    @apply flex items-center gap-2;
+  }
+  .metadata-form {
+    @apply grid grid-cols-1 gap-3 sm:grid-cols-2;
+  }
+
+  /* Toggle switch */
+  .switch {
+    @apply inline-flex cursor-pointer items-center gap-2.5 text-sm text-ink-2;
+  }
+  .switch input {
+    @apply absolute size-0 opacity-0;
+  }
+  .switch__track {
+    @apply relative h-[22px] w-[38px] flex-none rounded-full bg-line-strong transition-colors;
+  }
+  .switch__track::after {
+    content: '';
+    @apply absolute left-0.5 top-0.5 size-[18px] rounded-full bg-white shadow-sm transition-transform;
+  }
+  .switch input:checked + .switch__track {
+    @apply bg-brand;
+  }
+  .switch input:checked + .switch__track::after {
+    transform: translateX(16px);
+  }
+
+  /* ==========================================================================
+     Badges & chips
+     ========================================================================== */
+  .badge {
+    @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-full py-0.5 pl-2 pr-2.5 text-xs font-medium capitalize leading-relaxed;
+  }
+  .badge::before {
+    content: '';
+    @apply size-1.5 rounded-full bg-current opacity-80;
+  }
+  .badge--neutral {
+    @apply bg-surface-2 text-ink-2;
+  }
+  .badge--info {
+    @apply text-brand;
+    background: var(--color-brand-soft);
+  }
+  .badge--progress {
+    @apply text-warn;
+    background: var(--color-warn-soft);
+  }
+  .badge--success {
+    @apply text-ok;
+    background: var(--color-ok-soft);
+  }
+  .badge--review {
+    background: #f3effd;
+    color: #6941c6;
+  }
+  .badge--danger {
+    @apply text-bad;
+    background: var(--color-bad-soft);
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-line bg-surface px-2.5 py-0.5 text-xs font-semibold text-ink-2;
+  }
+  .chip svg {
+    @apply size-3.5;
+  }
+  .chip--count {
+    @apply border-line-strong text-ink;
+  }
+  .chip--chapter {
+    @apply border-transparent text-brand;
+    background: var(--color-brand-soft);
+  }
+  .chip.is-question {
+    @apply border-transparent;
+    background: color-mix(in srgb, var(--color-q) 12%, transparent);
+    color: var(--color-q);
+  }
+  .chip.is-answer {
+    @apply border-transparent;
+    background: color-mix(in srgb, var(--color-a) 14%, transparent);
+    color: var(--color-a);
+  }
+  .chip.is-solution {
+    @apply border-transparent;
+    background: color-mix(in srgb, var(--color-s) 14%, transparent);
+    color: var(--color-s);
+  }
+
+  .req-badge {
+    @apply rounded-full bg-surface-2 px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-ink-3;
+  }
+  .req-badge--required {
+    @apply text-brand;
+    background: var(--color-brand-soft);
+  }
+
+  /* ==========================================================================
+     KPI tiles
+     ========================================================================== */
+  .kpi-row {
+    @apply grid gap-3;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+  .kpi {
+    @apply flex flex-col gap-1 rounded-xl border border-line bg-surface p-4;
+  }
+  .kpi__label {
+    @apply text-xs font-semibold uppercase tracking-wide text-ink-3;
+  }
+  .kpi__value {
+    @apply text-2xl font-semibold tracking-tight;
+  }
+
+  /* ==========================================================================
+     Tables
+     ========================================================================== */
+  .table-wrap {
+    @apply overflow-hidden rounded-xl border border-line bg-surface;
+  }
+  .doc-table {
+    @apply w-full border-collapse text-sm;
+  }
+  .doc-table th,
+  .doc-table td {
+    @apply border-b border-line px-3.5 py-2.5 text-left;
+  }
+  .doc-table thead th {
+    @apply bg-surface-2 text-[11.5px] font-semibold uppercase tracking-wide text-ink-3;
+  }
+  .doc-table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+  .doc-table tbody tr:hover td {
+    @apply bg-surface-2;
+  }
+  .doc-table td.num,
+  .doc-table th.num,
+  .doc-table .num {
+    @apply text-right;
+    font-variant-numeric: tabular-nums;
+  }
+  .cell-actions {
+    @apply text-right;
+  }
+  .doc-table--nested {
+    @apply overflow-hidden rounded-lg border border-line bg-surface;
+  }
+  .doc-table--nested th,
+  .doc-table--nested td {
+    @apply px-3 py-2 text-[13px];
+  }
+
+  /* ==========================================================================
+     Uploader / dropzone / file card
+     ========================================================================== */
+  .uploader {
+    @apply cursor-pointer rounded-xl border border-dashed border-line-strong bg-surface p-7 text-center transition-colors;
+  }
+  .uploader:hover {
+    @apply border-brand;
+    background: var(--color-brand-soft);
+  }
+  .uploader--loaded {
+    @apply flex cursor-default items-center justify-between px-4 py-3 text-left;
+  }
+  .uploader--loaded:hover {
+    @apply border-line-strong bg-surface;
+  }
+
+  .upload-grid {
+    @apply grid grid-cols-1 gap-4 sm:grid-cols-2;
+  }
+  .upload-slot {
+    @apply flex min-w-0 flex-col gap-2;
+  }
+  .upload-slot--wide {
+    @apply sm:col-span-2;
+  }
+  .upload-slot__head {
+    @apply flex items-center justify-between gap-2;
+  }
+  .upload-slot__label {
+    @apply text-sm font-medium text-ink;
+  }
+  .dropzone {
+    @apply flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-line-strong bg-surface-2 px-4 py-6 text-center text-ink-2 transition-colors;
+  }
+  .dropzone:hover,
+  .dropzone:focus-visible {
+    @apply border-brand text-ink outline-none;
+  }
+  .dropzone--active {
+    @apply border-solid border-brand text-brand;
+    background: var(--color-brand-soft);
+  }
+  .dropzone__icon {
+    @apply size-7 opacity-80;
+  }
+  .dropzone__hint {
+    @apply text-[13px] font-medium;
+  }
+  .dropzone__sub {
+    @apply text-[11px] text-ink-3;
+  }
+  .dropzone__error {
+    @apply mt-1 text-xs text-bad;
+  }
+  .file-card {
+    @apply flex items-center gap-3 rounded-xl border border-line bg-surface px-3.5 py-3;
+  }
+  .file-card__icon {
+    @apply size-6 flex-none text-bad;
+  }
+  .file-card__body {
+    @apply min-w-0 flex-1;
+  }
+  .file-card__name {
+    @apply overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-semibold text-ink;
+  }
+  .file-card__meta {
+    @apply mt-0.5 text-xs text-ink-3;
+  }
+  .file-card__remove {
+    @apply flex flex-none cursor-pointer items-center justify-center rounded-lg border-0 bg-transparent p-1.5 text-ink-3;
+  }
+  .file-card__remove:hover {
+    @apply bg-surface-2 text-bad;
+  }
+
+  /* ==========================================================================
+     Segmented control
+     ========================================================================== */
+  .segmented {
+    @apply inline-flex overflow-hidden rounded-lg border border-line-strong;
+  }
+  .segmented__item {
+    @apply inline-flex cursor-pointer items-center gap-1.5 border-0 border-r border-line bg-transparent px-3 py-1.5 text-[13px] font-medium text-ink-2 transition-colors;
+  }
+  .segmented__item:last-child {
+    @apply border-r-0;
+  }
+  .segmented__item:hover:not(:disabled):not(.is-active) {
+    @apply bg-surface-2;
+  }
+  .segmented__item.is-active {
+    @apply bg-brand text-white;
+  }
+  .segmented__item:disabled {
+    @apply cursor-not-allowed opacity-55;
+  }
+  .segmented__soon {
+    @apply text-[10px] font-bold uppercase tracking-wide text-ink-2;
+  }
+
+  /* ==========================================================================
+     Toolbar primitive
+     ========================================================================== */
+  .tbar {
+    @apply flex flex-none items-center gap-3 overflow-x-auto border-b border-line bg-surface px-3 py-1;
+    min-height: 44px;
+  }
+  .tbar + .tbar {
+    @apply border-t-0;
+  }
+  .tbar__group {
+    @apply inline-flex flex-none items-center gap-2;
+  }
+  .tbar__divider {
+    @apply h-[22px] w-px flex-none bg-line;
+  }
+  .tbar__spacer {
+    @apply min-w-2 flex-1;
+  }
+  .tbar__count {
+    @apply whitespace-nowrap text-[13px] text-ink-2;
+    font-variant-numeric: tabular-nums;
+  }
+  .tbar__order {
+    @apply inline-flex items-center gap-2 whitespace-nowrap text-[13px] text-ink-2;
+  }
+  .tbar__order select {
+    @apply w-auto px-2.5 py-1.5;
+  }
+  .tbar__help {
+    @apply relative flex-none;
+  }
+  .tbar__help-pop {
+    @apply absolute right-0 z-50 w-64 rounded-lg border border-line bg-surface p-3 text-xs leading-relaxed text-ink-2 shadow-lg;
+    top: calc(100% + 4px);
+  }
+
+  /* ==========================================================================
+     Combobox
+     ========================================================================== */
+  .combobox {
+    @apply relative w-full;
+  }
+  .combobox__field {
+    @apply relative flex items-center;
+  }
+  .combobox__field input {
+    @apply pr-8;
+  }
+  .combobox__caret {
+    @apply pointer-events-none absolute right-2.5 size-4 text-ink-3;
+  }
+  .combobox__pop {
+    @apply absolute left-0 right-0 z-[60] m-0 max-h-60 overflow-y-auto rounded-lg border border-line bg-surface p-1 shadow-lg;
+    top: calc(100% + 4px);
+    list-style: none;
+  }
+  .combobox__option {
+    @apply flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-sm text-ink;
+  }
+  .combobox__option svg {
+    @apply size-4;
+  }
+  .combobox__option.is-active {
+    @apply bg-brand-soft text-brand;
+  }
+  .combobox__option[aria-selected='true'] {
+    @apply font-semibold;
+  }
+  .combobox__create {
+    @apply font-semibold text-brand;
+  }
+  .combobox__empty {
+    @apply px-2.5 py-2 text-[13px] text-ink-3;
+  }
+
+  /* ==========================================================================
+     Modal / dialog
+     ========================================================================== */
+  .modal {
+    @apply fixed inset-0 z-[1000] flex items-center justify-center p-6;
+    background: color-mix(in srgb, #0b1020 45%, transparent);
+    backdrop-filter: blur(2px);
+  }
+  .modal__panel {
+    @apply flex max-h-[84vh] w-full flex-col gap-3 overflow-auto rounded-xl bg-surface p-5 shadow-xl;
+    width: min(820px, 100%);
+  }
+  .modal__panel--sm {
+    @apply gap-3;
+    width: min(420px, 100%);
+  }
+  .modal__foot {
+    @apply mt-1 flex justify-end gap-2;
+  }
+  .modal__code {
+    @apply m-0 max-h-[60vh] overflow-auto rounded-lg border border-line bg-surface-2 p-3.5 text-[12.5px] leading-relaxed;
+    font-family: var(--font-mono);
+  }
+
+  /* ==========================================================================
+     Working-session bar
+     ========================================================================== */
+  .session-bar {
+    @apply flex flex-wrap items-center justify-between gap-4 rounded-xl border border-line bg-surface px-4 py-3 shadow-sm;
+    border-left: 3px solid var(--color-brand);
+  }
+  .session-bar__main {
+    @apply flex min-w-0 flex-col gap-1;
+  }
+  .session-bar__eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-wider text-ink-3;
+  }
+  .session-bar__title {
+    @apply flex items-center gap-2.5 text-[15px];
+  }
+
+  /* Phase-1 upload flow bits still consumed by the Cut & upload page. */
+  .phase-actions {
+    @apply flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3;
+  }
+  .results {
+    @apply m-0 flex list-none flex-col gap-2 p-0;
+  }
+
+  /* ==========================================================================
+     Document units (grouped, collapsible)
+     ========================================================================== */
+  .unit-list {
+    @apply flex flex-col gap-3;
+  }
+  .unit {
+    @apply overflow-hidden rounded-xl border border-line bg-surface shadow-sm;
+  }
+  .unit__summary {
+    @apply flex cursor-pointer list-none items-center gap-3 px-4 py-3;
+  }
+  .unit__summary::-webkit-details-marker {
+    display: none;
+  }
+  .unit__summary:hover {
+    @apply bg-surface-2;
+  }
+  .unit__caret {
+    @apply size-4 flex-none text-ink-3 transition-transform;
+  }
+  .unit[open] .unit__caret {
+    transform: rotate(180deg);
+  }
+  .unit__summary-main {
+    @apply mr-auto flex min-w-0 flex-col;
+  }
+  .unit__title {
+    @apply text-sm font-semibold text-ink;
+  }
+  .unit__sub {
+    @apply text-xs text-ink-3;
+  }
+  .unit__chips {
+    @apply inline-flex flex-none gap-1;
+  }
+  .unit__count {
+    @apply flex-none whitespace-nowrap text-[13px] text-ink-2;
+    font-variant-numeric: tabular-nums;
+  }
+  .unit__body {
+    @apply flex flex-col gap-3 border-t border-line px-4 pb-4;
+  }
+  .unit__supporting {
+    @apply flex flex-col gap-2;
+  }
+  .unit-note {
+    @apply m-0 text-xs text-ink-3;
+  }
+  .unit-part {
+    @apply flex items-center gap-3 rounded-lg border border-line bg-surface-2 px-3 py-2;
+  }
+  .unit-part__name {
+    @apply min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] text-ink-2;
+  }
+  .unit-part__actions {
+    @apply flex-none;
+  }
+
+  /* ==========================================================================
+     All masters
+     ========================================================================== */
+  .masters-grid {
+    @apply grid gap-4;
+  }
+  .master-module__head {
+    @apply mb-3.5;
+  }
+  .master-module__title {
+    @apply m-0 mb-1 text-base font-semibold text-ink;
+  }
+  .explorer {
+    @apply rounded-xl border border-line bg-surface p-3.5 shadow-sm;
+  }
+  .explorer summary {
+    @apply cursor-pointer font-medium;
+  }
+  .explorer__grid {
+    @apply mt-3 grid gap-3;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  }
+
+  /* ==========================================================================
+     Cutter workspace layout + preview
+     ========================================================================== */
+  .cutter-layout {
+    @apply grid items-start gap-6;
+    grid-template-columns: minmax(0, 1fr) 420px;
+  }
+  .cutter-layout__preview {
+    @apply sticky flex flex-col overflow-hidden rounded-xl border border-line bg-surface-2 shadow-sm;
+    top: 16px;
+    height: calc(100vh - 32px);
+  }
+  .cutter-layout__scroll {
+    @apply min-h-0 flex-1 overflow-y-auto p-4;
+  }
+  .cutter-layout__panel {
+    @apply min-w-0;
+  }
+
+  /* Full-height crop workspace: a slim bar on top, the cutter filling the rest of the viewport
+     (each column scrolls internally), so the PDF + tools get the space the intake chrome used to. */
+  .workspace {
+    @apply flex min-h-0 flex-col gap-3;
+    height: calc(100vh - 64px);
+  }
+  .ws-bar {
+    @apply flex flex-none items-center gap-3 overflow-x-auto rounded-xl border border-line bg-surface px-3 py-2 shadow-sm;
+    min-height: 48px;
+  }
+  .ws-bar__divider {
+    @apply h-[22px] w-px flex-none bg-line;
+  }
+  .ws-file {
+    @apply flex min-w-0 items-center gap-2;
+  }
+  .ws-file__name {
+    @apply overflow-hidden text-ellipsis whitespace-nowrap text-sm font-semibold text-ink;
+    max-width: 46ch;
+  }
+  .session-bar--compact {
+    @apply flex flex-none items-center gap-2;
+  }
+  .session-bar--compact select {
+    @apply w-auto py-1.5;
+    min-width: 160px;
+  }
+  .workspace .cutter-layout {
+    @apply min-h-0 flex-1 items-stretch;
+    height: auto;
+  }
+  .workspace .cutter-layout__preview {
+    @apply static h-full;
+  }
+  .workspace .cutter-layout__panel {
+    @apply h-full overflow-y-auto;
+  }
+  .previewer {
+    @apply flex flex-col items-center gap-5;
+  }
+  .page-wrap {
+    @apply rounded-md bg-white p-2 shadow-sm;
+  }
+  .page-wrap__num {
+    @apply mb-1 flex items-center gap-2 text-xs text-ink-2;
+  }
+  .page-wrap__delete {
+    @apply ml-auto;
+  }
+  .page-wrap__delete:hover:not(:disabled) {
+    @apply text-bad;
+    background: var(--color-bad-soft);
+  }
+  .page-wrap__canvas {
+    @apply relative w-fit;
+  }
+  .page-wrap__placeholder {
+    @apply flex h-96 w-[640px] items-center justify-center bg-surface-2 text-ink-2;
+  }
+  .chapter-card {
+    @apply flex flex-col gap-3 rounded-xl border border-line bg-surface p-3.5 shadow-sm;
+  }
+  .chapter-card__head {
+    @apply flex items-center justify-between;
+  }
+  .chapter-card__slices-head {
+    @apply flex items-center justify-between gap-2;
+  }
+  .slice-list {
+    @apply m-0 flex list-none flex-col gap-1.5 p-0;
+  }
+  .slice-list__item {
+    @apply flex items-center justify-between rounded-md border border-line px-2 py-1.5;
+  }
+  .slice-list__item.is-hovered {
+    @apply border-brand ring-1 ring-brand;
+  }
+  .slice-summary {
+    @apply flex gap-2;
+  }
+  .reflow-panel__head {
+    @apply flex items-center justify-between;
+  }
+  .reflow-panel__list {
+    @apply m-0 flex list-none flex-col gap-2 p-0;
+  }
+  .reflow-panel__item {
+    @apply flex cursor-pointer items-center gap-2.5 rounded-lg border border-line bg-surface px-2.5 py-2;
+  }
+  .reflow-panel__item.is-active {
+    border-color: var(--block-color, var(--color-brand));
+    box-shadow: 0 0 0 1px var(--block-color, var(--color-brand));
+  }
+  .reflow-panel__swatch {
+    @apply size-2.5 flex-none rounded;
+    background: var(--block-color, var(--color-brand));
+  }
+  .reflow-panel__body {
+    @apply flex min-w-0 flex-1 flex-col;
+  }
+  .reflow-panel__title {
+    @apply text-[13px] font-medium;
+  }
+  .reflow-panel__actions {
+    @apply flex gap-0.5;
+  }
+
+  /* ==========================================================================
+     Verify crop workspace
+     ========================================================================== */
+  .verify {
+    @apply grid items-start gap-4;
+    grid-template-columns: minmax(0, 1fr) 460px;
+  }
+  .verify__canvas {
+    @apply sticky flex flex-col gap-2 rounded-xl border border-line bg-surface p-4 shadow-sm;
+    top: 16px;
+    height: calc(100vh - 32px);
+  }
+  .verify__panel {
+    @apply flex min-w-0 flex-col gap-3.5;
+  }
+  .crop-canvas {
+    @apply flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-lg bg-surface-2;
+  }
+  .crop-canvas__frame {
+    @apply relative leading-none;
+    user-select: none;
+  }
+  .crop-canvas__img {
+    @apply block h-full w-full select-none;
+    -webkit-user-drag: none;
+  }
+
+  .q-list {
+    @apply m-0 flex list-none flex-col gap-3 p-0;
+  }
+  .q-card {
+    @apply flex flex-col gap-2.5 rounded-xl border border-line bg-surface p-4;
+  }
+  .q-card__head {
+    @apply flex items-center gap-2.5;
+  }
+  .q-card__num {
+    @apply rounded-full px-2.5 py-0.5 text-[13px] font-bold text-brand;
+    background: var(--color-brand-soft);
+  }
+  .q-card__stem {
+    @apply m-0 whitespace-pre-wrap text-[15px] leading-relaxed;
+  }
+  .q-opts {
+    @apply m-0 flex list-none flex-col gap-1.5 p-0;
+  }
+  .q-opt {
+    @apply rounded-lg border border-line px-3 py-2 text-sm leading-snug;
+  }
+  .q-opt.is-correct {
+    @apply text-ok;
+    border-color: var(--color-ok);
+    background: var(--color-ok-soft);
+  }
+  .q-meta {
+    @apply grid grid-cols-1 gap-2.5 sm:grid-cols-3;
+  }
+  .q-preview {
+    @apply min-h-5 rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm leading-relaxed;
+  }
+  .latex-view {
+    @apply min-h-[38px] cursor-text rounded-lg border border-line bg-surface px-3 py-2 text-sm leading-relaxed transition-colors;
+  }
+  .latex-view:hover {
+    @apply border-line-strong bg-surface-2;
+  }
+  .q-opt-edit {
+    @apply flex items-center gap-2;
+  }
+  .q-opt-edit input {
+    @apply flex-1;
+  }
+  .q-imgs {
+    @apply flex flex-col gap-2 rounded-lg border border-dashed border-line-strong bg-surface-2 p-2.5;
+  }
+  .q-imgs__row {
+    @apply flex flex-row items-center justify-between gap-1.5;
+  }
+  .q-imgs__opt {
+    @apply flex flex-col gap-1.5;
+  }
+  .q-imgs__grid {
+    @apply grid gap-2;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  }
+  .q-thumb {
+    @apply flex flex-col items-start gap-1;
+  }
+  .q-thumb img {
+    @apply max-h-36 max-w-full rounded-lg border border-line bg-white;
+  }
+
+  /* ==========================================================================
+     Usage dashboard
+     ========================================================================== */
+  .usage-layout {
+    @apply flex flex-col gap-5;
+  }
+  .usage-chart {
+    @apply h-[300px] w-full;
+  }
+  .usage-chart__tip {
+    @apply flex flex-col gap-0.5 rounded-lg border border-line bg-surface p-2.5 text-xs shadow-lg;
+  }
+  .usage-budget {
+    @apply grid gap-4;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+  .limit-progress {
+    @apply flex flex-col gap-4;
+  }
+  .limit-bar {
+    @apply flex flex-col gap-1.5;
+  }
+  .limit-bar__head {
+    @apply flex justify-between text-[13px] font-medium;
+  }
+  .limit-bar__track {
+    @apply h-2.5 overflow-hidden rounded-full bg-surface-2;
+  }
+  .limit-bar__fill {
+    @apply h-full rounded-full transition-all;
+  }
+  .limit-bar__fill--ok {
+    @apply bg-brand;
+  }
+  .limit-bar__fill--near {
+    background: var(--color-warn);
+  }
+  .limit-bar__fill--over {
+    background: var(--color-bad);
+  }
+  .limit-bar__flag {
+    @apply text-xs font-medium text-bad;
+  }
+  .limit-form {
+    @apply flex max-w-xs flex-col gap-3.5;
+  }
+  .usage-row {
+    @apply cursor-pointer;
+  }
+  .usage-row--muted td {
+    @apply text-ink-2;
+  }
+  .usage-row__caret {
+    @apply inline-block w-3.5 text-ink-3 transition-transform;
+  }
+  .usage-row__caret--open {
+    transform: rotate(90deg);
+  }
+  .usage-row__detail > td {
+    @apply bg-surface-2 px-3.5 pb-3 pt-2;
+  }
+}
+
+/* ============================================================================
+   Overlay internals — absolute/positioned cutter & crop layers. Kept as raw
+   rules (dynamic positioning is set inline in JSX); colours use theme tokens.
+   ========================================================================== */
+.page-overlay {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+  z-index: 10;
+}
+.split-line {
+  position: absolute;
+}
+.split-line--horizontal {
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: var(--color-bad);
+  cursor: row-resize;
+  transform: translateY(-1px);
+}
+.split-line--vertical {
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: var(--color-brand);
+  cursor: col-resize;
+  transform: translateX(-1px);
+}
+.split-line__remove {
+  position: absolute;
+  top: -9px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 16px;
+  height: 16px;
+  line-height: 14px;
+  text-align: center;
+  font-size: 14px;
+  background: #fff;
+  border: 1px solid var(--color-line-strong);
+  border-radius: 50%;
+  cursor: pointer;
+}
+.cut-cell {
+  position: absolute;
+  border: 1px dashed var(--color-brand);
+  background: color-mix(in srgb, var(--color-brand) 8%, transparent);
+  pointer-events: none;
+}
+.cut-cell__order {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--color-brand);
+  border-radius: 9px;
+}
+.reflow-overlay {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+  z-index: 10;
+}
+.reflow-crop {
+  position: absolute;
+  border: 2px solid var(--color-brand);
+  box-sizing: border-box;
+}
+.reflow-crop.is-active {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6);
+}
+.reflow-crop__tag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+}
+.reflow-crop__remove {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  text-align: center;
+  font-size: 13px;
+  color: #fff;
+  background: var(--color-bad);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.reflow-rubber {
+  position: absolute;
+  border: 2px dashed var(--color-brand);
+  background: color-mix(in srgb, var(--color-brand) 10%, transparent);
+  pointer-events: none;
+}
+.slice-band {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  pointer-events: none;
+  border-top: 1px dashed rgba(0, 0, 0, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: box-shadow 0.1s ease;
+}
+.slice-band.is-question {
+  background: color-mix(in srgb, var(--color-q) 12%, transparent);
+}
+.slice-band.is-answer {
+  background: color-mix(in srgb, var(--color-a) 14%, transparent);
+}
+.slice-band.is-solution {
+  background: color-mix(in srgb, var(--color-s) 14%, transparent);
+}
+.slice-band.is-loose {
+  background: rgba(90, 98, 116, 0.09);
+}
+.slice-band.is-hovered {
+  box-shadow: inset 0 0 0 2px var(--color-brand);
+}
+.slice-band__label {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(21, 23, 29, 0.55);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  user-select: none;
+}
+.slice-band__chip {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid var(--color-line);
+  background: #fff;
+  color: var(--color-ink-2);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+}
+.slice-band__chip.is-question {
+  background: var(--color-q);
+  border-color: var(--color-q);
+  color: #fff;
+}
+.slice-band__chip.is-answer {
+  background: var(--color-a);
+  border-color: var(--color-a);
+  color: #fff;
+}
+.slice-band__chip.is-solution {
+  background: var(--color-s);
+  border-color: var(--color-s);
+  color: #fff;
+}
+.slice-band__chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+.btn--pill.is-question.is-active {
+  background: var(--color-q);
+  border-color: var(--color-q);
+  color: #fff;
+}
+.btn--pill.is-answer.is-active {
+  background: var(--color-a);
+  border-color: var(--color-a);
+  color: #fff;
+}
+.btn--pill.is-solution.is-active {
+  background: var(--color-s);
+  border-color: var(--color-s);
+  color: #fff;
+}
+.cropbox {
+  position: absolute;
+  border: 2px solid var(--color-brand);
+  background: color-mix(in srgb, var(--color-brand) 12%, transparent);
+  box-sizing: border-box;
+  cursor: move;
+  z-index: 10;
+}
+.cropbox__label {
+  position: absolute;
+  top: -22px;
+  left: -2px;
+  background: var(--color-brand);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 5px 5px 0 0;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.cropbox__handle {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  background: #fff;
+  border: 1.5px solid var(--color-brand);
+  border-radius: 2px;
+  z-index: 12;
+}
+
+/* KaTeX inline sizing inside our question text */
+.q-card__stem .katex,
+.q-opt .katex {
+  font-size: 1.02em;
+}
+
+/* ============================================================================
+   Responsive collapse
+   ========================================================================== */
+@media (max-width: 1000px) {
+  .verify {
+    grid-template-columns: 1fr;
+  }
+  .verify__canvas {
+    position: static;
+    height: auto;
+  }
+  .crop-canvas {
+    max-height: 74vh;
+  }
+}
+
+@media (max-width: 900px) {
+  .cutter-layout {
+    grid-template-columns: 1fr;
+  }
+  .cutter-layout__preview {
+    position: static;
+    height: auto;
+  }
+  .cutter-layout__scroll {
+    max-height: 76vh;
+  }
+  .workspace {
+    height: auto;
+  }
+  .workspace .cutter-layout__preview {
+    height: auto;
+  }
+  .workspace .cutter-layout__panel {
+    height: auto;
+    overflow: visible;
+  }
+}
+
+
+/* ============================================================================
+   Auto-crop review (AI-suggested boxes, review list) — from #9, adapted to the
+   design-system tokens.
+   ========================================================================== */
+/* An unconfirmed AI-suggested crop: distinct colour + dashed border ("pending review"). */
+.cropbox--ai {
+  border-style: dashed;
+  border-color: var(--color-ok);
+  background: color-mix(in srgb, var(--color-ok) 14%, transparent);
+}
+
+.cropbox--ai .cropbox__label {
+  background: var(--color-ok);
+}
+
+.cropbox--ai .cropbox__handle {
+  border-color: var(--color-ok);
+}
+
+/* AI suggestion review list (in the auto-crop card, above the canvas). */
+.ai-review {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-line);
+}
+
+.ai-review__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-review__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-line);
+  border-radius: 9px;
+  background: var(--color-surface-2);
+}
+
+/* Live window into the page image showing exactly what this crop box covers. */
+.crop-thumb {
+  flex: none;
+  width: 108px;
+  height: 80px;
+  border-radius: 8px;
+  border: 1px solid var(--color-line);
+  background-color: var(--color-surface);
+  background-repeat: no-repeat;
+}
+
+/* The clickable match summary: number + matched stem + the verbatim line the detector read. */
+.ai-review__match {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.ai-review__match:hover {
+  background: color-mix(in srgb, var(--color-ok) 10%, transparent);
+}
+
+.ai-review__label {
+  font-weight: 600;
+  color: var(--color-ok);
+  white-space: nowrap;
+}
+
+.ai-review__stem {
+  font-size: 13px;
+  color: var(--color-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-review__snippet {
+  font-size: 12px;
+  color: var(--color-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The question card a pending crop was mapped to, briefly ringed when you click its review row. */
+.q-card-wrap {
+  border-radius: 14px;
+  transition: box-shadow 150ms ease;
+}
+.q-card-wrap.is-highlighted {
+  box-shadow: 0 0 0 2px var(--color-ok);
+}
