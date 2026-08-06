@@ -114,7 +114,7 @@ export function PdfModeSelector({
         )}
         <button
           type="button"
-          className="btn btn--primary btn--xs"
+          className="btn btn--xs"
           disabled={lineCount === 0 || applying}
           onClick={onApply}
           title={isReflow ? 'Stack each block onto one page' : 'Split the pages along the current lines into a new PDF'}

@@ -1,5 +1,6 @@
 import type { JSX } from 'react';
 import type { TokenLimit, UsageAnalytics } from '@ingest/contracts';
+import { IconWarning } from '../../../shared/ui/index.js';
 import { formatTokens } from '../lib/format-tokens.js';
 
 type Tone = 'ok' | 'near' | 'over';
@@ -37,7 +38,9 @@ function LimitBar({ label, used, cap }: { label: string; used: number; cap: numb
         <div className={`limit-bar__fill limit-bar__fill--${tone}`} style={{ width: `${String(pct)}%` }} />
       </div>
       {tone === 'over' ? (
-        <span className="limit-bar__flag">⚠ Over budget — new extractions are blocked.</span>
+        <span className="limit-bar__flag">
+          <IconWarning /> Over budget — new extractions are blocked.
+        </span>
       ) : null}
     </div>
   );

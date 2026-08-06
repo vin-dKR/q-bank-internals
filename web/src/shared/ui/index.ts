@@ -12,6 +12,7 @@ export { useConfirm } from './confirm-dialog.js';
 export { Combobox } from './combobox.js';
 export { ToastProvider, useToast } from './toast.js';
 export { Spinner, LoadingState, Skeleton } from './spinner.js';
+export { EmptyState } from './empty-state.js';
 export {
   IconTrash,
   IconSparkle,
@@ -24,5 +25,9 @@ export {
   IconZoomIn,
   IconZoomOut,
   IconChevronDown,
+  IconChevronLeft,
+  IconChevronRight,
+  IconFileText,
   IconHelp,
+  IconLayers,
 } from './icons.js';

@@ -1,5 +1,6 @@
 import { type JSX, useState } from 'react';
 import type { BankQuestion } from '@ingest/contracts';
+import { Button, LoadingState } from '../../../shared/ui/index.js';
 import { useBankSearch } from '../hooks/use-bank.js';
 import { RecropWorkspace } from './recrop-workspace.js';
 
@@ -30,56 +31,43 @@ export function BankSearchPanel(): JSX.Element {
           <div className="row">
             <input
               type="text"
-              style={{ flex: 1 }}
+              className="min-w-0 flex-1"
               value={term}
               placeholder="Question text or file name…"
               onChange={(event) => { setTerm(event.target.value); }}
             />
-            <button type="submit" className="btn btn--primary" disabled={term.trim().length === 0}>
+            <Button type="submit" variant={selected ? 'default' : 'primary'} disabled={term.trim().length === 0}>
               Search
-            </button>
+            </Button>
           </div>
         </label>
 
         {query.length === 0 ? null : results.isPending ? (
-          <p className="muted">Searching…</p>
+          <LoadingState label="Searching…" />
         ) : results.isError ? (
           <p className="error">Search failed. Is the bank database configured?</p>
         ) : results.data.length === 0 ? (
           <p className="muted">No published questions match “{query}”.</p>
         ) : (
-          <div style={{ marginTop: 12 }}>
+          <ul className="bank-hit-list">
             {results.data.map((question) => (
-              <div
-                key={question.id}
-                className="row"
-                style={{
-                  justifyContent: 'space-between',
-                  gap: 12,
-                  padding: '10px 0',
-                  borderTop: '1px solid var(--border)',
-                }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
+              <li key={question.id} className="bank-hit">
+                <div className="bank-hit__body">
                   <div>{preview(question.questionText) || <span className="muted">(no text)</span>}</div>
-                  <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                  <div className="bank-hit__meta">
                     {[question.exam, question.subject, question.fileName].filter(Boolean).join(' · ') || '—'}
                   </div>
                 </div>
                 {question.ingestRef ? (
-                  <button
-                    type="button"
-                    className="btn btn--xs"
-                    onClick={() => { setSelected(question); }}
-                  >
+                  <Button size="xs" onClick={() => { setSelected(question); }}>
                     {selected?.id === question.id ? 'Fixing…' : 'Fix image'}
-                  </button>
+                  </Button>
                 ) : (
-                  <span className="muted" style={{ fontSize: 12 }}>No source link</span>
+                  <span className="bank-hit__meta">No source link</span>
                 )}
-              </div>
+              </li>
             ))}
-          </div>
+          </ul>
         )}
       </form>
 

@@ -55,7 +55,7 @@ function metadataError(meta: ChapterMetadataDraft): string | null {
     !meta.sectionName.trim() ||
     !meta.questionType.trim()
   ) {
-    return '⚠ Missing metadata — skipped.';
+    return 'Missing metadata — skipped.';
   }
   return null;
 }
@@ -224,9 +224,9 @@ export function IngestPage(): JSX.Element {
     try {
       const result = await upload.mutateAsync({ pdfBytes: bytes, metadata });
       setDidUpload(true);
-      done.push(`✓ ${metadata.kind} → ${result.driveFile.name} [${result.document.status}]`);
+      done.push(`${metadata.kind} → ${result.driveFile.name} [${result.document.status}]`);
     } catch (error) {
-      done.push(`✗ ${metadata.kind} failed: ${errorMessage(error)}`);
+      done.push(`${metadata.kind} failed: ${errorMessage(error)}`);
     }
     next[chapterId] = done.join(' · ');
     setResults({ ...next });
@@ -303,7 +303,7 @@ export function IngestPage(): JSX.Element {
           pageKinds,
         });
       } catch (error) {
-        next[group.id] = `✗ Cut failed: ${errorMessage(error)}`;
+        next[group.id] = `Cut failed: ${errorMessage(error)}`;
         setResults({ ...next });
         continue;
       }
@@ -395,7 +395,7 @@ export function IngestPage(): JSX.Element {
           {/* One card: choose how PDFs come in, then that mode's intake sits directly below the switch. */}
           {phase === 'upload' ? (
             <div className="card stack">
-              <div className="segmented" role="tablist" aria-label="Upload mode">
+              <div className="segmented self-start" role="tablist" aria-label="Upload mode">
                 <button
                   type="button"
                   role="tab"

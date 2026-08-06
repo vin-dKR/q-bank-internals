@@ -44,18 +44,16 @@ export function PipelinePage(): JSX.Element {
   }
 
   return (
-    <section className="flex h-[calc(100vh-64px)] min-h-0 flex-col gap-3 max-[1000px]:h-auto">
-      <div className="flex flex-none flex-wrap items-center gap-3 rounded-xl border border-line bg-surface px-3 py-2 shadow-sm">
+    <section className="workspace max-[1000px]:h-auto">
+      <div className="ws-bar">
         <div className="min-w-0 max-w-md flex-1">
           <DocumentPicker value={documentId} onChange={setDocumentId} />
         </div>
-        <Button variant="primary" disabled={publish.isPending} onClick={onPublish}>
+        <Button variant="primary" className="ml-auto flex-none" disabled={publish.isPending} onClick={onPublish}>
           {publish.isPending ? <><Spinner /> Publishing…</> : 'Publish to bank →'}
         </Button>
       </div>
-      <div className="min-h-0 flex-1">
-        <VerifyWorkspace documentId={documentId} autoRun={autoRun} />
-      </div>
+      <VerifyWorkspace documentId={documentId} autoRun={autoRun} />
       {confirmDialog}
     </section>
   );

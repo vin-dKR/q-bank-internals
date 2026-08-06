@@ -80,7 +80,7 @@ export function SessionBar({ compact = false }: { compact?: boolean } = {}): JSX
                 if (event.key === 'Enter') submit();
                 if (event.key === 'Escape') cancel();
               }}
-              style={{ maxWidth: 220 }}
+              className="min-w-0 flex-1 max-w-[220px]"
             />
             <button
               type="button"
@@ -133,7 +133,7 @@ export function SessionBar({ compact = false }: { compact?: boolean } = {}): JSX
                 if (event.key === 'Enter') submit();
                 if (event.key === 'Escape') cancel();
               }}
-              style={{ maxWidth: 320 }}
+              className="min-w-0 flex-1 max-w-xs"
             />
             <button
               type="button"
@@ -162,10 +162,10 @@ export function SessionBar({ compact = false }: { compact?: boolean } = {}): JSX
         )}
       </div>
 
-      <div className="row">
+      <div className="row flex-nowrap">
         <select
           value={active ? currentId ?? '' : ''}
-          style={{ maxWidth: 260 }}
+          className="w-auto min-w-[180px] max-w-[260px]"
           onChange={(event) => { setCurrentId(event.target.value); setMode('idle'); }}
         >
           <option value="" disabled>

@@ -28,7 +28,7 @@ export function UsagePage(): JSX.Element {
             <span className="field__label">Range</span>
             <select
               value={days}
-              style={{ width: 'auto' }}
+              className="w-auto"
               onChange={(e) => { setDays(Number(e.target.value)); }}
             >
               {RANGES.map((option) => (

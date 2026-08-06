@@ -39,24 +39,24 @@ export function UsageChart({ daily }: { daily: DailyUsagePoint[] }): JSX.Element
     <div className="usage-chart">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={daily} margin={{ top: 8, right: 8, bottom: 4, left: 4 }}>
-          <CartesianGrid vertical={false} stroke="var(--border)" />
+          <CartesianGrid vertical={false} stroke="var(--color-line)" />
           <XAxis
             dataKey="date"
             tickFormatter={formatDay}
-            tick={{ fill: 'var(--text-subtle)', fontSize: 12 }}
+            tick={{ fill: 'var(--color-ink-3)', fontSize: 12 }}
             tickLine={false}
-            axisLine={{ stroke: 'var(--border-strong)' }}
+            axisLine={{ stroke: 'var(--color-line-strong)' }}
             minTickGap={24}
           />
           <YAxis
             tickFormatter={formatTokensCompact}
-            tick={{ fill: 'var(--text-subtle)', fontSize: 12 }}
+            tick={{ fill: 'var(--color-ink-3)', fontSize: 12 }}
             tickLine={false}
             axisLine={false}
             width={44}
           />
-          <Tooltip cursor={{ fill: 'var(--accent-soft)' }} content={<ChartTooltip />} />
-          <Bar dataKey="totalTokens" fill="var(--accent)" radius={[4, 4, 0, 0]} maxBarSize={40} />
+          <Tooltip cursor={{ fill: 'var(--color-brand-soft)' }} content={<ChartTooltip />} />
+          <Bar dataKey="totalTokens" fill="var(--color-brand)" radius={[4, 4, 0, 0]} maxBarSize={40} />
         </BarChart>
       </ResponsiveContainer>
     </div>

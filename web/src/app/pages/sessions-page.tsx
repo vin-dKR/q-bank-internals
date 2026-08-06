@@ -10,7 +10,8 @@ import {
 import {
   Badge,
   Button,
-  Card,
+  EmptyState,
+  IconLayers,
   IconPlus,
   IconTrash,
   LoadingState,
@@ -88,13 +89,22 @@ export function SessionsPage(): JSX.Element {
       ) : sessions.isError ? (
         <p className="m-0 text-sm text-bad">Could not reach the API. Is it running on :4000?</p>
       ) : items.length === 0 ? (
-        <Card>
-          <p className="m-0 text-sm text-ink-2">
-            No sessions{status === 'all' ? '' : ` with status "${status}"`}. Head to{' '}
-            <Link className="text-brand hover:underline" to="/">Cut &amp; upload</Link> — a session is
-            created automatically as you start.
-          </p>
-        </Card>
+        <EmptyState
+          icon={<IconLayers />}
+          title={status === 'all' ? 'No sessions yet' : `No sessions with status “${status}”`}
+          body={
+            status === 'all'
+              ? 'A session is created as you name one in Cut & upload; every upload run lands here.'
+              : 'Try another status, or switch the filter back to All.'
+          }
+          action={
+            status === 'all' ? (
+              <Link className={buttonClasses()} to="/">
+                <IconPlus /> Start in Cut &amp; upload
+              </Link>
+            ) : undefined
+          }
+        />
       ) : (
         <>
           <div className="mb-1 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface px-3.5 py-2.5">

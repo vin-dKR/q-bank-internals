@@ -39,7 +39,7 @@ export function ConfigsModal({
   return (
     <div className="modal" onClick={onClose}>
       <div className="modal__panel" onClick={(e) => { e.stopPropagation(); }}>
-        <div className="row" style={{ justifyContent: 'space-between' }}>
+        <div className="row justify-between">
           <h2>Configs to publish · {configs.length} question(s)</h2>
           <div className="row">
             <button

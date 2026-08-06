@@ -34,25 +34,41 @@ export function ToolbarSpacer(): JSX.Element {
 
 /**
  * A `?` button that reveals help text in a popover — the home for interaction hints that used to be
- * crammed into the toolbar as prose. Closes on outside click or Escape.
+ * crammed into the toolbar as prose. The popover is `fixed`-positioned from the button's rect so the
+ * toolbar's horizontal-scroll clipping can't cut it off; it closes on outside click, Escape, scroll,
+ * or resize.
  */
 export function ToolbarHelp({ children }: { children: ReactNode }): JSX.Element {
-  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState<{ top: number; right: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const open = anchor !== null;
+
+  const toggle = (): void => {
+    setAnchor((current) => {
+      if (current) return null;
+      const rect = ref.current?.getBoundingClientRect();
+      return rect ? { top: rect.bottom + 4, right: window.innerWidth - rect.right } : null;
+    });
+  };
 
   useEffect(() => {
     if (!open) return;
+    const close = (): void => { setAnchor(null); };
     const onDown = (event: MouseEvent): void => {
-      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(event.target as Node)) close();
     };
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key === 'Escape') close();
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
     return () => {
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
     };
   }, [open]);
 
@@ -64,11 +80,19 @@ export function ToolbarHelp({ children }: { children: ReactNode }): JSX.Element 
         aria-label="Interaction help"
         aria-expanded={open}
         title="Help"
-        onClick={() => { setOpen((v) => !v); }}
+        onClick={toggle}
       >
         <IconHelp />
       </button>
-      {open ? <div className="tbar__help-pop" role="dialog">{children}</div> : null}
+      {anchor ? (
+        <div
+          className="tbar__help-pop"
+          role="dialog"
+          style={{ position: 'fixed', top: anchor.top, right: anchor.right }}
+        >
+          {children}
+        </div>
+      ) : null}
     </div>
   );
 }

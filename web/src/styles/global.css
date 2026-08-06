@@ -843,12 +843,25 @@
     grid-template-columns: minmax(0, 1fr) 460px;
   }
   .verify__canvas {
-    @apply sticky flex flex-col gap-2 rounded-xl border border-line bg-surface p-4 shadow-sm;
+    @apply sticky flex flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-sm;
     top: 16px;
     height: calc(100vh - 32px);
   }
+  .verify__stage {
+    @apply flex min-h-0 flex-1 p-3;
+  }
   .verify__panel {
     @apply flex min-w-0 flex-col gap-3.5;
+  }
+  /* Inside the full-height workspace the columns fill the viewport row and scroll internally. */
+  .workspace .verify {
+    @apply min-h-0 flex-1 items-stretch;
+  }
+  .workspace .verify__canvas {
+    @apply static h-full;
+  }
+  .workspace .verify__panel {
+    @apply h-full min-h-0 overflow-y-auto;
   }
   .crop-canvas {
     @apply flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-lg bg-surface-2;
@@ -968,7 +981,10 @@
     background: var(--color-bad);
   }
   .limit-bar__flag {
-    @apply text-xs font-medium text-bad;
+    @apply inline-flex items-center gap-1.5 text-xs font-medium text-bad;
+  }
+  .limit-bar__flag svg {
+    @apply size-3.5 flex-none;
   }
   .limit-form {
     @apply flex max-w-xs flex-col gap-3.5;
@@ -987,6 +1003,22 @@
   }
   .usage-row__detail > td {
     @apply bg-surface-2 px-3.5 pb-3 pt-2;
+  }
+
+  /* ==========================================================================
+     Bank search hits
+     ========================================================================== */
+  .bank-hit-list {
+    @apply m-0 flex list-none flex-col p-0;
+  }
+  .bank-hit {
+    @apply flex items-center justify-between gap-3 border-t border-line py-2.5;
+  }
+  .bank-hit__body {
+    @apply min-w-0 flex-1 text-sm;
+  }
+  .bank-hit__meta {
+    @apply mt-0.5 text-xs text-ink-3;
   }
 }
 
@@ -1228,9 +1260,14 @@
   .verify {
     grid-template-columns: 1fr;
   }
-  .verify__canvas {
+  .verify__canvas,
+  .workspace .verify__canvas {
     position: static;
     height: auto;
+  }
+  .workspace .verify__panel {
+    height: auto;
+    overflow: visible;
   }
   .crop-canvas {
     max-height: 74vh;
@@ -1280,13 +1317,7 @@
   border-color: var(--color-ok);
 }
 
-/* AI suggestion review list (in the auto-crop card, above the canvas). */
-.ai-review {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-line);
-}
-
+/* AI suggestion review list (a card at the top of the Verify question panel). */
 .ai-review__list {
   list-style: none;
   margin: 0;
@@ -1336,9 +1367,17 @@
 }
 
 .ai-review__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-weight: 600;
   color: var(--color-ok);
   white-space: nowrap;
+}
+.ai-review__label svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
 }
 
 .ai-review__stem {
