@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "npm install",
+  "installCommand": "npm install --include=dev",
   "buildCommand": "node scripts/check-env.mjs && npm run prisma:generate && npm run build:contracts",
   "functions": {
     "api/index.ts": {
