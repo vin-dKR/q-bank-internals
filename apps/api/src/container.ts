@@ -1,4 +1,4 @@
-import { env } from './config/index.js';
+import { env, isServerless } from './config/index.js';
 import { logger } from './shared/logger/logger.js';
 import { DocumentsService, type DocumentRepository } from './modules/documents/index.js';
 import { SessionsService, type SessionRepository } from './modules/sessions/index.js';
@@ -44,6 +44,7 @@ import { GoogleDriveStorage } from './infrastructure/drive/google-drive.storage.
 import { UnconfiguredDriveStorage } from './infrastructure/drive/unconfigured-drive.storage.js';
 import { oauthDrive, serviceAccountDrive } from './infrastructure/drive/google-auth.js';
 import { InProcessJobQueue } from './infrastructure/queue/in-process.job-queue.js';
+import { SynchronousJobQueue } from './infrastructure/queue/synchronous.job-queue.js';
 import { BullMqJobQueue } from './infrastructure/queue/bullmq.job-queue.js';
 import { PdfToImgRasterizer } from './infrastructure/pdf/pdf-to-img.rasterizer.js';
 import { OpenAiVisionExtractor } from './infrastructure/ai/openai.vision-extractor.js';
@@ -143,11 +144,19 @@ function buildPersistence(): {
   };
 }
 
-/** BullMQ when Redis is configured; otherwise an in-process queue so dev boots with no Redis. */
+/**
+ * Queue selection: BullMQ when Redis is configured (durable, drained by the standalone worker);
+ * a synchronous in-request queue on serverless (Vercel freezes the function after the response, so
+ * detached work would be killed); otherwise the detached in-process queue so dev boots with no Redis.
+ */
 function buildQueue(): JobQueue {
   if (env.REDIS_URL) {
     logger.info('Queue: BullMQ (Redis)');
     return new BullMqJobQueue(env.REDIS_URL);
+  }
+  if (isServerless) {
+    logger.info('Queue: synchronous in-request (serverless). Extraction runs inline; no background worker.');
+    return new SynchronousJobQueue();
   }
   logger.info('Queue: in-process (dev). Set REDIS_URL for a durable BullMQ worker.');
   return new InProcessJobQueue();
@@ -241,15 +250,19 @@ export function createContainer(): Container {
     extractionService,
   );
 
-  // In-process queue (dev): the API also consumes, so extraction runs without a separate worker.
-  // BullMQ: the API only enqueues; the dedicated `worker.ts` process registers the consumer instead.
+  // In-process/synchronous queue: the API also consumes, so extraction runs without a separate
+  // worker. BullMQ: the API only enqueues; the dedicated `worker.ts` process registers the consumer.
   if (!env.REDIS_URL) {
     jobQueue.process((payload) => extractionWorker.run(payload));
-    // The in-process worker cannot outlive the process, so any doc still `extracting`/`queued` at
-    // boot is stale — reset it to `failed` so it is re-runnable and never stuck.
-    void documents.resetInFlight().then((count) => {
-      if (count > 0) logger.info(`Recovered ${String(count)} stale extraction(s) → failed`);
-    });
+    // Recover stale in-flight docs from a previous crash — but ONLY off serverless. On serverless
+    // many function instances run concurrently, so a cold-start reset here would flip a document
+    // that a sibling invocation is actively extracting to `failed`. The synchronous queue also
+    // never leaves work orphaned across requests, so there is nothing to recover.
+    if (!isServerless) {
+      void documents.resetInFlight().then((count) => {
+        if (count > 0) logger.info(`Recovered ${String(count)} stale extraction(s) → failed`);
+      });
+    }
   }
 
   return {

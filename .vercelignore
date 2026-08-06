@@ -1,0 +1,9 @@
+# API-only Vercel project: the web app is deployed separately, so keep it out of the build context.
+apps/web
+
+# Never ship secrets or local artifacts.
+.env
+.env.*
+!.env.example
+dist
+build
