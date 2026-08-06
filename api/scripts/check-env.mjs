@@ -45,24 +45,23 @@ if (missing('SUPABASE_SERVICE_KEY')) {
   errors.push('SUPABASE_SERVICE_KEY is required — verified image crops cannot upload without it.');
 }
 
-// Drive auth: the OAuth trio (preferred) or a service account, plus the root folder.
+// Drive auth: only the OAuth trio works on Vercel. GOOGLE_SERVICE_ACCOUNT_JSON is a *file path*
+// (see google-auth.ts) to a gitignored key file, which therefore never exists in the deployed
+// bundle — it is a local-dev-only option.
 const oauthVars = ['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'GOOGLE_OAUTH_REFRESH_TOKEN'];
 const oauthMissing = oauthVars.filter((n) => missing(n));
 if (oauthMissing.length > 0 && oauthMissing.length < oauthVars.length) {
   errors.push(`Google OAuth is only partially configured — missing ${oauthMissing.join(', ')}.`);
 }
-if (oauthMissing.length === oauthVars.length && missing('GOOGLE_SERVICE_ACCOUNT_JSON')) {
-  errors.push('Drive auth is missing — set the GOOGLE_OAUTH_* trio (preferred) or GOOGLE_SERVICE_ACCOUNT_JSON.');
+if (oauthMissing.length === oauthVars.length) {
+  errors.push(
+    missing('GOOGLE_SERVICE_ACCOUNT_JSON')
+      ? 'Drive auth is missing — set the GOOGLE_OAUTH_* trio.'
+      : 'Only GOOGLE_SERVICE_ACCOUNT_JSON is set, but it is a path to a gitignored key file that does not exist on Vercel — set the GOOGLE_OAUTH_* trio instead.',
+  );
 }
 if (missing('DRIVE_ROOT_FOLDER_ID')) {
   errors.push('DRIVE_ROOT_FOLDER_ID is required for Drive access.');
-}
-if (!missing('GOOGLE_SERVICE_ACCOUNT_JSON')) {
-  try {
-    JSON.parse(env.GOOGLE_SERVICE_ACCOUNT_JSON);
-  } catch {
-    errors.push('GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON — re-paste the raw service-account file, without surrounding quotes.');
-  }
 }
 
 // Values that break the serverless runtime when present/wrong.
