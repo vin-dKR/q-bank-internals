@@ -38,6 +38,16 @@ const EnvSchema = z.object({
   // BullMQ (Redis) connection for the extraction queue. Absent → in-process queue (dev, no Redis).
   REDIS_URL: z.string().optional(),
 
+  // Serverless mode (Vercel). The platform freezes the function the instant the HTTP response is
+  // sent, so the detached background worker never runs — extraction must instead run synchronously
+  // inside the request (see SynchronousJobQueue). `VERCEL` is set automatically in Vercel's runtime;
+  // `SERVERLESS=true` forces the same mode locally for testing.
+  VERCEL: z.string().optional(),
+  SERVERLESS: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => v === 'true'),
+
   // Supabase storage for verified question/option image crops (same bucket the main bank reads).
   SUPABASE_URL: z.string().default('https://jrekcngltfkghrgzgvju.supabase.co'),
   SUPABASE_SERVICE_KEY: z.string().optional(),
@@ -52,3 +62,10 @@ if (!parsed.success) {
 
 export const env = parsed.data;
 export type Env = typeof env;
+
+/**
+ * True when running on a serverless platform (Vercel sets `VERCEL`) or when forced via `SERVERLESS`.
+ * In this mode the composition root wires the synchronous queue and skips the cold-start stale-job
+ * reset, which would otherwise race concurrent function invocations.
+ */
+export const isServerless = Boolean(env.VERCEL) || env.SERVERLESS;
