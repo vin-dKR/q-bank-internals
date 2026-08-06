@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import { OpenAI } from 'openai';
 import type { Document } from '@ingest/contracts';
 import type {
   AnswerExtraction,
