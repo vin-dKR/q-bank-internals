@@ -5,16 +5,16 @@ The Express API runs on Vercel as a single serverless function. This is **API-on
 
 ## What makes it work
 
-- `apps/api/src/serverless.ts` — the serverless entry. Exports the Express app (an Express app *is* a
-  `(req,res)` handler). Counterpart to `apps/api/src/main.ts` (the long-running `app.listen` server).
-- `apps/api/scripts/build-vercel.mjs` — esbuild bundles `serverless.ts` → repo-root `api/index.js`
-  (a git-ignored build artifact). We bundle to JS ourselves on purpose: it stops Vercel's function
-  builder from type-checking our TS source with its own tsconfig (which lacks `esModuleInterop` and
-  fails on the CJS `helmet` default import). Workspace source (incl. `@ingest/contracts`, whose
-  package entry is uncompiled `.ts`) is bundled; every real npm dep stays external and is traced from
-  `node_modules`, so native/dynamic packages (`canvas`, the Prisma engine) are never bundled.
-- `vercel.json` — `buildCommand` runs the bundle; a catch-all rewrite sends every request to
-  `api/index.js`; sets `maxDuration` and ships the Prisma engine via `includeFiles`.
+- `api/index.ts` — the serverless entry. Exports the Express app (an Express app *is* a `(req,res)`
+  handler). Counterpart to `apps/api/src/main.ts` (the long-running `app.listen` server used locally).
+  Vercel's function builder (@vercel/node) compiles this and its TypeScript import graph directly.
+- `tsconfig.json` (repo root) — the options @vercel/node compiles the function with. It does NOT
+  resolve an `extends` chain, so the flags `apps/api` builds clean with are inlined verbatim.
+- The one interop gap @vercel/node has — it type-checks without `esModuleInterop`, so the CJS `helmet`
+  default import isn't callable (TS2349) — is handled at the source in `apps/api/src/app.ts` with an
+  interop-independent namespace import, so it compiles no matter which tsconfig the builder uses.
+- `vercel.json` — `buildCommand` runs `prisma generate`; a catch-all rewrite sends every request to
+  the function; sets `maxDuration` and ships the Prisma engine via `includeFiles`.
 - Serverless mode is auto-detected (`VERCEL` is set in Vercel's runtime; `SERVERLESS=true` forces it
   locally). In this mode the composition root wires **`SynchronousJobQueue`**: extraction runs
   **inline inside the request** instead of as detached background work, because Vercel freezes the
@@ -57,5 +57,5 @@ The Express API runs on Vercel as a single serverless function. This is **API-on
 
 ```bash
 SERVERLESS=true npm run dev:api        # boots with the synchronous queue; logs "Queue: synchronous in-request"
-npm --workspace @ingest/api run build:vercel   # reproduce the exact bundle Vercel builds → api/index.js
+npx tsc -p tsconfig.json               # reproduce the exact type-check Vercel runs on the function
 ```
