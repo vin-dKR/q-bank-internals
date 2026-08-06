@@ -5,14 +5,46 @@
   "type": "module",
   "description": "Single source of truth for the api ⇄ web boundary: zod schemas + inferred DTO types.",
   "exports": {
-    ".": "./src/index.ts",
-    "./drive": "./src/drive/index.ts",
-    "./ingestion": "./src/ingestion/index.ts",
-    "./documents": "./src/documents/index.ts",
-    "./questions": "./src/questions/index.ts",
-    "./bank": "./src/bank/index.ts",
-    "./extraction": "./src/extraction/index.ts",
-    "./usage": "./src/usage/index.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./drive": {
+      "types": "./src/drive/index.ts",
+      "development": "./src/drive/index.ts",
+      "default": "./dist/drive/index.js"
+    },
+    "./ingestion": {
+      "types": "./src/ingestion/index.ts",
+      "development": "./src/ingestion/index.ts",
+      "default": "./dist/ingestion/index.js"
+    },
+    "./documents": {
+      "types": "./src/documents/index.ts",
+      "development": "./src/documents/index.ts",
+      "default": "./dist/documents/index.js"
+    },
+    "./questions": {
+      "types": "./src/questions/index.ts",
+      "development": "./src/questions/index.ts",
+      "default": "./dist/questions/index.js"
+    },
+    "./bank": {
+      "types": "./src/bank/index.ts",
+      "development": "./src/bank/index.ts",
+      "default": "./dist/bank/index.js"
+    },
+    "./extraction": {
+      "types": "./src/extraction/index.ts",
+      "development": "./src/extraction/index.ts",
+      "default": "./dist/extraction/index.js"
+    },
+    "./usage": {
+      "types": "./src/usage/index.ts",
+      "development": "./src/usage/index.ts",
+      "default": "./dist/usage/index.js"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

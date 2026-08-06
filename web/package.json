@@ -6,6 +6,7 @@
   "description": "Vite + React frontend: pick a Drive PDF, review extracted questions, fix and publish. Standalone app.",
   "scripts": {
     "dev": "vite",
+    "prebuild": "tsc -p contracts",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
