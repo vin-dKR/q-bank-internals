@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    // Vercel's function builder (@vercel/node) compiles `api/index.ts` and its import graph using the
+    // tsconfig it finds at the repo root. It does NOT resolve an `extends` chain, so the options
+    // apps/api compiles clean with are inlined here verbatim (NodeNext resolution for the `.js`
+    // import specifiers, strict + exactOptionalPropertyTypes so Prisma's Mongo composite types don't
+    // collapse to `never`). The one interop gap that remains — the CJS `helmet` default import — is
+    // handled at the source in apps/api/src/app.ts, so it compiles regardless of `esModuleInterop`.
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "types": ["node"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+
+    "noEmit": true
+  },
+  "include": ["api", "apps/api/src", "packages/contracts/src"]
+}
