@@ -18,8 +18,9 @@ import type { Container } from './container.js';
  * runs correctly whether the module is loaded as ESM or CJS. Typed as the factory the call site needs
  * (`() => RequestHandler`), which doesn't depend on helmet's own default-export type resolving.
  */
-const helmet = ((helmetModule as { default?: unknown }).default ??
-  helmetModule) as () => RequestHandler;
+const helmet = ((helmetModule as { default?: unknown }).default ?? helmetModule) as (options?: {
+  crossOriginResourcePolicy?: { policy: 'same-origin' | 'same-site' | 'cross-origin' };
+}) => RequestHandler;
 
 /**
  * Assembles the Express app: cross-cutting middleware, the API router, then the 404 and error
@@ -28,7 +29,10 @@ const helmet = ((helmetModule as { default?: unknown }).default ??
 export function createApp(container: Container): Express {
   const app = express();
 
-  app.use(helmet());
+  // Helmet defaults to Cross-Origin-Resource-Policy: same-origin, which makes browsers refuse to
+  // render our page/crop images inside the web app (a different origin in production) with
+  // NS_ERROR_DOM_CORP_FAILED — the API exists to serve that origin, so allow cross-origin embeds.
+  app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.use(cors({ origin: env.WEB_ORIGIN, credentials: true }));
   app.use(express.json({ limit: '2mb' }));
   app.use(pinoHttp({ logger }));
