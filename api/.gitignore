@@ -1,0 +1,21 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# prisma generated client
+src/infrastructure/database/generated/
+
+# env & secrets
+.env
+.env.*
+!.env.example
+*-service-account.json
+secrets/*
+!secrets/.gitkeep
+
+# os / editor
+.DS_Store

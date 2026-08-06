@@ -1,23 +1,14 @@
-# dependencies
+# Repo-level only — each app (api/, web/) has its own .gitignore for its build/deps.
 node_modules/
-
-# build output
 dist/
 build/
 *.tsbuildinfo
 
-# prisma generated client
-apps/api/src/infrastructure/database/generated/
-
-# env & secrets
 .env
 .env.*
 !.env.example
-*-service-account.json
-apps/api/secrets/*
-!apps/api/secrets/.gitkeep
 
-# editor / os
+# os / editor
 .DS_Store
 .vscode/*
 !.vscode/extensions.json
@@ -29,4 +20,3 @@ logs/
 
 # Claude Code local worktrees / scratch
 .claude/
-

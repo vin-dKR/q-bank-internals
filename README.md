@@ -11,43 +11,44 @@ standalone helpers (chapter splitter, page cutter, extractor, question editor).
 
 | Concern | Choice |
 |---|---|
-| Monorepo | npm workspaces |
-| Backend | Express + Node + TypeScript (`apps/api`) |
-| Frontend | Vite + React + TypeScript (`apps/web`) |
-| API boundary | zod schemas in `packages/contracts` (one source of truth for both sides) |
+| Structure | **Two independent apps** (`api/`, `web/`) — no workspace; each installs and deploys on its own |
+| Backend | Express + Node + TypeScript (`api/`) |
+| Frontend | Vite + React + TypeScript (`web/`) |
+| API boundary | zod schemas in `@ingest/contracts`, **vendored into each app** (`api/contracts`, `web/contracts`) |
 | Persistence | Prisma + MongoDB (prod) · in-memory adapter (dev, default) |
 | Server state | TanStack Query |
-| Heavy jobs | BullMQ + Redis worker (`npm run worker`) · in-process queue (dev, default) |
-| AI extraction | OpenAI `gpt-4o` vision in the worker (ported from the standalone PDF Extractor) |
+| Heavy jobs | BullMQ + Redis worker (`npm run worker`) · in-process queue (dev) · synchronous in-request (serverless) |
+| AI extraction | OpenAI `gpt-4o` vision (ported from the standalone PDF Extractor) |
 
 ## Layout
 
 ```
-apps/
-  api/   Express backend — layered: routes → controller → service → repository(port) → infrastructure(impl)
-  web/   Vite/React frontend — feature-sliced: features/<name>/{api,components,hooks,types}
-packages/
-  contracts/   zod schemas + inferred DTO types shared by api & web
+api/   Express backend — layered: routes → controller → service → repository(port) → infrastructure(impl)
+  contracts/   vendored copy of @ingest/contracts (installed via file:./contracts)
+  api/index.ts Vercel serverless entry (wraps the Express app)
+web/   Vite/React frontend — feature-sliced: features/<name>/{api,components,hooks,types}
+  contracts/   vendored copy of @ingest/contracts (installed via file:./contracts)
 ```
 
-## Run it
+> The two apps are **not** a workspace anymore. `@ingest/contracts` is copied into each app, so a
+> change to the API boundary must be made in **both** `api/contracts` and `web/contracts`.
+
+## Run it — two servers, two terminals
 
 ```bash
-npm install                 # from repo root — installs all workspaces
-npm run dev                 # api on :4000, web on :5173 (Vite proxies /api → :4000)
+# terminal 1 — API on :4000
+cd api && npm install && npm run prisma:generate && npm run dev
 
-# or individually
-npm run dev:api
-npm run dev:web
-
-npm run typecheck           # all workspaces
-npm run lint                # machine-enforced subset of CONVENTIONS.md
-npm run build
+# terminal 2 — web on :5173 (Vite proxies /api → :4000)
+cd web && npm install && npm run dev
 ```
 
-The app boots with **no external services**: `DB_DRIVER=memory` (default) means no MongoDB needed,
-and Drive/Gemini are only required by the routes that actually use them. To use MongoDB, set
-`DB_DRIVER=mongo` + `DATABASE_URL` and run `npm run prisma:generate` in `apps/api`.
+Per app: `npm run typecheck`, `npm run lint`, `npm run build`.
 
-Copy `.env.example` → `apps/api/.env` when you wire real services.
-# q-bank-internals
+The API boots with **no external services**: `DB_DRIVER=memory` (default) means no MongoDB needed,
+and Drive/OpenAI are only required by the routes that actually use them. To use MongoDB, set
+`DB_DRIVER=mongo` + `DATABASE_URL`. Copy `api/.env.example` → `api/.env` (and `web/.env.example` →
+`web/.env`) when you wire real services.
+
+Deploying to Vercel: see [`DEPLOY_VERCEL.md`](./DEPLOY_VERCEL.md) — one project per app, Root
+Directory `api` and `web` respectively.
