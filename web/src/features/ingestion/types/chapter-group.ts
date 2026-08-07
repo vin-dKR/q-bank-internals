@@ -1,11 +1,10 @@
-import type { Exam, Module } from '@ingest/contracts';
 import type { SliceTags } from '../lib/build-chapter-pdfs.js';
 
 /** Editable metadata for one chapter before it is validated into a ChapterUploadMetadata. */
 export type ChapterMetadataDraft = {
-  exam: Exam | '';
+  exam: string;
   subject: string;
-  module: Module | '';
+  module: string;
   chapter: string;
   sectionName: string;
   questionType: string;
