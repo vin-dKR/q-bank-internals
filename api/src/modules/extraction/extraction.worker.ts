@@ -188,8 +188,10 @@ export class ExtractionWorker {
    * Extract + merge answers and explanations from the sibling answer/solution PDF(s) that describe
    * the same chapter unit (module + chapter + section) in this session. Answer PDFs supply answer
    * letters/values; solution PDFs supply the worked explanation (and back-fill a missing answer).
-   * Both are folded into the drafts by (section, question number). Sheets are ordered answers-first
-   * so a solution PDF's answer only fills gaps the answer sheet left — the answer sheet stays canonical.
+   * Both are folded into the drafts by (section, question number), with the document's topic config
+   * threaded in so per-topic sheet sections (and per-topic numbering restarts) bind to the right
+   * questions. Sheets are ordered answers-first so a solution PDF's answer only fills gaps the
+   * answer sheet left — the answer sheet stays canonical.
    */
   private async applyAnswers(
     document: Document,
@@ -212,7 +214,7 @@ export class ExtractionWorker {
         this.extractor.extractSolutions({ pages, document: solutionDoc }),
       );
     }
-    return mergeAnswers(drafts, sheets);
+    return mergeAnswers(drafts, sheets, document.topics);
   }
 
   /**
