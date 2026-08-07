@@ -1,9 +1,10 @@
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import type { Question } from '@ingest/contracts';
 import { getCroppedBlob } from '../../../shared/lib/crop-image.js';
 import { useDocument } from '../../documents/index.js';
 import { questionsApi } from '../api/questions.api.js';
-import { usePageCount, useQuestions, useUpdateQuestion } from '../hooks/use-questions.js';
+import { questionsQueryKey, usePageCount, useQuestions, useUpdateQuestion } from '../hooks/use-questions.js';
 import { useQuestionDrafts } from '../hooks/use-question-drafts.js';
 import {
   type BoxRect,
@@ -130,6 +131,7 @@ export function VerifyWorkspace({
   const pageCount = usePageCount(documentId);
   const document = useDocument(documentId);
   const { mutateAsync: patchQuestion } = useUpdateQuestion();
+  const queryClient = useQueryClient();
   // Local-first text editing: every card edit lands in a draft here; only dirty questions are pushed.
   const drafts = useQuestionDrafts(documentId, questions.data, {
     questionType: document.data?.questionType ?? null,
@@ -152,12 +154,36 @@ export function VerifyWorkspace({
   const [aiResult, setAiResult] = useState<{ detected: number; placed: number; skipped: number } | null>(null);
 
   // Everything the async save pipeline reads goes through refs so a save started on one render
-  // still sees the latest boxes/questions/page when it actually runs.
+  // still sees the latest boxes/page when it actually runs.
   const boxesRef = useRef<Box[]>([]);
   const savedUrlsRef = useRef<ReadonlyMap<string, string>>(new Map());
-  const questionsRef = useRef<Question[]>([]);
-  questionsRef.current = questions.data ?? [];
   const saveRuns = useRef(new Map<string, SaveRun>());
+
+  // Questions are read straight from the query cache at write time — useUpdateQuestion writes each
+  // mutation result back into that cache before mutateAsync resolves, so a save that follows another
+  // save (or a card edit) of the same question always sees the post-patch record, never a stale one.
+  const readQuestion = useCallback(
+    (questionId: string): Question | undefined =>
+      queryClient
+        .getQueryData<Question[]>(questionsQueryKey(documentId))
+        ?.find((q) => q.id === questionId),
+    [queryClient, documentId],
+  );
+
+  // Read-modify-write PATCHes of one question must never interleave (two concurrent saves would both
+  // read the same image list and the second PATCH would drop the first crop), so writes queue per
+  // question. `requestSave` only serialises per BOX — this is the cross-box guard.
+  const questionWrites = useRef(new Map<string, Promise<void>>());
+  const enqueueQuestionWrite = (questionId: string, write: () => Promise<void>): Promise<void> => {
+    const tail = questionWrites.current.get(questionId) ?? Promise.resolve();
+    const run = tail.then(write);
+    const settled = run.catch(() => undefined);
+    questionWrites.current.set(questionId, settled);
+    void settled.then(() => {
+      if (questionWrites.current.get(questionId) === settled) questionWrites.current.delete(questionId);
+    });
+    return run;
+  };
 
   /** The single mutation point for boxes: keeps the ref in sync so async code never reads stale state. */
   const applyBoxes = useCallback((updater: (prev: Box[]) => Box[]): void => {
@@ -276,13 +302,58 @@ export function VerifyWorkspace({
     });
   };
 
+  /** Remove one attached crop url from a question (the raw write — callers run it on the queue). */
+  const detachUrl = async (box: Box, url: string): Promise<void> => {
+    const question = readQuestion(box.questionId);
+    if (!question) return;
+    if (box.type === 'question') {
+      const urls = splitUrls(question.questionImage);
+      if (!urls.includes(url)) return;
+      const kept = urls.filter((u) => u !== url);
+      await patchQuestion({ id: question.id, patch: { questionImage: kept.length > 0 ? kept.join(',') : null } });
+    } else if ((question.optionImages[box.optionIndex] ?? '') === url) {
+      const optionImages = [...question.optionImages];
+      optionImages[box.optionIndex] = '';
+      await patchQuestion({ id: question.id, patch: { optionImages } });
+    }
+  };
+
+  /**
+   * Attach an uploaded crop to its question — runs on the question's write queue. Re-checks that the
+   * box still exists (right-click delete is the undo path and may land while the upload or the PATCH
+   * itself is in flight): a deleted box's crop is never attached, and one deleted mid-PATCH is
+   * detached straight back off.
+   */
+  const attachCrop = async (box: Box, url: string): Promise<void> => {
+    if (!boxesRef.current.some((b) => b.id === box.id)) return;
+    const question = readQuestion(box.questionId);
+    if (!question) return;
+    const previousUrl = savedUrlsRef.current.get(box.id);
+    if (box.type === 'question') {
+      const urls = splitUrls(question.questionImage);
+      const at = previousUrl ? urls.indexOf(previousUrl) : -1;
+      if (at >= 0) urls[at] = url;
+      else urls.push(url);
+      await patchQuestion({ id: question.id, patch: { isQuestionImage: true, questionImage: urls.join(',') } });
+    } else {
+      const optionImages = [...question.optionImages];
+      while (optionImages.length <= box.optionIndex) optionImages.push('');
+      optionImages[box.optionIndex] = url;
+      await patchQuestion({ id: question.id, patch: { isOptionImage: true, optionImages } });
+    }
+    if (!boxesRef.current.some((b) => b.id === box.id)) {
+      await detachUrl(box, url);
+      return;
+    }
+    applySavedUrls((prev) => new Map(prev).set(box.id, url));
+  };
+
   // --- The auto-save pipeline: crop the box's current rect, upload, attach, remember the URL. ---
   // Reads everything through refs at execution time, so a queued save always crops the latest rect.
   const saveBoxOnce = async (boxId: string): Promise<void> => {
     const box = boxesRef.current.find((b) => b.id === boxId);
     const pageSize = sizeRef.current;
-    const question = questionsRef.current.find((q) => q.id === box?.questionId);
-    if (!box || !question || !pageSize || pageSize.displayWidth === 0) return;
+    if (!box || !readQuestion(box.questionId) || !pageSize || pageSize.displayWidth === 0) return;
     setError(null);
     setFailed((prev) => {
       if (!prev.has(boxId)) return prev;
@@ -302,21 +373,8 @@ export function VerifyWorkspace({
       });
       // Fresh storage key per save: the store upserts by key and serves cached URLs, so re-using a
       // key on re-crop would keep the stale image visible everywhere. A new key = a new URL.
-      const { url } = await questionsApi.uploadImage(question.id, `${boxId}_${String(Date.now())}`, blob);
-      const previousUrl = savedUrlsRef.current.get(boxId);
-      if (box.type === 'question') {
-        const urls = splitUrls(question.questionImage);
-        const at = previousUrl ? urls.indexOf(previousUrl) : -1;
-        if (at >= 0) urls[at] = url;
-        else urls.push(url);
-        await patchQuestion({ id: question.id, patch: { isQuestionImage: true, questionImage: urls.join(',') } });
-      } else {
-        const optionImages = [...question.optionImages];
-        while (optionImages.length <= box.optionIndex) optionImages.push('');
-        optionImages[box.optionIndex] = url;
-        await patchQuestion({ id: question.id, patch: { isOptionImage: true, optionImages } });
-      }
-      applySavedUrls((prev) => new Map(prev).set(boxId, url));
+      const { url } = await questionsApi.uploadImage(box.questionId, `${boxId}_${String(Date.now())}`, blob);
+      await enqueueQuestionWrite(box.questionId, () => attachCrop(box, url));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
       setFailed((prev) => new Set(prev).add(boxId));
@@ -364,17 +422,8 @@ export function VerifyWorkspace({
 
   /** Detach a saved box's image from its question — the undo half of "right-click removes the box". */
   const detachSaved = async (box: Box, url: string): Promise<void> => {
-    const question = questionsRef.current.find((q) => q.id === box.questionId);
-    if (!question) return;
     try {
-      if (box.type === 'question') {
-        const urls = splitUrls(question.questionImage).filter((u) => u !== url);
-        await patchQuestion({ id: question.id, patch: { questionImage: urls.length > 0 ? urls.join(',') : null } });
-      } else if ((question.optionImages[box.optionIndex] ?? '') === url) {
-        const optionImages = [...question.optionImages];
-        optionImages[box.optionIndex] = '';
-        await patchQuestion({ id: question.id, patch: { optionImages } });
-      }
+      await enqueueQuestionWrite(box.questionId, () => detachUrl(box, url));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
