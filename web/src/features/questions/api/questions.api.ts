@@ -2,12 +2,14 @@ import { z } from 'zod';
 import type {
   BatchUpdateQuestionsResult,
   DetectedFigures,
+  DetectedFiguresBatch,
   Question,
   QuestionBatchUpdate,
   UpdateQuestion,
 } from '@ingest/contracts';
 import {
   BatchUpdateQuestionsResultSchema,
+  DetectedFiguresBatchSchema,
   DetectedFiguresSchema,
   PublishResultSchema,
   QuestionSchema,
@@ -49,6 +51,19 @@ export const questionsApi = {
       method: 'POST',
       body: { documentId, page },
       schema: DetectedFiguresSchema,
+    });
+  },
+
+  /**
+   * AI-locate figures on several pages in one request (the whole-document detect). Send at most
+   * `DETECT_FIGURES_MAX_PAGES` pages per call; pages without extracted questions are skipped
+   * server-side.
+   */
+  detectFiguresBatch: (documentId: string, pages: number[]): Promise<DetectedFiguresBatch> => {
+    return request('/questions/detect-figures/batch', {
+      method: 'POST',
+      body: { documentId, pages },
+      schema: DetectedFiguresBatchSchema,
     });
   },
 

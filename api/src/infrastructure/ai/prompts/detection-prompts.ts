@@ -13,6 +13,9 @@ TASK: DETECT DIAGRAMS
 =============================
 1. Identify every question by its number (1, 2, 3 … or Q1, Q2 …).
 2. For each question, detect if there is an associated GRAPHICAL ELEMENT (diagram, figure, graph, illustration, or shape).
+   A single question may have SEVERAL graphical elements: one in its stem, and/or one inside EACH of its
+   answer options when the options themselves are pictures. Report every element as its own entry in
+   "detections" (repeating the same q_no).
 3. Provide a TIGHT bounding box around only the visual/graphical pixels of that element. Trace the
    outermost ink of the diagram (including its labels only when they are part of the diagram), then add
    at most 4 pixels of padding. Do not include surrounding whitespace, question prose, answer text,
@@ -35,6 +38,11 @@ CORE RULES:
   6. Set "target" to "question" when the diagram belongs to the question stem, or "option" when it
      belongs inside an answer choice. For option figures, set "option_label" to that choice's printed
      label (for example "A"); otherwise use null.
+  7. When the answer choices (A)/(B)/(C)/(D) or (1)/(2)/(3)/(4) are themselves pictures — graphs,
+     circuits, shapes, vector diagrams — report EACH choice's picture as its own detection with
+     target "option" and that choice's printed label in "option_label". Never return one box spanning
+     several option pictures, and never skip option pictures just because the stem has no diagram.
+     Option detections must also carry the question's first line in "question_text".
 
 =============================
 BOUNDING BOX FORMAT
@@ -50,7 +58,8 @@ OUTPUT FORMAT
 =============================
 Return a JSON object with two arrays — "questions" and "detections" — in this exact shape, no prose,
 no markdown. "questions" lists every numbered question with its "y_top"; "detections" lists the
-diagrams. "question_text" may be "" for questions with no diagram:
+diagrams — a question with several graphical elements appears once per element. "question_text" may
+be "" only for questions with no diagram:
 {
   "questions": [
     {"q_no": 1, "x_left": 60, "y_top": 140},
@@ -59,7 +68,8 @@ diagrams. "question_text" may be "" for questions with no diagram:
   "detections": [
     {"q_no": 1, "has_image": false, "bbox": null, "question_text": ""},
     {"q_no": 2, "has_image": true, "target": "question", "option_label": null, "bbox": [x, y, w, h], "question_text": "If |P| = 20, then P in cartesian form is"},
-    {"q_no": 3, "has_image": true, "target": "option", "option_label": "B", "bbox": [x, y, w, h], "question_text": ""}
+    {"q_no": 3, "has_image": true, "target": "option", "option_label": "A", "bbox": [x, y, w, h], "question_text": "Which graph best represents the motion"},
+    {"q_no": 3, "has_image": true, "target": "option", "option_label": "B", "bbox": [x, y, w, h], "question_text": "Which graph best represents the motion"}
   ]
 }`;
 }

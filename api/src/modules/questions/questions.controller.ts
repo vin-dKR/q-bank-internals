@@ -1,6 +1,7 @@
 import type { RequestHandler } from 'express';
 import {
   BatchUpdateQuestionsSchema,
+  DetectFiguresBatchRequestSchema,
   DetectFiguresRequestSchema,
   QuestionListQuerySchema,
   RefineLatexSchema,
@@ -20,6 +21,7 @@ export function createQuestionsController(service: QuestionsService): {
   uploadImage: RequestHandler;
   refine: RequestHandler;
   detectFigures: RequestHandler;
+  detectFiguresBatch: RequestHandler;
 } {
   return {
     list: asyncHandler(async (req, res) => {
@@ -30,6 +32,11 @@ export function createQuestionsController(service: QuestionsService): {
     detectFigures: asyncHandler(async (req, res) => {
       const { documentId, page } = parseOrThrow(DetectFiguresRequestSchema, req.body);
       ok(res, await service.detectFigures(documentId, page));
+    }),
+
+    detectFiguresBatch: asyncHandler(async (req, res) => {
+      const { documentId, pages } = parseOrThrow(DetectFiguresBatchRequestSchema, req.body);
+      ok(res, await service.detectFiguresBatch(documentId, pages));
     }),
 
     refine: asyncHandler(async (req, res) => {

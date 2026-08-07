@@ -10,6 +10,7 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
  * Path table for the questions feature:
  *   GET  /?documentId=…       — a document's extracted questions (verify/preview)
  *   POST /detect-figures      — AI-locate the figures on one page → { imageWidth, imageHeight, figures }
+ *   POST /detect-figures/batch — AI-locate figures on several pages at once → { pages: [...] }
  *   PATCH /batch              — apply verify-screen edits to several questions → { updated, failed }
  *   PATCH /:id                — apply verify-screen edits (image flags/urls, stem, options, answer)
  *   POST /:id/images          — upload one cropped image (multipart) → { url }
@@ -22,6 +23,7 @@ export function createQuestionsRouter(service: QuestionsService): Router {
   router.get('/', controller.list);
   router.post('/refine', controller.refine);
   router.post('/detect-figures', controller.detectFigures);
+  router.post('/detect-figures/batch', controller.detectFiguresBatch);
   // `/batch` must be declared before `/:id`, or Express would route it as id="batch".
   router.patch('/batch', controller.batchUpdate);
   router.patch('/:id', controller.update);

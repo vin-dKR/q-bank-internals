@@ -1,4 +1,4 @@
-import type { DetectedFigure, Question } from '@ingest/contracts';
+import type { DetectedFigure, Question, QuestionOption } from '@ingest/contracts';
 import type { DiagramDetection, QuestionTop } from './diagram-detector.js';
 
 /** Least overlap between a detection snippet and a stem we'll accept as "the same question". */
@@ -64,6 +64,54 @@ function questionNumberAboveFigure(
 }
 
 /**
+ * Strip an option label down to its printed token: "(A)" / "a." / "[B]" / " C )" → "A"/"B"/"C",
+ * "(2)" → "2". Detector output and extracted labels come from two different model passes, so both
+ * sides are normalized with this one function before comparing.
+ */
+function normalizeOptionLabel(label: string): string {
+  return label
+    .trim()
+    .replace(/^[\s([{]+/, '')
+    .replace(/[\s)\]}.:]+$/, '')
+    .toUpperCase();
+}
+
+/**
+ * Resolve a detected option label to the option's zero-based position. Exact (normalized) label match
+ * first; failing that, cross-scheme by position — extraction normalizes printed `(1)…(4)` labels to
+ * `A…D`, so a detector that read the printed digits (or vice versa) still lands on the right option.
+ * Returns -1 when the label is missing or resolves outside the question's options.
+ */
+function resolveOptionIndex(rawLabel: string | null, options: QuestionOption[]): number {
+  if (rawLabel === null) return -1;
+  const label = normalizeOptionLabel(rawLabel);
+  if (!label) return -1;
+  const exact = options.findIndex((option) => normalizeOptionLabel(option.label) === label);
+  if (exact >= 0) return exact;
+  if (/^[A-Z]$/.test(label)) {
+    const index = label.charCodeAt(0) - 65;
+    return index < options.length ? index : -1;
+  }
+  if (/^\d+$/.test(label)) {
+    const index = Number(label) - 1;
+    return index >= 0 && index < options.length ? index : -1;
+  }
+  return -1;
+}
+
+/**
+ * Reading order for option figures on a page: top→bottom, with boxes in the same horizontal band
+ * (vertical centres closer than half the shorter box) ordered left→right — handles both a row of
+ * picture options and a 2×2 grid.
+ */
+function byReadingOrder(a: DiagramDetection, b: DiagramDetection): number {
+  const aCentreY = a.bbox[1] + a.bbox[3] / 2;
+  const bCentreY = b.bbox[1] + b.bbox[3] / 2;
+  const sameBand = Math.abs(aCentreY - bCentreY) < Math.min(a.bbox[3], b.bbox[3]) / 2;
+  return sameBand ? a.bbox[0] - b.bbox[0] : aCentreY - bCentreY;
+}
+
+/**
  * Attach each detected figure to the extracted question it belongs to, returning one
  * {@link DetectedFigure} per successful match. Each question destination (stem or individual option)
  * is claimed at most once, while allowing a question to have both a stem figure and option figures.
@@ -86,6 +134,12 @@ function questionNumberAboveFigure(
  *      fallback for legacy questions extracted before numbers were persisted (`questionNumber` null),
  *      whose extraction order does not track the printed order either.
  * A detection that matches nothing (e.g. a figure whose question was never extracted) is dropped.
+ *
+ * Option figures resolve their option position from the detector's printed label
+ * ({@link resolveOptionIndex}); when the label is missing or unreadable, the question's remaining
+ * unlabelled option figures are assigned to its unclaimed options in reading order — picture options
+ * are printed in option order, so position is the next-best owner signal after the label. Only an
+ * option figure that still cannot be placed (more figures than free options) is dropped.
  */
 export function matchFiguresToQuestions(
   detections: DiagramDetection[],
@@ -96,6 +150,21 @@ export function matchFiguresToQuestions(
   const claimed = new Set<string>();
   const figures: DetectedFigure[] = [];
   const sortedTops = [...questionTops].sort((a, b) => a.yTop - b.yTop);
+  /** Option figures whose printed label did not resolve, grouped for the positional fallback. */
+  const unresolvedOptions = new Map<string, { question: Question; detections: DiagramDetection[] }>();
+
+  const claim = (question: Question, target: 'question' | 'option', optionIndex: number, detection: DiagramDetection): void => {
+    const targetKey = `${question.id}:${target}:${String(optionIndex)}`;
+    if (claimed.has(targetKey)) return;
+    claimed.add(targetKey);
+    figures.push({
+      questionId: question.id,
+      target,
+      optionIndex,
+      bbox: detection.bbox,
+      snippet: detection.questionText,
+    });
+  };
 
   for (const detection of detections) {
     let textMatch: Question | null = null;
@@ -124,23 +193,32 @@ export function matchFiguresToQuestions(
       match = textMatch;
     }
 
-    if (match) {
-      const optionIndex = detection.target === 'option'
-        ? match.options.findIndex((option) => option.label.toUpperCase() === detection.optionLabel)
-        : 0;
-      // Never silently save an option image on the question stem if its choice label could not be
-      // resolved; the operator should instead see no suggestion and crop it manually.
-      if (detection.target === 'option' && optionIndex < 0) continue;
-      const targetKey = `${match.id}:${detection.target}:${String(optionIndex)}`;
-      if (claimed.has(targetKey)) continue;
-      claimed.add(targetKey);
-      figures.push({
-        questionId: match.id,
-        target: detection.target,
-        optionIndex,
-        bbox: detection.bbox,
-        snippet: detection.questionText,
-      });
+    if (!match) continue;
+
+    if (detection.target === 'question') {
+      claim(match, 'question', 0, detection);
+      continue;
+    }
+    if (match.options.length === 0) continue; // an option figure needs an option to land on
+    const optionIndex = resolveOptionIndex(detection.optionLabel, match.options);
+    if (optionIndex >= 0) {
+      claim(match, 'option', optionIndex, detection);
+    } else {
+      const group = unresolvedOptions.get(match.id) ?? { question: match, detections: [] };
+      group.detections.push(detection);
+      unresolvedOptions.set(match.id, group);
+    }
+  }
+
+  for (const { question, detections: pending } of unresolvedOptions.values()) {
+    const free = question.options
+      .map((_, index) => index)
+      .filter((index) => !claimed.has(`${question.id}:option:${String(index)}`));
+    const ordered = [...pending].sort(byReadingOrder);
+    for (const [position, detection] of ordered.entries()) {
+      const optionIndex = free[position];
+      if (optionIndex === undefined) break; // more figures than free options — drop the excess
+      claim(question, 'option', optionIndex, detection);
     }
   }
 
