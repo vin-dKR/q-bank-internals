@@ -1,4 +1,10 @@
-import type { DetectedFigures, Question, UpdateQuestion } from '@ingest/contracts';
+import type {
+  BatchUpdateQuestionsResult,
+  DetectedFigures,
+  Question,
+  QuestionBatchUpdate,
+  UpdateQuestion,
+} from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import { logger } from '../../shared/logger/logger.js';
 import { readPngSize } from '../../shared/image/png-size.js';
@@ -25,7 +31,7 @@ export class QuestionsService {
     private readonly pages: PageRenderer,
   ) {}
 
-  /** The questions extracted from a single document, in extraction order. */
+  /** The questions extracted from a single document, in PDF reading order. */
   listByDocument(documentId: string): Promise<Question[]> {
     return this.questions.findByDocument(documentId);
   }
@@ -33,6 +39,25 @@ export class QuestionsService {
   /** Apply verify-screen edits (image flags/urls, stem, options, answer) to a question. */
   update(id: string, patch: UpdateQuestion): Promise<Question> {
     return this.questions.update(id, patch);
+  }
+
+  /**
+   * Apply verify-screen edits to several questions in one call — the local-first verify panel
+   * sends only its dirty questions here. Each update is applied independently: one bad question
+   * never blocks the rest, and every failure is reported back by id so the client can keep just
+   * those marked dirty.
+   */
+  async batchUpdate(updates: QuestionBatchUpdate[]): Promise<BatchUpdateQuestionsResult> {
+    const updated: Question[] = [];
+    const failed: BatchUpdateQuestionsResult['failed'] = [];
+    for (const { id, patch } of updates) {
+      try {
+        updated.push(await this.questions.update(id, patch));
+      } catch (caught) {
+        failed.push({ id, message: caught instanceof Error ? caught.message : String(caught) });
+      }
+    }
+    return { updated, failed };
   }
 
   /** Upload one cropped image to storage under `name`, returning its public URL. */

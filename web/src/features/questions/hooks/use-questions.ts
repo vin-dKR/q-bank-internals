@@ -5,7 +5,12 @@ import {
   useQueryClient,
   useQuery,
 } from '@tanstack/react-query';
-import type { Question, UpdateQuestion } from '@ingest/contracts';
+import type {
+  BatchUpdateQuestionsResult,
+  Question,
+  QuestionBatchUpdate,
+  UpdateQuestion,
+} from '@ingest/contracts';
 import { useToast } from '../../../shared/ui/index.js';
 import { questionsApi } from '../api/questions.api.js';
 
@@ -40,6 +45,25 @@ export function usePublishDocument(): UseMutationResult<{ published: number }, E
       void queryClient.invalidateQueries({ queryKey: ['session'] });
     },
     onError: (err) => { error('Publish failed', err.message); },
+  });
+}
+
+/** Pushes several questions' verify edits in one call, then refreshes the document's questions. */
+export function useBatchUpdateQuestions(
+  documentId: string,
+): UseMutationResult<BatchUpdateQuestionsResult, Error, QuestionBatchUpdate[]> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (updates: QuestionBatchUpdate[]) => questionsApi.batchUpdate(updates),
+    onSuccess: (result) => {
+      // Merge the saved rows in place first: the caller clears its drafts as soon as this mutation
+      // resolves, and without this the cards would show the stale pre-edit rows until the refetch
+      // lands. Text edits never change a question's sort keys, so in-place mapping keeps the order.
+      queryClient.setQueryData<Question[]>(['questions', documentId], (prev) =>
+        prev?.map((question) => result.updated.find((u) => u.id === question.id) ?? question),
+      );
+      void queryClient.invalidateQueries({ queryKey: ['questions', documentId] });
+    },
   });
 }
 

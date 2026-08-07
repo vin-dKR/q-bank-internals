@@ -4,6 +4,7 @@ import { getCroppedBlob } from '../../../shared/lib/crop-image.js';
 import { useDocument } from '../../documents/index.js';
 import { questionsApi } from '../api/questions.api.js';
 import { usePageCount, useQuestions, useUpdateQuestion } from '../hooks/use-questions.js';
+import { useQuestionDrafts } from '../hooks/use-question-drafts.js';
 import {
   type BoxRect,
   Button,
@@ -104,6 +105,10 @@ function CropThumb({
  *    box can be nudged before confirming.
  *
  * `autoRun` (session `?auto=1`) runs the detection once on arrival — it still only marks for review.
+ *
+ * Text edits are LOCAL-FIRST ({@link useQuestionDrafts}): cards edit per-question drafts, dirty
+ * questions carry an indicator, and only they are pushed — per card via Update, or all at once via
+ * the panel's Update all. Image crops/uploads stay immediate against the freshest server data.
  */
 export function VerifyWorkspace({
   documentId,
@@ -116,6 +121,11 @@ export function VerifyWorkspace({
   const pageCount = usePageCount(documentId);
   const document = useDocument(documentId);
   const update = useUpdateQuestion();
+  // Local-first text editing: every card edit lands in a draft here; only dirty questions are pushed.
+  const drafts = useQuestionDrafts(documentId, questions.data, {
+    questionType: document.data?.questionType ?? null,
+    sectionName: document.data?.sectionName ?? null,
+  });
 
   const [page, setPage] = useState(1);
   const [boxes, setBoxes] = useState<Box[]>([]);
@@ -174,13 +184,14 @@ export function VerifyWorkspace({
     () => (questions.data ?? []).filter((q) => q.sourceRegion.page === page),
     [questions.data, page],
   );
-  // Use the printed number where available. An extracted-list index is not the sheet's question number
-  // (e.g. the third card can be printed Q6), and was making correct mappings look wrong in review.
-  const displayedQuestionNumberById = useMemo(() => {
+  // The number each question DISPLAYS is the printed number read from the sheet. The list arrives
+  // in PDF reading order from the API, so for the rare question without a readable number the
+  // fallback is its ordinal in that full order — never a per-page array index.
+  const questionNumberById = useMemo(() => {
     const map = new Map<string, number>();
-    onThisPage.forEach((q, index) => map.set(q.id, q.questionNumber ?? index + 1));
+    (questions.data ?? []).forEach((q, index) => map.set(q.id, q.questionNumber ?? index + 1));
     return map;
-  }, [onThisPage]);
+  }, [questions.data]);
   const questionById = useMemo(() => {
     const map = new Map<string, Question>();
     (questions.data ?? []).forEach((q) => map.set(q.id, q));
@@ -316,7 +327,7 @@ export function VerifyWorkspace({
           optionIndex: figure.optionIndex,
           source: 'ai',
           snippet: figure.snippet,
-          label: `AI · Q${String(displayedQuestionNumberById.get(figure.questionId) ?? '?')}${figure.target === 'option' ? ` · option ${String(figure.optionIndex + 1)}` : ''}`,
+          label: `AI · Q${String(questionNumberById.get(figure.questionId) ?? '?')}${figure.target === 'option' ? ` · option ${String(figure.optionIndex + 1)}` : ''}`,
           x: x * sx,
           y: y * sy,
           width: w * sx,
@@ -331,8 +342,8 @@ export function VerifyWorkspace({
     } finally {
       setAiBusy(false);
     }
-    // commit/cardNumberById are stable enough; guarded single-run via effect below for autoRun.
-  }, [documentId, page, size, questions.data, displayedQuestionNumberById]);
+    // commit/questionNumberById are stable enough; guarded single-run via effect below for autoRun.
+  }, [documentId, page, size, questions.data, questionNumberById]);
 
   // Auto-detect once on arrival when the session pushed us here with ?auto=1 (still only marks).
   const autoStarted = useRef(false);
@@ -451,6 +462,23 @@ export function VerifyWorkspace({
       </div>
 
       <div className="verify__panel">
+        <div className="sticky top-0 z-10 flex flex-none items-center justify-between gap-2 rounded-xl border border-line bg-surface px-3 py-2 shadow-sm">
+          <span className="text-sm text-ink-2">
+            {drafts.dirtyIds.size > 0
+              ? `${String(drafts.dirtyIds.size)} question(s) with unsaved edits`
+              : 'All edits saved'}
+          </span>
+          <Button
+            size="xs"
+            disabled={drafts.dirtyIds.size === 0 || drafts.isSaving}
+            onClick={() => { void drafts.save([...drafts.dirtyIds]); }}
+          >
+            {drafts.isSaving
+              ? <><Spinner /> Saving…</>
+              : `Update all${drafts.dirtyIds.size > 0 ? ` (${String(drafts.dirtyIds.size)})` : ''}`}
+          </Button>
+        </div>
+
         {aiError ? <p className="error">{aiError}</p> : null}
         {error ? <p className="error">{error}</p> : null}
         {!aiBusy && pendingAi.length === 0 && aiResult ? (
@@ -493,7 +521,7 @@ export function VerifyWorkspace({
                     >
                       <span className="ai-review__label">
                         <IconSparkle />
-                        Q{displayedQuestionNumberById.get(b.questionId) ?? '?'}
+                        Q{questionNumberById.get(b.questionId) ?? '?'}
                         {b.type === 'option' ? ` · option ${String(b.optionIndex + 1)}` : ''}
                       </span>
                       {stemLine ? <span className="ai-review__stem">{stemLine}</span> : null}
@@ -537,11 +565,14 @@ export function VerifyWorkspace({
             >
               <EditableQuestionCard
                 question={question}
-                index={(question.questionNumber ?? index + 1) - 1}
+                number={questionNumberById.get(question.id) ?? index + 1}
+                draft={drafts.draftFor(question)}
+                dirty={drafts.dirtyIds.has(question.id)}
+                saving={drafts.savingIds.has(question.id)}
                 boxes={cardBoxesFor(question.id)}
                 busyBoxIds={busy}
-                fallbackQuestionType={document.data?.questionType ?? null}
-                fallbackSectionName={document.data?.sectionName ?? null}
+                onDraftChange={(draft) => { drafts.setDraft(question.id, draft); }}
+                onSave={() => { void drafts.save([question.id]); }}
                 onAddBox={addBox}
                 onCropSave={cropSaveById}
                 onDeleteBox={deleteBox}

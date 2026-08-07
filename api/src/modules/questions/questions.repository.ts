@@ -30,7 +30,11 @@ export type NewQuestion = {
 export interface QuestionRepository {
   /** Replace all questions for a document with the given drafts; returns how many were written. */
   replaceForDocument(documentId: string, questions: NewQuestion[]): Promise<number>;
-  /** Read back the questions extracted from a document (the verify/preview screen). */
+  /**
+   * Read back the questions extracted from a document, in PDF reading order (printed question
+   * number, falling back to page + position — see `question-order.ts`). Verify and publish both
+   * rely on this order matching the sheet.
+   */
   findByDocument(documentId: string): Promise<Question[]>;
   /** Apply verify-screen edits (image flags/urls, stem, options, answer) to one question. */
   update(id: string, patch: UpdateQuestion): Promise<Question>;

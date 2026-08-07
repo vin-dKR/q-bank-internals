@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import type { Question, UpdateQuestion } from '@ingest/contracts';
-import type { NewQuestion, QuestionRepository } from '../../../modules/questions/index.js';
+import { type NewQuestion, type QuestionRepository, sortByPdfOrder } from '../../../modules/questions/index.js';
 
 // Prisma's row shape for a Question, narrowed to what we map back to the contract shape.
 type QuestionRow = {
@@ -80,11 +80,12 @@ export class PrismaQuestionRepository implements QuestionRepository {
   }
 
   async findByDocument(documentId: string): Promise<Question[]> {
+    // createdAt is only a stable tie-break; the port's contract is PDF reading order.
     const rows = await this.prisma.question.findMany({
       where: { documentId },
       orderBy: { createdAt: 'asc' },
     });
-    return rows.map(toQuestion);
+    return sortByPdfOrder(rows.map(toQuestion));
   }
 
   async deleteByDocument(documentId: string): Promise<void> {

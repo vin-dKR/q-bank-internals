@@ -76,6 +76,29 @@ export const UpdateQuestionSchema = QuestionSchema.pick({
 }).partial();
 export type UpdateQuestion = z.infer<typeof UpdateQuestionSchema>;
 
+/** One question's pending verify edits, addressed by id — the unit of a batch update. */
+export const QuestionBatchUpdateSchema = z.object({
+  id: z.string().min(1),
+  patch: UpdateQuestionSchema,
+});
+export type QuestionBatchUpdate = z.infer<typeof QuestionBatchUpdateSchema>;
+
+/** Push several questions' verify edits in one call — only the dirty ones, never a full resend. */
+export const BatchUpdateQuestionsSchema = z.object({
+  updates: z.array(QuestionBatchUpdateSchema).min(1),
+});
+export type BatchUpdateQuestions = z.infer<typeof BatchUpdateQuestionsSchema>;
+
+/**
+ * Per-question outcome of a batch update. `updated` holds the saved rows; `failed` the ids that
+ * could not be saved, each with a human-readable reason — the client keeps those dirty for retry.
+ */
+export const BatchUpdateQuestionsResultSchema = z.object({
+  updated: z.array(QuestionSchema),
+  failed: z.array(z.object({ id: z.string(), message: z.string() })),
+});
+export type BatchUpdateQuestionsResult = z.infer<typeof BatchUpdateQuestionsResultSchema>;
+
 /** Response from uploading one cropped image to storage: the public URL to save on the question. */
 export const UploadedImageSchema = z.object({ url: z.string() });
 export type UploadedImage = z.infer<typeof UploadedImageSchema>;

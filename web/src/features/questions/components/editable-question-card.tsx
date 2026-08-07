@@ -1,40 +1,38 @@
-import { type JSX, useEffect, useState } from 'react';
-import { KNOWN_QUESTION_TYPES, type Question, type QuestionOption } from '@ingest/contracts';
-import { Button, Combobox, IconButton, IconPlus, IconSparkle, IconX } from '../../../shared/ui/index.js';
-import { RenderLatex } from '../../../shared/lib/latex.js';
+import type { JSX } from 'react';
+import { useState } from 'react';
+import { KNOWN_QUESTION_TYPES, type Question } from '@ingest/contracts';
+import { Badge, Button, Combobox, IconButton, IconPlus, IconSparkle, IconX } from '../../../shared/ui/index.js';
+import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { questionsApi } from '../api/questions.api.js';
 import { useUpdateQuestion } from '../hooks/use-questions.js';
+import type { QuestionDraft } from '../hooks/use-question-drafts.js';
 
 /** Minimal box info the card needs to render its crop-region rows. */
 export type CardBox = { id: string; type: 'question' | 'option'; optionIndex: number; label: string };
 
 type Props = {
   question: Question;
-  index: number;
+  /** The printed question number from the PDF (falls back to the sheet-order ordinal upstream). */
+  number: number;
+  /** The working copy of the question's text fields — owned by the workspace's draft store. */
+  draft: QuestionDraft;
+  /** True when the draft differs from the server row (shows the indicator, enables Update). */
+  dirty: boolean;
+  /** True while this question's edits are being pushed. */
+  saving: boolean;
   boxes: CardBox[];
   busyBoxIds: Set<string>;
-  /** Fallbacks from the document, used when the question's own metadata is still blank. */
-  fallbackQuestionType: string | null;
-  fallbackSectionName: string | null;
   /** Session-level context, surfaced read-only so the operator sees where this question is filed. */
   exam?: string | null;
   subject?: string | null;
   /** Suggestions for the creatable dropdowns (existing sections / chapters across the workspace). */
   sectionOptions?: readonly string[];
   topicOptions?: readonly string[];
+  onDraftChange: (draft: QuestionDraft) => void;
+  onSave: () => void;
   onAddBox: (question: Question, type: 'question' | 'option', optionIndex?: number) => void;
   onCropSave: (boxId: string) => void;
   onDeleteBox: (boxId: string) => void;
-};
-
-type Draft = {
-  stem: string;
-  answer: string;
-  explanation: string;
-  questionType: string;
-  sectionName: string;
-  topic: string;
-  options: QuestionOption[];
 };
 
 function splitUrls(value: string | null): string[] {
@@ -42,39 +40,6 @@ function splitUrls(value: string | null): string[] {
 }
 
 const FIELD_LABEL = 'text-[13px] font-medium text-ink-2';
-
-/** Shows a value as rendered LaTeX by default; click to edit the raw source; blur to render again. */
-function EditableLatexValue({
-  value,
-  onChange,
-  multiline = false,
-  placeholder = 'Click to edit',
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  multiline?: boolean;
-  placeholder?: string;
-}): JSX.Element {
-  const [editing, setEditing] = useState(false);
-  if (editing) {
-    const common = {
-      autoFocus: true,
-      value,
-      onChange: (e: { target: { value: string } }) => { onChange(e.target.value); },
-      onBlur: () => { setEditing(false); },
-    };
-    return multiline ? <textarea rows={3} {...common} /> : <input type="text" {...common} />;
-  }
-  return (
-    <div
-      className="min-h-[38px] cursor-text rounded-lg border border-line bg-surface px-3 py-2 text-sm leading-relaxed transition-colors hover:border-line-strong hover:bg-surface-2"
-      title="Click to edit raw"
-      onClick={() => { setEditing(true); }}
-    >
-      {value.trim() ? <RenderLatex text={value} /> : <span className="text-ink-3">{placeholder}</span>}
-    </div>
-  );
-}
 
 /** A tiny sparkle button that AI-refines a single field's LaTeX. */
 function AiButton({ busy, onClick }: { busy: boolean; onClick: () => void }): JSX.Element {
@@ -86,45 +51,42 @@ function AiButton({ busy, onClick }: { busy: boolean; onClick: () => void }): JS
 }
 
 /**
- * The editable per-question card in Verify. A read-only specs breadcrumb shows where the question is
- * filed (exam › subject › module › chapter › section); type / section / topic are searchable dropdowns;
- * answer / explanation / stem / options are LaTeX fields with a per-field AI fix.
+ * The editable per-question card in Verify. Fields always render in the sheet's own order —
+ * question text, options, answer, explanation, then metadata — and every LaTeX-bearing field
+ * displays RENDERED via {@link EditableLatexValue} (click to edit the raw source). Text edits are
+ * LOCAL-FIRST: they change only the passed-in draft; nothing hits the database until Update (this
+ * card) or Update all (the workspace) pushes the dirty questions. Image flags, crops, and image
+ * removal stay immediate — they are uploads against the freshest server data, not text edits.
  */
 export function EditableQuestionCard({
   question,
-  index,
+  number,
+  draft,
+  dirty,
+  saving,
   boxes,
   busyBoxIds,
-  fallbackQuestionType,
-  fallbackSectionName,
   exam,
   subject,
   sectionOptions = [],
   topicOptions = [],
+  onDraftChange,
+  onSave,
   onAddBox,
   onCropSave,
   onDeleteBox,
 }: Props): JSX.Element {
   const update = useUpdateQuestion();
-  const toDraft = (q: Question): Draft => ({
-    stem: q.stem,
-    answer: q.answer,
-    explanation: q.explanation ?? '',
-    questionType: q.questionType ?? fallbackQuestionType ?? '',
-    sectionName: q.sectionName ?? fallbackSectionName ?? '',
-    topic: q.topic ?? '',
-    options: q.options.map((o) => ({ ...o })),
-  });
-  const [draft, setDraft] = useState<Draft>(() => toDraft(question));
   const [fixing, setFixing] = useState<string | null>(null);
 
-  useEffect(() => { setDraft(toDraft(question)); }, [question]);
-
-  const set = <K extends keyof Draft>(key: K, value: Draft[K]): void => {
-    setDraft((prev) => ({ ...prev, [key]: value }));
+  const set = <K extends keyof QuestionDraft>(key: K, value: QuestionDraft[K]): void => {
+    onDraftChange({ ...draft, [key]: value });
   };
   const setOption = (i: number, body: string): void => {
-    setDraft((prev) => ({ ...prev, options: prev.options.map((o, j) => (j === i ? { ...o, body } : o)) }));
+    onDraftChange({
+      ...draft,
+      options: draft.options.map((o, j) => (j === i ? { ...o, body } : o)),
+    });
   };
 
   const refine = async (field: string, value: string, apply: (t: string) => void): Promise<void> => {
@@ -134,21 +96,6 @@ export function EditableQuestionCard({
     } finally {
       setFixing(null);
     }
-  };
-
-  const save = (): void => {
-    update.mutate({
-      id: question.id,
-      patch: {
-        stem: draft.stem,
-        answer: draft.answer,
-        explanation: draft.explanation || null,
-        options: draft.options,
-        questionType: draft.questionType || null,
-        sectionName: draft.sectionName || null,
-        topic: draft.topic || null,
-      },
-    });
   };
 
   const toggle = (key: 'isQuestionImage' | 'isOptionImage', value: boolean): void => {
@@ -171,7 +118,8 @@ export function EditableQuestionCard({
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-line bg-surface p-4">
       <div className="flex items-center gap-2.5">
-        <span className="rounded-full bg-brand-soft px-2.5 py-0.5 text-[13px] font-bold text-brand">Q{index + 1}</span>
+        <span className="rounded-full bg-brand-soft px-2.5 py-0.5 text-[13px] font-bold text-brand">Q{number}</span>
+        {dirty ? <Badge tone="progress">Unsaved</Badge> : null}
         <div className="ml-auto flex items-center gap-2">
           <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-ink-2">
             <input type="checkbox" className="w-auto" checked={question.isQuestionImage} onChange={(e) => { toggle('isQuestionImage', e.target.checked); }} />
@@ -194,50 +142,6 @@ export function EditableQuestionCard({
           ))}
         </div>
       ) : null}
-
-      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-        <label className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Question type</span>
-          <Combobox
-            value={draft.questionType}
-            options={questionTypeOptions}
-            placeholder="Select type…"
-            onChange={(v) => { set('questionType', v); }}
-          />
-        </label>
-        <label className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Section</span>
-          <Combobox
-            value={draft.sectionName}
-            options={sectionOptions}
-            placeholder="e.g. Exercise-1"
-            onChange={(v) => { set('sectionName', v); }}
-          />
-        </label>
-        <label className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Topic</span>
-          <Combobox
-            value={draft.topic}
-            options={topicSuggestions}
-            placeholder="e.g. Kinematics"
-            onChange={(v) => { set('topic', v); }}
-          />
-        </label>
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <span className={`flex items-center gap-1.5 ${FIELD_LABEL}`}>
-          Answer <AiButton busy={fixing === 'answer'} onClick={() => { void refine('answer', draft.answer, (t) => { set('answer', t); }); }} />
-        </span>
-        <EditableLatexValue value={draft.answer} onChange={(v) => { set('answer', v); }} placeholder="Click to add answer" />
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <span className={`flex items-center gap-1.5 ${FIELD_LABEL}`}>
-          Explanation <AiButton busy={fixing === 'explanation'} onClick={() => { void refine('explanation', draft.explanation, (t) => { set('explanation', t); }); }} />
-        </span>
-        <EditableLatexValue value={draft.explanation} onChange={(v) => { set('explanation', v); }} multiline placeholder="Click to add explanation" />
-      </div>
 
       <div className="flex flex-col gap-1.5">
         <span className={`flex items-center gap-1.5 ${FIELD_LABEL}`}>
@@ -277,6 +181,50 @@ export function EditableQuestionCard({
             />
           </div>
         ))}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <span className={`flex items-center gap-1.5 ${FIELD_LABEL}`}>
+          Answer <AiButton busy={fixing === 'answer'} onClick={() => { void refine('answer', draft.answer, (t) => { set('answer', t); }); }} />
+        </span>
+        <EditableLatexValue value={draft.answer} onChange={(v) => { set('answer', v); }} placeholder="Click to add answer" />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <span className={`flex items-center gap-1.5 ${FIELD_LABEL}`}>
+          Explanation <AiButton busy={fixing === 'explanation'} onClick={() => { void refine('explanation', draft.explanation, (t) => { set('explanation', t); }); }} />
+        </span>
+        <EditableLatexValue value={draft.explanation} onChange={(v) => { set('explanation', v); }} multiline placeholder="Click to add explanation" />
+      </div>
+
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+        <label className="flex flex-col gap-1.5">
+          <span className={FIELD_LABEL}>Question type</span>
+          <Combobox
+            value={draft.questionType}
+            options={questionTypeOptions}
+            placeholder="Select type…"
+            onChange={(v) => { set('questionType', v); }}
+          />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className={FIELD_LABEL}>Section</span>
+          <Combobox
+            value={draft.sectionName}
+            options={sectionOptions}
+            placeholder="e.g. Exercise-1"
+            onChange={(v) => { set('sectionName', v); }}
+          />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className={FIELD_LABEL}>Topic</span>
+          <Combobox
+            value={draft.topic}
+            options={topicSuggestions}
+            placeholder="e.g. Kinematics"
+            onChange={(v) => { set('topic', v); }}
+          />
+        </label>
       </div>
 
       {question.isQuestionImage ? (
@@ -333,9 +281,8 @@ export function EditableQuestionCard({
       ) : null}
 
       <div className="flex items-center justify-end gap-2">
-        {update.isSuccess ? <span className="text-sm text-ink-2">Saved</span> : null}
-        <Button size="xs" disabled={update.isPending} onClick={save}>
-          {update.isPending ? 'Saving…' : 'Update question'}
+        <Button size="xs" disabled={!dirty || saving} onClick={onSave}>
+          {saving ? 'Saving…' : 'Update'}
         </Button>
       </div>
     </div>

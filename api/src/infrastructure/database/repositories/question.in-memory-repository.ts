@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Question, UpdateQuestion } from '@ingest/contracts';
-import type { NewQuestion, QuestionRepository } from '../../../modules/questions/index.js';
+import { type NewQuestion, type QuestionRepository, sortByPdfOrder } from '../../../modules/questions/index.js';
 
 /** Dev/test adapter for {@link QuestionRepository}. Holds extracted questions per document in a Map. */
 export class InMemoryQuestionRepository implements QuestionRepository {
@@ -34,7 +34,7 @@ export class InMemoryQuestionRepository implements QuestionRepository {
   }
 
   findByDocument(documentId: string): Promise<Question[]> {
-    return Promise.resolve(this.byDocument.get(documentId) ?? []);
+    return Promise.resolve(sortByPdfOrder(this.byDocument.get(documentId) ?? []));
   }
 
   deleteByDocument(documentId: string): Promise<void> {

@@ -1,6 +1,13 @@
 import { z } from 'zod';
-import type { DetectedFigures, Question, UpdateQuestion } from '@ingest/contracts';
+import type {
+  BatchUpdateQuestionsResult,
+  DetectedFigures,
+  Question,
+  QuestionBatchUpdate,
+  UpdateQuestion,
+} from '@ingest/contracts';
 import {
+  BatchUpdateQuestionsResultSchema,
   DetectedFiguresSchema,
   PublishResultSchema,
   QuestionSchema,
@@ -21,6 +28,15 @@ export const questionsApi = {
 
   update: (id: string, patch: UpdateQuestion): Promise<Question> => {
     return request(`/questions/${id}`, { method: 'PATCH', body: patch, schema: QuestionSchema });
+  },
+
+  /** Push several questions' verify edits in one call; returns per-question success/failure. */
+  batchUpdate: (updates: QuestionBatchUpdate[]): Promise<BatchUpdateQuestionsResult> => {
+    return request('/questions/batch', {
+      method: 'PATCH',
+      body: { updates },
+      schema: BatchUpdateQuestionsResultSchema,
+    });
   },
 
   /**
