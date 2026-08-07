@@ -1,6 +1,7 @@
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { Question } from '@ingest/contracts';
+import type { DetectedFigure, Question } from '@ingest/contracts';
+import { DETECT_FIGURES_MAX_PAGES } from '@ingest/contracts';
 import { getCroppedBlob } from '../../../shared/lib/crop-image.js';
 import { useDocument } from '../../documents/index.js';
 import { questionsApi } from '../api/questions.api.js';
@@ -18,6 +19,7 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconFileText,
+  IconLayers,
   IconRedo,
   IconSparkle,
   IconUndo,
@@ -56,6 +58,47 @@ function splitUrls(value: string | null): string[] {
 
 function hasQuestionImage(question: Question): boolean {
   return (question.questionImage ?? '').trim().length > 0;
+}
+
+/** Whether a figure's destination (the stem, or one option) already carries an image — the skip rule. */
+function targetHasImage(
+  question: Question,
+  target: 'question' | 'option',
+  optionIndex: number,
+): boolean {
+  return target === 'question'
+    ? hasQuestionImage(question)
+    : (question.optionImages[optionIndex] ?? '').trim().length > 0;
+}
+
+/** Progress of the whole-document run: pages detected, then figures cropped + attached. */
+type AllPagesProgress = { phase: 'detect' | 'apply'; done: number; total: number };
+
+/** Outcome of the whole-document run, shown once it finishes. */
+type AllPagesSummary = {
+  attached: number;
+  skipped: number;
+  pages: number;
+  failed: number;
+  /** Pages whose detection call failed (transient AI errors) — their figures were never detected. */
+  failedPages: number;
+};
+
+function allPagesSummaryText(s: AllPagesSummary): string {
+  if (s.attached === 0 && s.skipped === 0 && s.failed === 0 && s.failedPages === 0) {
+    return 'No figures detected across the document.';
+  }
+  const parts = [
+    `Attached ${String(s.attached)} figure${s.attached === 1 ? '' : 's'} across ${String(s.pages)} page${s.pages === 1 ? '' : 's'}.`,
+  ];
+  if (s.skipped > 0) parts.push(`${String(s.skipped)} skipped (already had an image).`);
+  if (s.failed > 0) parts.push(`${String(s.failed)} failed — re-run or crop manually.`);
+  if (s.failedPages > 0) {
+    parts.push(
+      `${String(s.failedPages)} page${s.failedPages === 1 ? '' : 's'} failed to detect — run again to retry.`,
+    );
+  }
+  return parts.join(' ');
 }
 
 /** First ~10 words of a stem, stripped of LaTeX delimiters — enough to recognise the question. */
@@ -152,6 +195,8 @@ export function VerifyWorkspace({
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiResult, setAiResult] = useState<{ detected: number; placed: number; skipped: number } | null>(null);
+  const [allProgress, setAllProgress] = useState<AllPagesProgress | null>(null);
+  const [allSummary, setAllSummary] = useState<AllPagesSummary | null>(null);
 
   // Everything the async save pipeline reads goes through refs so a save started on one render
   // still sees the latest boxes/page when it actually runs.
@@ -383,11 +428,18 @@ export function VerifyWorkspace({
     }
   };
 
+  // While the whole-document run is in flight every crop/confirm save is paused: a save landing
+  // mid-run would be clobbered by the run's own patches (and vice versa).
+  const runActive = allProgress !== null;
+  /** Async-safe mirror of `runActive`, set by detectAllPages itself so mid-run saves block immediately. */
+  const runActiveRef = useRef(false);
+
   /**
    * Save a box, serialised per box: at most one upload in flight, and adjustments made while one is
    * running coalesce into a single follow-up save of the final rect (the "debounce on release").
    */
   const requestSave = (boxId: string): Promise<void> => {
+    if (runActiveRef.current) return Promise.resolve();
     const running = saveRuns.current.get(boxId);
     if (running) {
       running.again = true;
@@ -545,19 +597,11 @@ export function VerifyWorkspace({
       const { imageWidth, imageHeight, figures } = await questionsApi.detectFigures(documentId, page);
       const sx = size.displayWidth / imageWidth;
       const sy = size.displayHeight / imageHeight;
-      const alreadyHasImage = new Set(
-        (questions.data ?? []).filter(hasQuestionImage).map((q) => `${q.id}:question:0`),
-      );
-      for (const question of questions.data ?? []) {
-        question.optionImages.forEach((url, optionIndex) => {
-          if (url.trim()) alreadyHasImage.add(`${question.id}:option:${String(optionIndex)}`);
-        });
-      }
       let skipped = 0;
       const placed: Box[] = [];
       figures.forEach((figure, index) => {
-        const imageKey = `${figure.questionId}:${figure.target}:${String(figure.optionIndex)}`;
-        if (alreadyHasImage.has(imageKey)) {
+        const question = questionById.get(figure.questionId);
+        if (question && targetHasImage(question, figure.target, figure.optionIndex)) {
           skipped += 1;
           return;
         }
@@ -585,7 +629,144 @@ export function VerifyWorkspace({
       setAiBusy(false);
     }
     // commit/questionNumberById are stable enough; guarded single-run via effect below for autoRun.
-  }, [documentId, page, size, questions.data, questionNumberById]);
+  }, [documentId, page, size, questionById, questionNumberById]);
+
+  // --- Whole-document detection (detect + attach across ALL pages in one run). ---
+  /**
+   * Detect figures on every page that has extracted questions (chunked to the contract's page cap),
+   * then crop, upload, and attach every suggestion in one shot — skipping targets that already carry
+   * an image. Detection failures are partial, never fatal: a failed page (or a whole failed chunk)
+   * is only counted into the summary while every successfully detected figure still gets applied —
+   * the vision tokens for those pages are already spent. The apply patches are built from a fresh
+   * read of the questions (not the snapshot captured when the run started), and saves are grouped
+   * per question so one patch carries all of its new images; patches built from stale data would
+   * clobber one another's optionImages. Afterwards the operator only reviews and touches up,
+   * instead of driving the document page by page.
+   */
+  const detectAllPages = useCallback(async (): Promise<void> => {
+    const pagesWithQuestions = [
+      ...new Set((questions.data ?? []).map((q) => q.sourceRegion.page)),
+    ].sort((a, b) => a - b);
+    if (pagesWithQuestions.length === 0 || runActiveRef.current) return;
+    runActiveRef.current = true;
+    setAiError(null);
+    setAiResult(null);
+    setAllSummary(null);
+    setAllProgress({ phase: 'detect', done: 0, total: pagesWithQuestions.length });
+    try {
+      const detected: { page: number; figure: DetectedFigure }[] = [];
+      const failedPages = new Set<number>();
+      let firstFailure: string | null = null;
+      for (let start = 0; start < pagesWithQuestions.length; start += DETECT_FIGURES_MAX_PAGES) {
+        const chunk = pagesWithQuestions.slice(start, start + DETECT_FIGURES_MAX_PAGES);
+        try {
+          const { pages: results } = await questionsApi.detectFiguresBatch(documentId, chunk);
+          for (const result of results) {
+            if (!result.ok) {
+              failedPages.add(result.page);
+              firstFailure ??= result.error;
+              continue;
+            }
+            for (const figure of result.figures) detected.push({ page: result.page, figure });
+          }
+        } catch (caught) {
+          // One chunk's request failing must not discard the other chunks' detections.
+          for (const failedPage of chunk) failedPages.add(failedPage);
+          firstFailure ??= caught instanceof Error ? caught.message : String(caught);
+        }
+        setAllProgress({
+          phase: 'detect',
+          done: Math.min(start + chunk.length, pagesWithQuestions.length),
+          total: pagesWithQuestions.length,
+        });
+      }
+
+      // Re-read the questions before building patches: detection can take minutes and a patch built
+      // from the run-start snapshot would silently erase anything saved in the meantime.
+      const freshQuestions = await questionsApi.listByDocument(documentId);
+      const freshById = new Map(freshQuestions.map((q) => [q.id, q]));
+
+      let skipped = 0;
+      const byQuestion = new Map<string, { page: number; figure: DetectedFigure }[]>();
+      for (const entry of detected) {
+        const question = freshById.get(entry.figure.questionId);
+        if (!question) continue;
+        if (targetHasImage(question, entry.figure.target, entry.figure.optionIndex)) {
+          skipped += 1;
+          continue;
+        }
+        const group = byQuestion.get(question.id) ?? [];
+        group.push(entry);
+        byQuestion.set(question.id, group);
+      }
+
+      const total = [...byQuestion.values()].reduce((n, group) => n + group.length, 0);
+      let done = 0;
+      let attached = 0;
+      let failed = 0;
+      const touchedPages = new Set<number>();
+      setAllProgress({ phase: 'apply', done, total });
+      for (const [questionId, group] of byQuestion) {
+        const question = freshById.get(questionId);
+        if (!question) continue;
+        const stemUrls = splitUrls(question.questionImage);
+        const optionImages = [...question.optionImages];
+        let touchedStem = false;
+        let touchedOption = false;
+        let attachedHere = 0;
+        const pagesHere = new Set<number>();
+        for (const { page: sourcePage, figure } of group) {
+          try {
+            const [x, y, w, h] = figure.bbox;
+            const blob = await getCroppedBlob(questionsApi.pageImageUrl(documentId, sourcePage), {
+              x, y, width: w, height: h,
+            });
+            const name = `${questionId}_${figure.target}_${String(figure.optionIndex)}_${String(Date.now())}`;
+            const { url } = await questionsApi.uploadImage(questionId, name, blob);
+            if (figure.target === 'question') {
+              stemUrls.push(url);
+              touchedStem = true;
+            } else {
+              while (optionImages.length <= figure.optionIndex) optionImages.push('');
+              optionImages[figure.optionIndex] = url;
+              touchedOption = true;
+            }
+            attachedHere += 1;
+            pagesHere.add(sourcePage);
+          } catch (caught) {
+            failed += 1;
+            firstFailure ??= caught instanceof Error ? caught.message : String(caught);
+          }
+          done += 1;
+          setAllProgress({ phase: 'apply', done, total });
+        }
+        if (attachedHere === 0) continue;
+        try {
+          await enqueueQuestionWrite(questionId, async () => {
+            await patchQuestion({
+              id: questionId,
+              patch: {
+                ...(touchedStem ? { isQuestionImage: true, questionImage: stemUrls.join(',') } : {}),
+                ...(touchedOption ? { isOptionImage: true, optionImages } : {}),
+              },
+            });
+          });
+          attached += attachedHere;
+          for (const touched of pagesHere) touchedPages.add(touched);
+        } catch (caught) {
+          failed += attachedHere;
+          firstFailure ??= caught instanceof Error ? caught.message : String(caught);
+        }
+      }
+      setAllSummary({ attached, skipped, pages: touchedPages.size, failed, failedPages: failedPages.size });
+      setError(firstFailure);
+    } catch (caught) {
+      setAiError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      runActiveRef.current = false;
+      setAllProgress(null);
+    }
+  }, [documentId, questions.data, patchQuestion]);
 
   // Auto-detect once on arrival when the session pushed us here with ?auto=1 (still only marks).
   const autoStarted = useRef(false);
@@ -599,6 +780,9 @@ export function VerifyWorkspace({
   const pendingAi = boxes.filter((b) => b.source === 'ai' && !savedUrls.has(b.id));
   const confirmBox = (boxId: string): void => { void requestSave(boxId); };
   const confirmAll = async (): Promise<void> => {
+    if (runActive) return;
+    // Saves of the same question are serialised on its write queue and each one re-reads the fresh
+    // record, so several crops into one question can never clobber one another's option/stem image.
     for (const box of pendingAi) {
       await requestSave(box.id);
     }
@@ -693,14 +877,28 @@ export function VerifyWorkspace({
           <ToolbarSpacer />
 
           <ToolbarGroup>
-            <Button size="xs" disabled={aiBusy || !size} onClick={() => { void detectCurrentPage(); }}>
+            <Button
+              size="xs"
+              disabled={aiBusy || allProgress !== null || !size}
+              onClick={() => { void detectCurrentPage(); }}
+            >
               {aiBusy ? <><Spinner /> Detecting…</> : <><IconSparkle /> Auto-detect figures</>}
+            </Button>
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={aiBusy || allProgress !== null}
+              onClick={() => { void detectAllPages(); }}
+            >
+              {allProgress ? <><Spinner /> Working…</> : <><IconLayers /> Detect all pages</>}
             </Button>
             <ToolbarHelp>
               <b>Add region</b> on a question, then draw — the crop uploads and attaches by itself.
               <b> Drag</b> a box or its <b>handles</b> to adjust; a saved (green) box re-saves on
               release. <b>Right-click</b> removes a box — a saved box&rsquo;s image is detached too.
               <b> Auto-detect</b> only marks AI suggestions; nothing saves until you Confirm.
+              <b> Detect all pages</b> detects and attaches figures across the whole document in one
+              run, skipping targets that already have an image — review the cards afterwards.
             </ToolbarHelp>
           </ToolbarGroup>
         </Toolbar>
@@ -741,6 +939,15 @@ export function VerifyWorkspace({
 
         {aiError ? <p className="error">{aiError}</p> : null}
         {error ? <p className="error">{error}</p> : null}
+        {allProgress ? (
+          <p className="note">
+            <Spinner />{' '}
+            {allProgress.phase === 'detect'
+              ? `Detecting figures — ${String(allProgress.done)}/${String(allProgress.total)} pages…`
+              : `Attaching crops — ${String(allProgress.done)}/${String(allProgress.total)} figures…`}
+          </p>
+        ) : null}
+        {!allProgress && allSummary ? <p className="note">{allPagesSummaryText(allSummary)}</p> : null}
         {!aiBusy && pendingAi.length === 0 && aiResult ? (
           <p className="note">
             {aiResult.placed === 0 && aiResult.detected === 0
@@ -758,7 +965,7 @@ export function VerifyWorkspace({
                 Review {pendingAi.length} AI crop{pendingAi.length === 1 ? '' : 's'}
               </h2>
               <div className="row">
-                <Button size="xs" onClick={() => { void confirmAll(); }}>
+                <Button size="xs" disabled={runActive} onClick={() => { void confirmAll(); }}>
                   <IconCheck /> Confirm all
                 </Button>
                 <Button variant="ghost" size="xs" onClick={discardAll}>
@@ -790,7 +997,7 @@ export function VerifyWorkspace({
                       ) : null}
                     </button>
                     <div className="row">
-                      <Button size="xs" disabled={busy.has(b.id)} onClick={() => { confirmBox(b.id); }}>
+                      <Button size="xs" disabled={busy.has(b.id) || runActive} onClick={() => { confirmBox(b.id); }}>
                         {busy.has(b.id) ? 'Saving…' : <><IconCheck /> Confirm</>}
                       </Button>
                       <IconButton
@@ -831,6 +1038,7 @@ export function VerifyWorkspace({
                 saving={drafts.savingIds.has(question.id)}
                 boxes={cardBoxesFor(question.id)}
                 drawTarget={cardDrawTargetFor(question.id)}
+                cropDisabled={runActive}
                 onDraftChange={(draft) => { drafts.setDraft(question.id, draft); }}
                 onSave={() => { void drafts.save([question.id]); }}
                 onDrawRegion={toggleDrawTarget}

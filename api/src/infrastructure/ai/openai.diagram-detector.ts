@@ -148,10 +148,15 @@ function parseDetections(raw: unknown, width: number, height: number): DiagramDe
     const bbox = clampBox(item.bbox, width, height);
     if (bbox) {
       const questionText = typeof item.question_text === 'string' ? item.question_text : '';
-      const target = item.target === 'option' ? 'option' : 'question';
       const optionLabel = typeof item.option_label === 'string' && item.option_label.trim()
         ? item.option_label.trim().replace(/^[\s[(]+/, '').replace(/[\s)\].]+$/, '').toUpperCase()
         : null;
+      // A labelled entry is an option figure even when the model forgot `target`; an explicit
+      // `target: "question"` still wins so a stray label can never hijack a stem figure.
+      const target =
+        item.target === 'option' || (optionLabel !== null && item.target !== 'question')
+          ? 'option'
+          : 'question';
       out.push({ qNo, questionText, target, optionLabel, bbox });
     }
   }

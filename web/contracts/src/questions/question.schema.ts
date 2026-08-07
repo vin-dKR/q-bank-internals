@@ -147,3 +147,41 @@ export const DetectedFiguresSchema = z.object({
   figures: z.array(DetectedFigureSchema),
 });
 export type DetectedFigures = z.infer<typeof DetectedFiguresSchema>;
+
+/**
+ * Most pages one detect-figures batch request may carry. Keeps a request comfortably inside
+ * serverless time limits; the client chunks a longer document into successive requests using this
+ * same constant, so the two sides can never disagree on the cap.
+ */
+export const DETECT_FIGURES_MAX_PAGES = 10;
+
+/**
+ * Ask the AI to locate the figures on several pages of one document in a single request (the
+ * whole-document detect). The page-count cap keeps one request comfortably inside serverless time
+ * limits; the client chunks a longer document into successive requests and shows progress per chunk.
+ */
+export const DetectFiguresBatchRequestSchema = z.object({
+  documentId: z.string().min(1),
+  pages: z.array(z.number().int().positive()).min(1).max(DETECT_FIGURES_MAX_PAGES),
+});
+export type DetectFiguresBatchRequest = z.infer<typeof DetectFiguresBatchRequestSchema>;
+
+/**
+ * One page's figure-detection result inside a batch response: the detections, or — when that page's
+ * vision call failed — the failure message. A failed page never fails the whole batch; the client
+ * folds it into the run summary while the other pages' (already paid-for) detections still apply.
+ */
+export const DetectedFiguresPageSchema = z.discriminatedUnion('ok', [
+  DetectedFiguresSchema.extend({ ok: z.literal(true), page: z.number().int().positive() }),
+  z.object({ ok: z.literal(false), page: z.number().int().positive(), error: z.string() }),
+]);
+export type DetectedFiguresPage = z.infer<typeof DetectedFiguresPageSchema>;
+
+/**
+ * Whole-document detection result: one entry per requested page that has extracted questions.
+ * Requested pages without questions are skipped server-side (nothing to attach a figure to).
+ */
+export const DetectedFiguresBatchSchema = z.object({
+  pages: z.array(DetectedFiguresPageSchema),
+});
+export type DetectedFiguresBatch = z.infer<typeof DetectedFiguresBatchSchema>;
