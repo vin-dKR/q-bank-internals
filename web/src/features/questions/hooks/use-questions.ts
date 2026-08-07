@@ -14,10 +14,15 @@ import type {
 import { useToast } from '../../../shared/ui/index.js';
 import { questionsApi } from '../api/questions.api.js';
 
+/** The one spelling of the questions cache key — every reader and writer must agree on it. */
+export function questionsQueryKey(documentId: string | null): ['questions', string | null] {
+  return ['questions', documentId];
+}
+
 /** Loads the questions extracted from a document; idle until a document is selected. */
 export function useQuestions(documentId: string | null): UseQueryResult<Question[]> {
   return useQuery({
-    queryKey: ['questions', documentId],
+    queryKey: questionsQueryKey(documentId),
     queryFn: () => questionsApi.listByDocument(documentId ?? ''),
     enabled: documentId !== null,
   });
@@ -59,10 +64,10 @@ export function useBatchUpdateQuestions(
       // Merge the saved rows in place first: the caller clears its drafts as soon as this mutation
       // resolves, and without this the cards would show the stale pre-edit rows until the refetch
       // lands. Text edits never change a question's sort keys, so in-place mapping keeps the order.
-      queryClient.setQueryData<Question[]>(['questions', documentId], (prev) =>
+      queryClient.setQueryData<Question[]>(questionsQueryKey(documentId), (prev) =>
         prev?.map((question) => result.updated.find((u) => u.id === question.id) ?? question),
       );
-      void queryClient.invalidateQueries({ queryKey: ['questions', documentId] });
+      void queryClient.invalidateQueries({ queryKey: questionsQueryKey(documentId) });
     },
   });
 }
@@ -78,7 +83,13 @@ export function useUpdateQuestion(): UseMutationResult<
     mutationFn: (input: { id: string; patch: UpdateQuestion }) =>
       questionsApi.update(input.id, input.patch),
     onSuccess: (question) => {
-      void queryClient.invalidateQueries({ queryKey: ['questions', question.documentId] });
+      // Write the fresh question into the cache NOW (before mutateAsync resolves): the verify
+      // auto-save pipeline read-modify-writes image lists from this cache, and must never see the
+      // pre-patch record while the invalidation refetch is still in flight.
+      queryClient.setQueryData<Question[]>(questionsQueryKey(question.documentId), (prev) =>
+        prev?.map((q) => (q.id === question.id ? question : q)),
+      );
+      void queryClient.invalidateQueries({ queryKey: questionsQueryKey(question.documentId) });
     },
   });
 }
