@@ -2,3 +2,4 @@
 export { DriveFolderSelect } from './components/drive-folder-select.js';
 export { DrivePathExplorer } from './components/drive-path-explorer.js';
 export { useDriveFolders, useCreateFolder } from './hooks/use-drive-folders.js';
+export { type DriveVocabulary, useDriveVocabulary } from './hooks/use-drive-vocabulary.js';

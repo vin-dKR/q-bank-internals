@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import type { Exam, Module, SessionListQuery } from '@ingest/contracts';
+import type { SessionListQuery } from '@ingest/contracts';
 import type {
   CreateSessionInput,
   SessionRecord,
@@ -7,8 +7,8 @@ import type {
   UpdateSessionInput,
 } from '../../../modules/sessions/index.js';
 
-// Prisma's row shape for a Session, narrowed to what we map. `exam`/`module` are stored as free
-// nullable strings in Mongo but are trusted to hold the controlled vocabulary written via the contract.
+// Prisma's row shape for a Session, narrowed to what we map. `exam`/`module` are free nullable
+// strings, matching the open Exam/Module vocabulary written via the contract.
 type SessionRow = {
   id: string;
   label: string;
@@ -24,9 +24,9 @@ function toRecord(row: SessionRow): SessionRecord {
   return {
     id: row.id,
     label: row.label,
-    exam: (row.exam as Exam | null) ?? null,
+    exam: row.exam,
     subject: row.subject,
-    module: (row.module as Module | null) ?? null,
+    module: row.module,
     autoRun: row.autoRun,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

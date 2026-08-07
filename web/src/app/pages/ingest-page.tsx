@@ -48,8 +48,8 @@ function errorMessage(error: unknown): string {
 /** Validate a chapter's metadata; returns a user-facing reason string when incomplete, else null. */
 function metadataError(meta: ChapterMetadataDraft): string | null {
   if (
-    !meta.exam ||
-    !meta.module ||
+    !meta.exam.trim() ||
+    !meta.module.trim() ||
     !meta.subject.trim() ||
     !meta.chapter.trim() ||
     !meta.sectionName.trim() ||
@@ -64,9 +64,9 @@ function metadataError(meta: ChapterMetadataDraft): string | null {
 function baseMetadata(sessionId: string, meta: ChapterMetadataDraft): Omit<ChapterUploadMetadata, 'kind'> {
   return {
     sessionId,
-    exam: meta.exam as ChapterUploadMetadata['exam'],
+    exam: meta.exam.trim(),
     subject: meta.subject.trim(),
-    module: meta.module as ChapterUploadMetadata['module'],
+    module: meta.module.trim(),
     chapter: meta.chapter.trim(),
     sectionName: meta.sectionName.trim(),
     questionType: meta.questionType.trim(),

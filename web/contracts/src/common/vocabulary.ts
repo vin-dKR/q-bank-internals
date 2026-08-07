@@ -5,12 +5,25 @@ import { z } from 'zod';
  * `common/` because more than one feature needs it — never re-declared per feature (§6).
  */
 
-/** Exam a chapter's questions belong to. */
-export const ExamSchema = z.enum(['JEE', 'NEET', 'BOARDS']);
+/** The commonly-used exams, offered as first-class dropdown options. */
+export const KNOWN_EXAMS = ['JEE', 'NEET', 'BOARDS'] as const;
+
+/**
+ * Exam a chapter's questions belong to. Kept dynamic like {@link QuestionTypeSchema}: the known
+ * exams above are offered as defaults, but the masters Drive tree can introduce new exams, so any
+ * non-empty string is accepted.
+ */
+export const ExamSchema = z.union([z.enum(KNOWN_EXAMS), z.string().min(1)]);
 export type Exam = z.infer<typeof ExamSchema>;
 
-/** Source/coaching module the material comes from. */
-export const ModuleSchema = z.enum(['Allen', 'Motion', 'Resonance', 'PW', 'Unacademy']);
+/** The commonly-used source/coaching modules, offered as first-class dropdown options. */
+export const KNOWN_MODULES = ['Allen', 'Motion', 'Resonance', 'PW', 'Unacademy'] as const;
+
+/**
+ * Source/coaching module the material comes from. Kept dynamic like {@link ExamSchema} — the
+ * masters Drive tree can introduce new modules.
+ */
+export const ModuleSchema = z.union([z.enum(KNOWN_MODULES), z.string().min(1)]);
 export type Module = z.infer<typeof ModuleSchema>;
 
 /** Whether a chapter PDF holds the questions, the answers, or the worked solutions. */

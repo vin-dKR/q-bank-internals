@@ -1,7 +1,8 @@
 import { type JSX, useMemo } from 'react';
-import { ExamSchema, KNOWN_QUESTION_TYPES, ModuleSchema } from '@ingest/contracts';
+import { KNOWN_EXAMS, KNOWN_MODULES, KNOWN_QUESTION_TYPES } from '@ingest/contracts';
 import { Combobox } from '../../../shared/ui/index.js';
 import { useDocuments } from '../../documents/index.js';
+import { useDriveVocabulary } from '../../drive-folders/index.js';
 import { useSessions } from '../../sessions/index.js';
 import type { ChapterMetadataDraft } from '../types/chapter-group.js';
 
@@ -18,24 +19,34 @@ function distinct(values: readonly (string | null | undefined)[]): string[] {
 
 /**
  * The metadata that files a chapter into Drive: exam → subject → module → chapter (the folder path
- * the backend auto-creates), plus section name and question type. Every field is a searchable
- * Combobox — the fixed vocabularies (exam/module) pick-only, the open ones (subject/chapter/section/
- * question type) creatable, seeded with the values already used across existing documents/sessions.
+ * the backend auto-creates), plus section name and question type. Every field is a searchable,
+ * creatable Combobox seeded with the known defaults, the values already used across existing
+ * documents/sessions, and everything created in the All Masters Drive tree (empty when Drive is
+ * not configured — the document-derived suggestions still work).
  */
 export function ChapterMetadataForm({ value, onChange }: ChapterMetadataFormProps): JSX.Element {
   const documents = useDocuments();
   const sessions = useSessions();
+  const driveVocabulary = useDriveVocabulary();
 
   const suggestions = useMemo(() => {
     const docs = documents.data?.items ?? [];
     const sess = sessions.data?.items ?? [];
+    const drive = driveVocabulary.data;
     return {
-      subjects: distinct(sess.map((s) => s.subject)),
-      chapters: distinct(docs.map((d) => d.path.chapter)),
+      exams: distinct([...KNOWN_EXAMS, ...sess.map((s) => s.exam), ...(drive?.exams ?? [])]),
+      subjects: distinct([...sess.map((s) => s.subject), ...(drive?.subjects ?? [])]),
+      modules: distinct([
+        ...KNOWN_MODULES,
+        ...sess.map((s) => s.module),
+        ...docs.map((d) => d.path.module),
+        ...(drive?.modules ?? []),
+      ]),
+      chapters: distinct([...docs.map((d) => d.path.chapter), ...(drive?.chapters ?? [])]),
       sections: distinct([...docs.map((d) => d.path.section), ...docs.map((d) => d.sectionName)]),
       questionTypes: distinct([...KNOWN_QUESTION_TYPES, ...docs.map((d) => d.questionType)]),
     };
-  }, [documents.data, sessions.data]);
+  }, [documents.data, sessions.data, driveVocabulary.data]);
 
   return (
     <div className="metadata-form">
@@ -43,10 +54,9 @@ export function ChapterMetadataForm({ value, onChange }: ChapterMetadataFormProp
         <span>Exam</span>
         <Combobox
           value={value.exam}
-          options={ExamSchema.options}
-          allowCustom={false}
-          placeholder="Select exam…"
-          onChange={(next) => { onChange({ exam: next as ChapterMetadataDraft['exam'] }); }}
+          options={suggestions.exams}
+          placeholder="e.g. JEE"
+          onChange={(next) => { onChange({ exam: next }); }}
         />
       </label>
 
@@ -64,10 +74,9 @@ export function ChapterMetadataForm({ value, onChange }: ChapterMetadataFormProp
         <span>Module</span>
         <Combobox
           value={value.module}
-          options={ModuleSchema.options}
-          allowCustom={false}
-          placeholder="Select module…"
-          onChange={(next) => { onChange({ module: next as ChapterMetadataDraft['module'] }); }}
+          options={suggestions.modules}
+          placeholder="e.g. Allen"
+          onChange={(next) => { onChange({ module: next }); }}
         />
       </label>
 
