@@ -1,14 +1,17 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
 import { KNOWN_QUESTION_TYPES, type Question } from '@ingest/contracts';
-import { Badge, Button, Combobox, IconButton, IconPlus, IconSparkle, IconX } from '../../../shared/ui/index.js';
+import { Badge, Button, Combobox, IconButton, IconPlus, IconSparkle, IconX, Spinner } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { questionsApi } from '../api/questions.api.js';
 import { useUpdateQuestion } from '../hooks/use-questions.js';
 import type { QuestionDraft } from '../hooks/use-question-drafts.js';
 
-/** Minimal box info the card needs to render its crop-region rows. */
-export type CardBox = { id: string; type: 'question' | 'option'; optionIndex: number; label: string };
+/** A not-yet-saved crop region of this question: uploading (`saving`) or awaiting a manual retry. */
+export type CardBox = { id: string; type: 'question' | 'option'; optionIndex: number; label: string; saving: boolean };
+
+/** Which of this question's targets is armed for a rubber-band draw on the page. */
+export type CardDrawTarget = { type: 'question' | 'option'; optionIndex: number };
 
 type Props = {
   question: Question;
@@ -21,7 +24,8 @@ type Props = {
   /** True while this question's edits are being pushed. */
   saving: boolean;
   boxes: CardBox[];
-  busyBoxIds: Set<string>;
+  /** Non-null while the canvas is in draw mode for one of this question's targets. */
+  drawTarget: CardDrawTarget | null;
   /** Session-level context, surfaced read-only so the operator sees where this question is filed. */
   exam?: string | null;
   subject?: string | null;
@@ -30,8 +34,10 @@ type Props = {
   topicOptions?: readonly string[];
   onDraftChange: (draft: QuestionDraft) => void;
   onSave: () => void;
-  onAddBox: (question: Question, type: 'question' | 'option', optionIndex?: number) => void;
-  onCropSave: (boxId: string) => void;
+  /** Arm (or, on the armed target, cancel) draw mode — the drawn crop then saves automatically. */
+  onDrawRegion: (question: Question, type: 'question' | 'option', optionIndex?: number) => void;
+  /** Retry the auto-save of a region whose upload failed. */
+  onSaveBox: (boxId: string) => void;
   onDeleteBox: (boxId: string) => void;
 };
 
@@ -57,6 +63,9 @@ function AiButton({ busy, onClick }: { busy: boolean; onClick: () => void }): JS
  * LOCAL-FIRST: they change only the passed-in draft; nothing hits the database until Update (this
  * card) or Update all (the workspace) pushes the dirty questions. Image flags, crops, and image
  * removal stay immediate — they are uploads against the freshest server data, not text edits.
+ * Figure crops are draw-to-save: "Add region" arms the page canvas, the drawn crop uploads +
+ * attaches by itself, and the attached image appears here — the card only lists regions still
+ * uploading or needing a retry.
  */
 export function EditableQuestionCard({
   question,
@@ -65,15 +74,15 @@ export function EditableQuestionCard({
   dirty,
   saving,
   boxes,
-  busyBoxIds,
+  drawTarget,
   exam,
   subject,
   sectionOptions = [],
   topicOptions = [],
   onDraftChange,
   onSave,
-  onAddBox,
-  onCropSave,
+  onDrawRegion,
+  onSaveBox,
   onDeleteBox,
 }: Props): JSX.Element {
   const update = useUpdateQuestion();
@@ -106,7 +115,14 @@ export function EditableQuestionCard({
     const urls = splitUrls(question.questionImage).filter((u) => u !== url);
     void update.mutateAsync({ id: question.id, patch: { questionImage: urls.length ? urls.join(',') : null } });
   };
+  const removeOptionImage = (optionIndex: number): void => {
+    const optionImages = [...question.optionImages];
+    optionImages[optionIndex] = '';
+    void update.mutateAsync({ id: question.id, patch: { optionImages } });
+  };
 
+  const armedFor = (type: 'question' | 'option', optionIndex = 0): boolean =>
+    drawTarget !== null && drawTarget.type === type && drawTarget.optionIndex === optionIndex;
   const qBoxes = boxes.filter((b) => b.type === 'question');
   const savedQ = splitUrls(question.questionImage);
   const specs = [exam, subject, question.path.module, question.path.chapter, question.path.section].filter(
@@ -171,7 +187,14 @@ export function EditableQuestionCard({
             </div>
             <AiButton busy={fixing === `opt${String(i)}`} onClick={() => { void refine(`opt${String(i)}`, option.body, (t) => { setOption(i, t); }); }} />
             {question.isOptionImage ? (
-              <Button size="xs" onClick={() => { onAddBox(question, 'option', i); }}>Region</Button>
+              <Button
+                size="xs"
+                variant={armedFor('option', i) ? 'primary' : 'default'}
+                title={armedFor('option', i) ? 'Cancel drawing' : 'Draw this option’s figure on the page — it saves automatically'}
+                onClick={() => { onDrawRegion(question, 'option', i); }}
+              >
+                {armedFor('option', i) ? 'Drawing…' : 'Region'}
+              </Button>
             ) : null}
             <IconButton
               icon={<IconX />}
@@ -231,16 +254,27 @@ export function EditableQuestionCard({
         <div className="flex flex-col gap-2 rounded-lg border border-dashed border-line-strong bg-surface-2 p-2.5">
           <div className="flex items-center justify-between">
             <span className={FIELD_LABEL}>Question figures</span>
-            <Button size="xs" onClick={() => { onAddBox(question, 'question'); }}><IconPlus /> Add region</Button>
+            <Button
+              size="xs"
+              variant={armedFor('question') ? 'primary' : 'default'}
+              title={armedFor('question') ? 'Cancel drawing' : 'Draw the figure on the page — it saves automatically'}
+              onClick={() => { onDrawRegion(question, 'question'); }}
+            >
+              {armedFor('question') ? 'Drawing… (Esc to cancel)' : <><IconPlus /> Add region</>}
+            </Button>
           </div>
           {qBoxes.map((box) => (
             <div key={box.id} className="flex items-center justify-between gap-1.5">
               <span className="text-sm text-ink-2">Region {box.label}</span>
               <div className="flex items-center gap-2">
-                <Button size="xs" disabled={busyBoxIds.has(box.id)} onClick={() => { onCropSave(box.id); }}>
-                  {busyBoxIds.has(box.id) ? 'Saving…' : 'Crop & save'}
-                </Button>
-                <Button variant="ghost" size="xs" onClick={() => { onDeleteBox(box.id); }}>Remove</Button>
+                {box.saving ? (
+                  <span className="inline-flex items-center gap-1.5 text-sm text-ink-2"><Spinner /> Saving…</span>
+                ) : (
+                  <>
+                    <Button size="xs" onClick={() => { onSaveBox(box.id); }}>Save</Button>
+                    <Button variant="ghost" size="xs" onClick={() => { onDeleteBox(box.id); }}>Remove</Button>
+                  </>
+                )}
               </div>
             </div>
           ))}
@@ -265,13 +299,24 @@ export function EditableQuestionCard({
               <div key={option.label} className="flex flex-col gap-1.5">
                 <span><strong>{option.label}.</strong></span>
                 {oBoxes.map((box) => (
-                  <Button key={box.id} size="xs" disabled={busyBoxIds.has(box.id)} onClick={() => { onCropSave(box.id); }}>
-                    {busyBoxIds.has(box.id) ? 'Saving…' : 'Crop & save option'}
-                  </Button>
+                  <div key={box.id} className="flex items-center justify-between gap-1.5">
+                    <span className="text-sm text-ink-2">Region {box.label}</span>
+                    <div className="flex items-center gap-2">
+                      {box.saving ? (
+                        <span className="inline-flex items-center gap-1.5 text-sm text-ink-2"><Spinner /> Saving…</span>
+                      ) : (
+                        <>
+                          <Button size="xs" onClick={() => { onSaveBox(box.id); }}>Save</Button>
+                          <Button variant="ghost" size="xs" onClick={() => { onDeleteBox(box.id); }}>Remove</Button>
+                        </>
+                      )}
+                    </div>
+                  </div>
                 ))}
                 {savedO ? (
                   <div className="flex flex-col items-start gap-1">
                     <img src={savedO} alt={`option ${option.label}`} className="max-h-36 max-w-full rounded-lg border border-line bg-white" />
+                    <Button variant="ghost" size="xs" onClick={() => { removeOptionImage(optIdx); }}>Remove</Button>
                   </div>
                 ) : null}
               </div>

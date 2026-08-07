@@ -29,7 +29,7 @@ import {
   ToolbarHelp,
   ToolbarSpacer,
 } from '../../../shared/ui/index.js';
-import { type CardBox, EditableQuestionCard } from './editable-question-card.js';
+import { type CardBox, type CardDrawTarget, EditableQuestionCard } from './editable-question-card.js';
 
 type Box = BoxRect & {
   id: string;
@@ -42,6 +42,12 @@ type Box = BoxRect & {
   /** The verbatim "line above" the detector read for this figure, shown so the match can be eyeballed. */
   snippet?: string;
 };
+
+/** The question/option target a rubber-band draw on the canvas will crop into. */
+type DrawTarget = { questionId: string; type: 'question' | 'option'; optionIndex: number };
+
+/** One in-flight auto-save per box; `again` re-runs it with the latest rect once the current pass ends. */
+type SaveRun = { again: boolean; done: Promise<void> };
 
 function splitUrls(value: string | null): string[] {
   return value ? value.split(',').map((u) => u.trim()).filter(Boolean) : [];
@@ -96,13 +102,16 @@ function CropThumb({
 }
 
 /**
- * The Verify crop workspace: left is the source page (zoomable) with crop regions; right is an editable
- * card per question. Two ways to make a crop, both ending in the same upload+save:
- *  - Manual — draw a draggable box and crop it (the human fallback, unchanged).
- *  - AI — "Auto-detect figures" asks the model to locate each question's diagram and drops the results
- *    on the page as MARKED boxes. Nothing is saved until you Confirm each (or Confirm all); Discard
- *    drops a suggestion without ever touching the database. AI boxes are draggable, so a slightly-off
- *    box can be nudged before confirming.
+ * The Verify crop workspace: left is the source page with crop regions; right is an editable card per
+ * question. Crops save themselves — no per-crop "crop and save" click:
+ *  - Manual — arm a target from its card (Add region), rubber-band draw the region, and the crop
+ *    uploads + attaches on release. The box stays on the page in the "saved" style.
+ *  - AI — "Auto-detect figures" drops MARKED boxes for review. Nothing is saved until you Confirm
+ *    each (or Confirm all); Discard drops a suggestion without ever touching the database.
+ *  - Adjust — every box (manual or AI) can be moved and resized by its edges/corners at any time.
+ *    Releasing an adjusted saved box re-crops and replaces its attached image automatically (one save
+ *    per release; overlapping releases coalesce). Right-click removes a box — for a saved box that
+ *    also detaches its image, which is the undo path.
  *
  * `autoRun` (session `?auto=1`) runs the detection once on arrival — it still only marks for review.
  *
@@ -120,7 +129,7 @@ export function VerifyWorkspace({
   const questions = useQuestions(documentId);
   const pageCount = usePageCount(documentId);
   const document = useDocument(documentId);
-  const update = useUpdateQuestion();
+  const { mutateAsync: patchQuestion } = useUpdateQuestion();
   // Local-first text editing: every card edit lands in a draft here; only dirty questions are pushed.
   const drafts = useQuestionDrafts(documentId, questions.data, {
     questionType: document.data?.questionType ?? null,
@@ -132,13 +141,38 @@ export function VerifyWorkspace({
   const [size, setSize] = useState<CanvasSize | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [drawTarget, setDrawTarget] = useState<DrawTarget | null>(null);
+  /** boxId → the image URL its last successful save attached to the question. */
+  const [savedUrls, setSavedUrls] = useState<ReadonlyMap<string, string>>(new Map());
+  /** Boxes whose last auto-save failed — the card offers a manual Save retry for these. */
+  const [failed, setFailed] = useState<ReadonlySet<string>>(new Set());
 
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiResult, setAiResult] = useState<{ detected: number; placed: number; skipped: number } | null>(null);
 
-  const boxesRef = useRef(boxes);
-  boxesRef.current = boxes;
+  // Everything the async save pipeline reads goes through refs so a save started on one render
+  // still sees the latest boxes/questions/page when it actually runs.
+  const boxesRef = useRef<Box[]>([]);
+  const savedUrlsRef = useRef<ReadonlyMap<string, string>>(new Map());
+  const questionsRef = useRef<Question[]>([]);
+  questionsRef.current = questions.data ?? [];
+  const saveRuns = useRef(new Map<string, SaveRun>());
+
+  /** The single mutation point for boxes: keeps the ref in sync so async code never reads stale state. */
+  const applyBoxes = useCallback((updater: (prev: Box[]) => Box[]): void => {
+    boxesRef.current = updater(boxesRef.current);
+    setBoxes(boxesRef.current);
+  }, []);
+  /** Same ref-first discipline for the saved-URL map, read by release/reconcile handlers mid-flight. */
+  const applySavedUrls = useCallback(
+    (updater: (prev: ReadonlyMap<string, string>) => ReadonlyMap<string, string>): void => {
+      savedUrlsRef.current = updater(savedUrlsRef.current);
+      setSavedUrls(savedUrlsRef.current);
+    },
+    [],
+  );
+
   // The fitted page size can change when the column resizes; keep drawn boxes aligned by rescaling
   // their (display-pixel) coordinates by the same ratio, so a crop still points at the same region.
   const sizeRef = useRef<CanvasSize | null>(null);
@@ -148,38 +182,48 @@ export function VerifyWorkspace({
       (prev.displayWidth !== next.displayWidth || prev.displayHeight !== next.displayHeight)) {
       const rx = next.displayWidth / prev.displayWidth;
       const ry = next.displayHeight / prev.displayHeight;
-      setBoxes((bs) => bs.map((b) => ({ ...b, x: b.x * rx, y: b.y * ry, width: b.width * rx, height: b.height * ry })));
+      applyBoxes((bs) => bs.map((b) => ({ ...b, x: b.x * rx, y: b.y * ry, width: b.width * rx, height: b.height * ry })));
     }
     sizeRef.current = next;
     setSize(next);
-  }, []);
+  }, [applyBoxes]);
+
   const past = useRef<Box[][]>([]);
   const future = useRef<Box[][]>([]);
   const [, forceHistory] = useState(0);
   const commit = (updater: (prev: Box[]) => Box[]): void => {
     past.current = [...past.current, boxesRef.current];
     future.current = [];
-    setBoxes(updater(boxesRef.current));
+    applyBoxes(updater);
     forceHistory((n) => n + 1);
   };
+  // Undo/redo move region geometry only — they never attach or detach images. A saved box whose rect
+  // they change is re-saved so the attached image always matches what is drawn on the page.
   const undo = (): void => {
     const prev = past.current.at(-1);
     if (!prev) return;
     past.current = past.current.slice(0, -1);
     future.current = [boxesRef.current, ...future.current];
-    setBoxes(prev);
+    const before = boxesRef.current;
+    applyBoxes(() => prev);
     forceHistory((n) => n + 1);
+    resaveChangedRects(before, prev);
   };
   const redo = (): void => {
     const next = future.current[0];
     if (!next) return;
     future.current = future.current.slice(1);
     past.current = [...past.current, boxesRef.current];
-    setBoxes(next);
+    const before = boxesRef.current;
+    applyBoxes(() => next);
     forceHistory((n) => n + 1);
+    resaveChangedRects(before, next);
   };
 
   const imageSrc = questionsApi.pageImageUrl(documentId, page);
+  const imageSrcRef = useRef(imageSrc);
+  imageSrcRef.current = imageSrc;
+
   const onThisPage = useMemo(
     () => (questions.data ?? []).filter((q) => q.sourceRegion.page === page),
     [questions.data, page],
@@ -212,38 +256,17 @@ export function VerifyWorkspace({
   useEffect(() => () => { if (highlightTimer.current) clearTimeout(highlightTimer.current); }, []);
 
   const goToPage = (next: number): void => {
-    setBoxes([]);
+    applyBoxes(() => []);
     past.current = [];
     future.current = [];
+    applySavedUrls(() => new Map());
+    setFailed(new Set());
+    setDrawTarget(null);
     setAiResult(null);
     setAiError(null);
     setPage(next);
   };
 
-  const addBox = (question: Question, type: 'question' | 'option', optionIndex = 0): void => {
-    const id = `${question.id}_${type}_${String(optionIndex)}_${String(Date.now())}`;
-    commit((prev) => [
-      ...prev,
-      {
-        id,
-        questionId: question.id,
-        type,
-        optionIndex,
-        source: 'manual',
-        label: `p${String(question.sourceRegion.page)}·${type}`,
-        x: 48,
-        y: 48,
-        width: 220,
-        height: 160,
-      },
-    ]);
-  };
-  const updateBox = (id: string, rect: Partial<BoxRect>): void => {
-    setBoxes((prev) => prev.map((b) => (b.id === id ? { ...b, ...rect } : b)));
-  };
-  const deleteBox = (id: string): void => {
-    commit((prev) => prev.filter((b) => b.id !== id));
-  };
   const markBusy = (id: string, on: boolean): void => {
     setBusy((prev) => {
       const next = new Set(prev);
@@ -253,42 +276,212 @@ export function VerifyWorkspace({
     });
   };
 
-  const cropAndSave = async (box: Box, question: Question): Promise<void> => {
-    if (!size || size.displayWidth === 0) return;
+  // --- The auto-save pipeline: crop the box's current rect, upload, attach, remember the URL. ---
+  // Reads everything through refs at execution time, so a queued save always crops the latest rect.
+  const saveBoxOnce = async (boxId: string): Promise<void> => {
+    const box = boxesRef.current.find((b) => b.id === boxId);
+    const pageSize = sizeRef.current;
+    const question = questionsRef.current.find((q) => q.id === box?.questionId);
+    if (!box || !question || !pageSize || pageSize.displayWidth === 0) return;
     setError(null);
-    markBusy(box.id, true);
+    setFailed((prev) => {
+      if (!prev.has(boxId)) return prev;
+      const next = new Set(prev);
+      next.delete(boxId);
+      return next;
+    });
+    markBusy(boxId, true);
     try {
-      const scaleX = size.naturalWidth / size.displayWidth;
-      const scaleY = size.naturalHeight / size.displayHeight;
-      const blob = await getCroppedBlob(imageSrc, {
+      const scaleX = pageSize.naturalWidth / pageSize.displayWidth;
+      const scaleY = pageSize.naturalHeight / pageSize.displayHeight;
+      const blob = await getCroppedBlob(imageSrcRef.current, {
         x: box.x * scaleX,
         y: box.y * scaleY,
         width: box.width * scaleX,
         height: box.height * scaleY,
       });
-      const { url } = await questionsApi.uploadImage(question.id, box.id, blob);
+      // Fresh storage key per save: the store upserts by key and serves cached URLs, so re-using a
+      // key on re-crop would keep the stale image visible everywhere. A new key = a new URL.
+      const { url } = await questionsApi.uploadImage(question.id, `${boxId}_${String(Date.now())}`, blob);
+      const previousUrl = savedUrlsRef.current.get(boxId);
       if (box.type === 'question') {
-        const urls = [...splitUrls(question.questionImage), url];
-        await update.mutateAsync({ id: question.id, patch: { isQuestionImage: true, questionImage: urls.join(',') } });
+        const urls = splitUrls(question.questionImage);
+        const at = previousUrl ? urls.indexOf(previousUrl) : -1;
+        if (at >= 0) urls[at] = url;
+        else urls.push(url);
+        await patchQuestion({ id: question.id, patch: { isQuestionImage: true, questionImage: urls.join(',') } });
       } else {
         const optionImages = [...question.optionImages];
         while (optionImages.length <= box.optionIndex) optionImages.push('');
         optionImages[box.optionIndex] = url;
-        await update.mutateAsync({ id: question.id, patch: { isOptionImage: true, optionImages } });
+        await patchQuestion({ id: question.id, patch: { isOptionImage: true, optionImages } });
       }
-      deleteBox(box.id);
+      applySavedUrls((prev) => new Map(prev).set(boxId, url));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      setFailed((prev) => new Set(prev).add(boxId));
     } finally {
-      markBusy(box.id, false);
+      markBusy(boxId, false);
     }
   };
 
-  const cropSaveById = (boxId: string): void => {
-    const box = boxes.find((b) => b.id === boxId);
-    const question = (questions.data ?? []).find((q) => q.id === box?.questionId);
-    if (box && question) void cropAndSave(box, question);
+  /**
+   * Save a box, serialised per box: at most one upload in flight, and adjustments made while one is
+   * running coalesce into a single follow-up save of the final rect (the "debounce on release").
+   */
+  const requestSave = (boxId: string): Promise<void> => {
+    const running = saveRuns.current.get(boxId);
+    if (running) {
+      running.again = true;
+      return running.done;
+    }
+    const run: SaveRun = { again: false, done: Promise.resolve() };
+    saveRuns.current.set(boxId, run);
+    run.done = (async () => {
+      try {
+        do {
+          run.again = false;
+          await saveBoxOnce(boxId);
+          // Read `again` back through the map: a release during the upload set it on this object.
+        } while (saveRuns.current.get(boxId)?.again ?? false);
+      } finally {
+        saveRuns.current.delete(boxId);
+      }
+    })();
+    return run.done;
   };
+
+  const resaveChangedRects = (before: Box[], after: Box[]): void => {
+    const beforeById = new Map(before.map((b) => [b.id, b]));
+    for (const box of after) {
+      if (!savedUrlsRef.current.has(box.id)) continue;
+      const was = beforeById.get(box.id);
+      if (was && (was.x !== box.x || was.y !== box.y || was.width !== box.width || was.height !== box.height)) {
+        void requestSave(box.id);
+      }
+    }
+  };
+
+  /** Detach a saved box's image from its question — the undo half of "right-click removes the box". */
+  const detachSaved = async (box: Box, url: string): Promise<void> => {
+    const question = questionsRef.current.find((q) => q.id === box.questionId);
+    if (!question) return;
+    try {
+      if (box.type === 'question') {
+        const urls = splitUrls(question.questionImage).filter((u) => u !== url);
+        await patchQuestion({ id: question.id, patch: { questionImage: urls.length > 0 ? urls.join(',') : null } });
+      } else if ((question.optionImages[box.optionIndex] ?? '') === url) {
+        const optionImages = [...question.optionImages];
+        optionImages[box.optionIndex] = '';
+        await patchQuestion({ id: question.id, patch: { optionImages } });
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  };
+
+  const updateBox = (id: string, rect: Partial<BoxRect>): void => {
+    applyBoxes((prev) => prev.map((b) => (b.id === id ? { ...b, ...rect } : b)));
+  };
+  const deleteBox = (id: string): void => {
+    const box = boxesRef.current.find((b) => b.id === id);
+    const url = savedUrlsRef.current.get(id);
+    commit((prev) => prev.filter((b) => b.id !== id));
+    if (box && url) {
+      applySavedUrls((prev) => {
+        const next = new Map(prev);
+        next.delete(id);
+        return next;
+      });
+      void detachSaved(box, url);
+    }
+  };
+
+  // --- Draw-to-save (manual flow): arm a target from its card, rubber-band draw, auto-save. ---
+  const toggleDrawTarget = (question: Question, type: 'question' | 'option', optionIndex = 0): void => {
+    setDrawTarget((prev) =>
+      prev && prev.questionId === question.id && prev.type === type && prev.optionIndex === optionIndex
+        ? null
+        : { questionId: question.id, type, optionIndex },
+    );
+  };
+  const handleDraw = (rect: BoxRect): void => {
+    if (!drawTarget) return;
+    const question = questionById.get(drawTarget.questionId);
+    if (!question) return;
+    const number = questionNumberById.get(question.id);
+    const id = `${question.id}_${drawTarget.type}_${String(drawTarget.optionIndex)}_${String(Date.now())}`;
+    commit((prev) => [
+      ...prev,
+      {
+        id,
+        questionId: question.id,
+        type: drawTarget.type,
+        optionIndex: drawTarget.optionIndex,
+        source: 'manual',
+        label: `Q${String(number ?? '?')}${drawTarget.type === 'option' ? ` · option ${String(drawTarget.optionIndex + 1)}` : ''}`,
+        ...rect,
+      },
+    ]);
+    setDrawTarget(null);
+    void requestSave(id);
+  };
+  const drawLabel = useMemo(() => {
+    if (!drawTarget) return null;
+    const number = questionNumberById.get(drawTarget.questionId);
+    const base = `Q${String(number ?? '?')}`;
+    return drawTarget.type === 'option' ? `${base} · option ${String(drawTarget.optionIndex + 1)}` : `${base} figure`;
+  }, [drawTarget, questionNumberById]);
+
+  // Esc cancels an armed draw without touching anything else.
+  useEffect(() => {
+    if (!drawTarget) return undefined;
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setDrawTarget(null);
+    };
+    window.document.addEventListener('keydown', onKey);
+    return () => { window.document.removeEventListener('keydown', onKey); };
+  }, [drawTarget]);
+
+  // --- Adjust-to-resave: one history entry per grab, one (coalesced) save per release. ---
+  const grabbed = useRef<Box[] | null>(null);
+  const handleBoxGrab = (): void => {
+    grabbed.current = boxesRef.current;
+  };
+  const handleBoxRelease = (id: string, moved: boolean): void => {
+    if (moved && grabbed.current) {
+      past.current = [...past.current, grabbed.current];
+      future.current = [];
+      forceHistory((n) => n + 1);
+    }
+    grabbed.current = null;
+    if (!moved) return;
+    // Saved boxes re-crop on release; a box whose save failed (or is mid-flight) retries the same way.
+    // Unconfirmed AI suggestions stay unsaved until Confirm.
+    if (savedUrlsRef.current.has(id) || failed.has(id) || saveRuns.current.has(id)) {
+      void requestSave(id);
+    }
+  };
+
+  // A saved image removed from its card (Remove under the thumbnail) orphans its box on the canvas —
+  // drop such boxes so the page never shows a "saved" region whose crop is no longer attached.
+  useEffect(() => {
+    const data = questions.data;
+    if (!data) return;
+    const byId = new Map(data.map((q) => [q.id, q]));
+    const stillAttached = (box: Box): boolean => {
+      const url = savedUrlsRef.current.get(box.id);
+      if (!url || saveRuns.current.has(box.id)) return true;
+      const question = byId.get(box.questionId);
+      if (!question) return false;
+      return box.type === 'question'
+        ? splitUrls(question.questionImage).includes(url)
+        : (question.optionImages[box.optionIndex] ?? '') === url;
+    };
+    if (boxesRef.current.some((b) => !stillAttached(b))) {
+      applyBoxes((prev) => prev.filter(stillAttached));
+    }
+  }, [questions.data, applyBoxes]);
 
   // --- AI detection: mark the current page's figures for review, never auto-save. ---
   const detectCurrentPage = useCallback(async (): Promise<void> => {
@@ -334,8 +527,8 @@ export function VerifyWorkspace({
           height: h * sy,
         });
       });
-      // Replace any earlier AI suggestions on this page; leave manual boxes untouched.
-      commit((prev) => [...prev.filter((b) => b.source !== 'ai'), ...placed]);
+      // Replace any earlier unconfirmed AI suggestions on this page; confirmed + manual boxes stay.
+      commit((prev) => [...prev.filter((b) => b.source !== 'ai' || savedUrlsRef.current.has(b.id)), ...placed]);
       setAiResult({ detected: figures.length, placed: placed.length, skipped });
     } catch (caught) {
       setAiError(caught instanceof Error ? caught.message : String(caught));
@@ -354,16 +547,15 @@ export function VerifyWorkspace({
     }
   }, [autoRun, size, questions.isSuccess, questions.data, detectCurrentPage]);
 
-  const pendingAi = boxes.filter((b) => b.source === 'ai');
-  const confirmBox = (boxId: string): void => { cropSaveById(boxId); };
+  const pendingAi = boxes.filter((b) => b.source === 'ai' && !savedUrls.has(b.id));
+  const confirmBox = (boxId: string): void => { void requestSave(boxId); };
   const confirmAll = async (): Promise<void> => {
     for (const box of pendingAi) {
-      const question = (questions.data ?? []).find((q) => q.id === box.questionId);
-      if (question) await cropAndSave(box, question);
+      await requestSave(box.id);
     }
   };
   const discardAll = (): void => {
-    commit((prev) => prev.filter((b) => b.source !== 'ai'));
+    commit((prev) => prev.filter((b) => b.source !== 'ai' || savedUrlsRef.current.has(b.id)));
   };
 
   const canvasBoxes: CanvasBox[] = boxes.map((b) => ({
@@ -373,12 +565,19 @@ export function VerifyWorkspace({
     y: b.y,
     width: b.width,
     height: b.height,
-    variant: b.source,
+    variant: savedUrls.has(b.id) ? 'saved' : b.source,
+    busy: busy.has(b.id),
   }));
+  // Cards list only the not-yet-saved manual regions (saving or needing a retry); a saved region's
+  // presence in the card is its attached image, and adjustments happen on the canvas box itself.
   const cardBoxesFor = (questionId: string): CardBox[] =>
     boxes
-      .filter((b) => b.questionId === questionId && b.source === 'manual')
-      .map((b) => ({ id: b.id, type: b.type, optionIndex: b.optionIndex, label: b.label }));
+      .filter((b) => b.questionId === questionId && b.source === 'manual' && !savedUrls.has(b.id))
+      .map((b) => ({ id: b.id, type: b.type, optionIndex: b.optionIndex, label: b.label, saving: busy.has(b.id) }));
+  const cardDrawTargetFor = (questionId: string): CardDrawTarget | null =>
+    drawTarget && drawTarget.questionId === questionId
+      ? { type: drawTarget.type, optionIndex: drawTarget.optionIndex }
+      : null;
 
   if (questions.isPending) {
     return (
@@ -434,7 +633,7 @@ export function VerifyWorkspace({
             <button
               type="button"
               className="btn btn--ghost btn--xs"
-              title="Remove every box on this page"
+              title="Remove every box on this page (saved crops stay attached)"
               disabled={boxes.length === 0}
               onClick={() => { commit(() => []); }}
             >
@@ -449,15 +648,27 @@ export function VerifyWorkspace({
               {aiBusy ? <><Spinner /> Detecting…</> : <><IconSparkle /> Auto-detect figures</>}
             </Button>
             <ToolbarHelp>
-              <b>Auto-detect</b> marks each question&rsquo;s diagram on this page for review — nothing
-              is saved until you Confirm. Boxes: <b>drag</b> to move · <b>handles</b> to resize ·{' '}
-              <b>right-click</b> to delete.
+              <b>Add region</b> on a question, then draw — the crop uploads and attaches by itself.
+              <b> Drag</b> a box or its <b>handles</b> to adjust; a saved (green) box re-saves on
+              release. <b>Right-click</b> removes a box — a saved box&rsquo;s image is detached too.
+              <b> Auto-detect</b> only marks AI suggestions; nothing saves until you Confirm.
             </ToolbarHelp>
           </ToolbarGroup>
         </Toolbar>
 
         <div className="verify__stage">
-          <CropCanvas imageSrc={imageSrc} boxes={canvasBoxes} onUpdateBox={updateBox} onDeleteBox={deleteBox} onSize={handleSize} />
+          <CropCanvas
+            imageSrc={imageSrc}
+            boxes={canvasBoxes}
+            onUpdateBox={updateBox}
+            onDeleteBox={deleteBox}
+            onSize={handleSize}
+            draw={drawLabel !== null ? { label: drawLabel } : null}
+            onDraw={handleDraw}
+            onDrawCancel={() => { setDrawTarget(null); }}
+            onBoxGrab={handleBoxGrab}
+            onBoxRelease={handleBoxRelease}
+          />
         </div>
       </div>
 
@@ -570,11 +781,11 @@ export function VerifyWorkspace({
                 dirty={drafts.dirtyIds.has(question.id)}
                 saving={drafts.savingIds.has(question.id)}
                 boxes={cardBoxesFor(question.id)}
-                busyBoxIds={busy}
+                drawTarget={cardDrawTargetFor(question.id)}
                 onDraftChange={(draft) => { drafts.setDraft(question.id, draft); }}
                 onSave={() => { void drafts.save([question.id]); }}
-                onAddBox={addBox}
-                onCropSave={cropSaveById}
+                onDrawRegion={toggleDrawTarget}
+                onSaveBox={(boxId) => { void requestSave(boxId); }}
                 onDeleteBox={deleteBox}
               />
             </div>

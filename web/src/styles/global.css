@@ -864,7 +864,7 @@
     @apply h-full min-h-0 overflow-y-auto;
   }
   .crop-canvas {
-    @apply flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-lg bg-surface-2;
+    @apply relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-lg bg-surface-2;
   }
   .crop-canvas__frame {
     @apply relative leading-none;
@@ -873,6 +873,20 @@
   .crop-canvas__img {
     @apply block h-full w-full select-none;
     -webkit-user-drag: none;
+  }
+  /* Draw mode: a floating hint names the armed target; a full-frame overlay captures the rubber band. */
+  .crop-canvas__hint {
+    @apply absolute left-1/2 top-3 z-30 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-full border border-line bg-surface py-1 pl-3 pr-1 text-[13px] text-ink-2 shadow-lg;
+  }
+  .crop-canvas__hint kbd {
+    @apply rounded-md border border-line bg-surface-2 px-1.5 py-0.5 font-sans text-[11px] font-semibold text-ink-2;
+  }
+  .crop-canvas__overlay {
+    @apply absolute inset-0 z-20 cursor-crosshair;
+  }
+  .crop-canvas__rubber {
+    @apply pointer-events-none absolute border-2 border-dashed border-brand;
+    background: color-mix(in srgb, var(--color-brand) 10%, transparent);
   }
 
   .q-list {
@@ -1315,6 +1329,43 @@
 
 .cropbox--ai .cropbox__handle {
   border-color: var(--color-ok);
+}
+
+/* A crop already attached to its question: solid "done" styling. Still movable/resizable —
+   releasing an adjustment re-crops and replaces the attached image automatically. */
+.cropbox--saved {
+  border-style: solid;
+  border-color: var(--color-ok);
+  background: color-mix(in srgb, var(--color-ok) 7%, transparent);
+}
+
+.cropbox--saved .cropbox__label {
+  background: var(--color-ok);
+}
+
+.cropbox--saved .cropbox__handle {
+  border-color: var(--color-ok);
+}
+
+/* Crop upload in flight for this box. */
+.cropbox--busy {
+  animation: cropbox-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes cropbox-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cropbox--busy {
+    animation: none;
+  }
 }
 
 /* AI suggestion review list (a card at the top of the Verify question panel). */

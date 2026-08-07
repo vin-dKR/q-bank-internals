@@ -14,6 +14,8 @@ export default tseslint.config(
       '**/.claude/**',
       '*.config.mjs',
       '*.config.ts',
+      // Plain node build/deploy scripts — outside the TS project service, like the configs above.
+      'scripts/**',
     ],
   },
 

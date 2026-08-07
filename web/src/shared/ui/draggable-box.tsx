@@ -1,4 +1,5 @@
 import { type JSX, type MouseEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { cn } from '../lib/cn.js';
 
 type Dir = 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'w' | 'e';
 
@@ -9,10 +10,16 @@ type DraggableBoxProps = BoxRect & {
   label: string;
   onUpdate: (id: string, rect: Partial<BoxRect>) => void;
   onDelete: (id: string) => void;
+  /** Fired when a drag/resize starts — lets the owner snapshot state for undo. */
+  onGrab?: ((id: string) => void) | undefined;
+  /** Fired when a drag/resize ends; `moved` is false for a click that never changed the rect. */
+  onRelease?: ((id: string, moved: boolean) => void) | undefined;
   /** Zoom factor the box is rendered under, so pointer deltas map back to unscaled box coords. */
   scale?: number;
-  /** Visual style: `ai` marks an unconfirmed AI-suggested crop (distinct colour). */
-  variant?: 'manual' | 'ai';
+  /** Visual style: `ai` = unconfirmed AI suggestion, `saved` = crop attached to its question. */
+  variant?: 'manual' | 'ai' | 'saved';
+  /** Pulses the box while its crop is uploading. */
+  busy?: boolean;
 };
 
 const HANDLES: { dir: Dir; cursor: string; style: React.CSSProperties }[] = [
@@ -36,16 +43,22 @@ export function DraggableBox({
   label,
   onUpdate,
   onDelete,
+  onGrab,
+  onRelease,
   scale = 1,
   variant = 'manual',
+  busy = false,
 }: DraggableBoxProps): JSX.Element {
   const dragging = useRef(false);
   const resizing = useRef<Dir | null>(null);
+  const moved = useRef(false);
   const start = useRef({ x: 0, y: 0 });
   const initial = useRef<BoxRect>({ x, y, width, height });
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
   const [active, setActive] = useState(false);
+  const releaseRef = useRef(onRelease);
+  releaseRef.current = onRelease;
 
   const beginDrag = useCallback(
     (event: MouseEvent) => {
@@ -53,11 +66,13 @@ export function DraggableBox({
       event.preventDefault();
       event.stopPropagation();
       dragging.current = true;
+      moved.current = false;
       setActive(true);
+      onGrab?.(id);
       start.current = { x: event.clientX, y: event.clientY };
       initial.current = { x, y, width, height };
     },
-    [x, y, width, height],
+    [id, x, y, width, height, onGrab],
   );
 
   const beginResize = useCallback(
@@ -65,11 +80,13 @@ export function DraggableBox({
       event.preventDefault();
       event.stopPropagation();
       resizing.current = dir;
+      moved.current = false;
       setActive(true);
+      onGrab?.(id);
       start.current = { x: event.clientX, y: event.clientY };
       initial.current = { x, y, width, height };
     },
-    [x, y, width, height],
+    [id, x, y, width, height, onGrab],
   );
 
   useEffect(() => {
@@ -79,8 +96,10 @@ export function DraggableBox({
       const dy = (event.clientY - start.current.y) / scaleRef.current;
       const base = initial.current;
       if (dragging.current) {
+        if (dx !== 0 || dy !== 0) moved.current = true;
         onUpdate(id, { x: base.x + dx, y: base.y + dy });
       } else if (resizing.current) {
+        if (dx !== 0 || dy !== 0) moved.current = true;
         const dir = resizing.current;
         const next: Partial<BoxRect> = {};
         if (dir.includes('w')) { next.x = base.x + dx; next.width = base.width - dx; }
@@ -99,9 +118,12 @@ export function DraggableBox({
       }
     };
     const onUp = (): void => {
+      if (!dragging.current && !resizing.current) return;
       dragging.current = false;
       resizing.current = null;
       setActive(false);
+      releaseRef.current?.(id, moved.current);
+      moved.current = false;
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -113,11 +135,16 @@ export function DraggableBox({
 
   return (
     <div
-      className={variant === 'ai' ? 'cropbox cropbox--ai' : 'cropbox'}
+      className={cn(
+        'cropbox',
+        variant === 'ai' && 'cropbox--ai',
+        variant === 'saved' && 'cropbox--saved',
+        busy && 'cropbox--busy',
+      )}
       onMouseDown={beginDrag}
       onContextMenu={(event) => {
         event.preventDefault();
-        if (window.confirm('Delete this region?')) onDelete(id);
+        onDelete(id);
       }}
       style={{ left: x, top: y, width, height }}
     >
