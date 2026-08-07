@@ -1,5 +1,6 @@
 import type { RequestHandler } from 'express';
 import {
+  BatchUpdateQuestionsSchema,
   DetectFiguresRequestSchema,
   QuestionListQuerySchema,
   RefineLatexSchema,
@@ -15,6 +16,7 @@ import type { QuestionsService } from './questions.service.js';
 export function createQuestionsController(service: QuestionsService): {
   list: RequestHandler;
   update: RequestHandler;
+  batchUpdate: RequestHandler;
   uploadImage: RequestHandler;
   refine: RequestHandler;
   detectFigures: RequestHandler;
@@ -38,6 +40,11 @@ export function createQuestionsController(service: QuestionsService): {
     update: asyncHandler(async (req, res) => {
       const patch = parseOrThrow(UpdateQuestionSchema, req.body);
       ok(res, await service.update(requiredParam(req, 'id'), patch));
+    }),
+
+    batchUpdate: asyncHandler(async (req, res) => {
+      const { updates } = parseOrThrow(BatchUpdateQuestionsSchema, req.body);
+      ok(res, await service.batchUpdate(updates));
     }),
 
     // Multipart: `file` = the cropped PNG blob, `name` = the storage key. Returns the public URL.

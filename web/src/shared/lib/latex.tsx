@@ -1,4 +1,4 @@
-import type { JSX } from 'react';
+import { type JSX, useState } from 'react';
 import { InlineMath } from 'react-katex';
 import 'katex/dist/katex.min.css';
 
@@ -62,4 +62,41 @@ function SafeMath({ value }: { value: string }): JSX.Element {
   } catch {
     return <span>\({value}\)</span>;
   }
+}
+
+/**
+ * The one editable LaTeX field: shows the value RENDERED by default (never raw source), switches
+ * to a raw input on click, and renders again on blur. Every LaTeX-bearing field in the app edits
+ * through this so no screen ever shows raw `\(...\)` in its resting view.
+ */
+export function EditableLatexValue({
+  value,
+  onChange,
+  multiline = false,
+  placeholder = 'Click to edit',
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  multiline?: boolean;
+  placeholder?: string;
+}): JSX.Element {
+  const [editing, setEditing] = useState(false);
+  if (editing) {
+    const common = {
+      autoFocus: true,
+      value,
+      onChange: (e: { target: { value: string } }) => { onChange(e.target.value); },
+      onBlur: () => { setEditing(false); },
+    };
+    return multiline ? <textarea rows={3} {...common} /> : <input type="text" {...common} />;
+  }
+  return (
+    <div
+      className="min-h-[38px] cursor-text rounded-lg border border-line bg-surface px-3 py-2 text-sm leading-relaxed transition-colors hover:border-line-strong hover:bg-surface-2"
+      title="Click to edit raw"
+      onClick={() => { setEditing(true); }}
+    >
+      {value.trim() ? <RenderLatex text={value} /> : <span className="text-ink-3">{placeholder}</span>}
+    </div>
+  );
 }
