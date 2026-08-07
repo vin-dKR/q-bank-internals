@@ -166,10 +166,15 @@ export const DetectFiguresBatchRequestSchema = z.object({
 });
 export type DetectFiguresBatchRequest = z.infer<typeof DetectFiguresBatchRequestSchema>;
 
-/** One page's figure-detection result inside a batch response. */
-export const DetectedFiguresPageSchema = DetectedFiguresSchema.extend({
-  page: z.number().int().positive(),
-});
+/**
+ * One page's figure-detection result inside a batch response: the detections, or — when that page's
+ * vision call failed — the failure message. A failed page never fails the whole batch; the client
+ * folds it into the run summary while the other pages' (already paid-for) detections still apply.
+ */
+export const DetectedFiguresPageSchema = z.discriminatedUnion('ok', [
+  DetectedFiguresSchema.extend({ ok: z.literal(true), page: z.number().int().positive() }),
+  z.object({ ok: z.literal(false), page: z.number().int().positive(), error: z.string() }),
+]);
 export type DetectedFiguresPage = z.infer<typeof DetectedFiguresPageSchema>;
 
 /**

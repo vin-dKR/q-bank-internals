@@ -57,7 +57,8 @@ export const questionsApi = {
   /**
    * AI-locate figures on several pages in one request (the whole-document detect). Send at most
    * `DETECT_FIGURES_MAX_PAGES` pages per call; pages without extracted questions are skipped
-   * server-side.
+   * server-side. Each returned page carries `ok` — a page whose vision call failed comes back as
+   * `ok: false` with its error instead of failing the whole request.
    */
   detectFiguresBatch: (documentId: string, pages: number[]): Promise<DetectedFiguresBatch> => {
     return request('/questions/detect-figures/batch', {

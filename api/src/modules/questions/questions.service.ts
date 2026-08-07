@@ -2,6 +2,7 @@ import type {
   BatchUpdateQuestionsResult,
   DetectedFigures,
   DetectedFiguresBatch,
+  DetectedFiguresPage,
   Question,
   QuestionBatchUpdate,
   UpdateQuestion,
@@ -92,7 +93,9 @@ export class QuestionsService {
    * request. Only pages that actually have extracted questions are detected (a figure on any other
    * page has nothing to attach to), and the vision calls run with bounded concurrency. The first
    * page is rendered up front so the rasterizer warms its per-document cache once instead of every
-   * worker re-rasterizing the PDF on a cold start.
+   * worker re-rasterizing the PDF on a cold start. One page's failure (a transient provider 429/500)
+   * is returned as that page's `ok: false` entry, never as a failure of the whole request — the
+   * other pages' detections are already paid for and must reach the client.
    */
   async detectFiguresBatch(documentId: string, pages: number[]): Promise<DetectedFiguresBatch> {
     const questions = await this.questions.findByDocument(documentId);
@@ -100,10 +103,19 @@ export class QuestionsService {
     const wanted = [...new Set(pages)].sort((a, b) => a - b).filter((page) => questionPages.has(page));
     const first = wanted[0];
     if (first !== undefined) await this.pages.renderPage(documentId, first);
-    const results = await mapWithConcurrency(wanted, DETECT_PAGE_CONCURRENCY, async (page) => ({
-      page,
-      ...(await this.detectOnPage(documentId, page, questions)),
-    }));
+    const results = await mapWithConcurrency(
+      wanted,
+      DETECT_PAGE_CONCURRENCY,
+      async (page): Promise<DetectedFiguresPage> => {
+        try {
+          return { ok: true, page, ...(await this.detectOnPage(documentId, page, questions)) };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.warn({ documentId, page, err: message }, 'figure detection failed for one page of a batch');
+          return { ok: false, page, error: message };
+        }
+      },
+    );
     return { pages: results };
   }
 

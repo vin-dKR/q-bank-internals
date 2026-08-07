@@ -26,6 +26,11 @@ type Props = {
   boxes: CardBox[];
   /** Non-null while the canvas is in draw mode for one of this question's targets. */
   drawTarget: CardDrawTarget | null;
+  /**
+   * True while the whole-document detect run is in flight: pauses this card's image controls so a
+   * manual save cannot race the run's own patches (each would clobber the other's image fields).
+   */
+  cropDisabled?: boolean;
   /** Session-level context, surfaced read-only so the operator sees where this question is filed. */
   exam?: string | null;
   subject?: string | null;
@@ -75,6 +80,7 @@ export function EditableQuestionCard({
   saving,
   boxes,
   drawTarget,
+  cropDisabled = false,
   exam,
   subject,
   sectionOptions = [],
@@ -190,6 +196,7 @@ export function EditableQuestionCard({
               <Button
                 size="xs"
                 variant={armedFor('option', i) ? 'primary' : 'default'}
+                disabled={cropDisabled}
                 title={armedFor('option', i) ? 'Cancel drawing' : 'Draw this option’s figure on the page — it saves automatically'}
                 onClick={() => { onDrawRegion(question, 'option', i); }}
               >
@@ -257,6 +264,7 @@ export function EditableQuestionCard({
             <Button
               size="xs"
               variant={armedFor('question') ? 'primary' : 'default'}
+              disabled={cropDisabled}
               title={armedFor('question') ? 'Cancel drawing' : 'Draw the figure on the page — it saves automatically'}
               onClick={() => { onDrawRegion(question, 'question'); }}
             >
@@ -271,7 +279,7 @@ export function EditableQuestionCard({
                   <span className="inline-flex items-center gap-1.5 text-sm text-ink-2"><Spinner /> Saving…</span>
                 ) : (
                   <>
-                    <Button size="xs" onClick={() => { onSaveBox(box.id); }}>Save</Button>
+                    <Button size="xs" disabled={cropDisabled} onClick={() => { onSaveBox(box.id); }}>Save</Button>
                     <Button variant="ghost" size="xs" onClick={() => { onDeleteBox(box.id); }}>Remove</Button>
                   </>
                 )}
@@ -282,7 +290,7 @@ export function EditableQuestionCard({
             {savedQ.map((url) => (
               <div key={url} className="flex flex-col items-start gap-1">
                 <img src={url} alt="question figure" className="max-h-36 max-w-full rounded-lg border border-line bg-white" />
-                <Button variant="ghost" size="xs" onClick={() => { removeQuestionImage(url); }}>Remove</Button>
+                <Button variant="ghost" size="xs" disabled={cropDisabled} onClick={() => { removeQuestionImage(url); }}>Remove</Button>
               </div>
             ))}
           </div>
@@ -306,7 +314,7 @@ export function EditableQuestionCard({
                         <span className="inline-flex items-center gap-1.5 text-sm text-ink-2"><Spinner /> Saving…</span>
                       ) : (
                         <>
-                          <Button size="xs" onClick={() => { onSaveBox(box.id); }}>Save</Button>
+                          <Button size="xs" disabled={cropDisabled} onClick={() => { onSaveBox(box.id); }}>Save</Button>
                           <Button variant="ghost" size="xs" onClick={() => { onDeleteBox(box.id); }}>Remove</Button>
                         </>
                       )}
