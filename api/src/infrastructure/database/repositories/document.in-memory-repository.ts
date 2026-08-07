@@ -56,6 +56,7 @@ export class InMemoryDocumentRepository implements DocumentRepository {
       sectionName: input.sectionName,
       questionType: input.questionType,
       pageRange: input.pageRange,
+      topics: input.topics,
       status: 'uploaded',
       questionCount: 0,
       extractedAt: null,

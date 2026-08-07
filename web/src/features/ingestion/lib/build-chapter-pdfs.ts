@@ -60,6 +60,18 @@ export function sliceKind(slice: SliceRef, tags: SliceTags, pageKinds?: PageKind
   return tags[slice.id] ?? pageKinds?.[slice.pageNumber] ?? 'question';
 }
 
+/** The three built chapter PDFs plus the slice → built-page map of the question part. */
+export type ChapterPdfs = {
+  question: Uint8Array | null;
+  answer: Uint8Array | null;
+  solution: Uint8Array | null;
+  /**
+   * Built-question-PDF page (1-based) per question slice id — the bridge from source pages (where
+   * the operator drew topic ranges) to the pages extraction actually sees.
+   */
+  questionPageBySlice: Record<string, number>;
+};
+
 /**
  * Build the question, answer, and solution PDFs for one chapter: slices are routed by their tag
  * (untagged slices fall back to their source page's default kind, then to question). A side with no
@@ -71,7 +83,7 @@ export async function buildChapterPdfs(input: {
   splitPoints: SplitPointsByPage;
   tags: SliceTags;
   pageKinds?: PageKinds;
-}): Promise<{ question: Uint8Array | null; answer: Uint8Array | null; solution: Uint8Array | null }> {
+}): Promise<ChapterPdfs> {
   const slices = slicesForRange(input.range, input.splitPoints);
   const toSlice = (s: SliceRef): Slice => ({
     pageNumber: s.pageNumber,
@@ -79,14 +91,27 @@ export async function buildChapterPdfs(input: {
     end: s.end,
   });
 
-  const build = async (kind: ChapterKind): Promise<Uint8Array | null> => {
+  const build = async (
+    kind: ChapterKind,
+  ): Promise<{ bytes: Uint8Array | null; pageBySlice: Record<string, number> }> => {
     const picked = slices.filter((s) => sliceKind(s, input.tags, input.pageKinds) === kind);
-    return picked.length ? buildPdfFromSlices(input.pdfBytes, picked.map(toSlice)) : null;
+    if (picked.length === 0) return { bytes: null, pageBySlice: {} };
+    const built = await buildPdfFromSlices(input.pdfBytes, picked.map(toSlice));
+    const pageBySlice: Record<string, number> = {};
+    picked.forEach((slice, index) => {
+      const page = built.pageNumberOfSlice[index];
+      if (page !== null && page !== undefined) pageBySlice[slice.id] = page;
+    });
+    return { bytes: built.bytes, pageBySlice };
   };
 
+  const question = await build('question');
+  const answer = await build('answer');
+  const solution = await build('solution');
   return {
-    question: await build('question'),
-    answer: await build('answer'),
-    solution: await build('solution'),
+    question: question.bytes,
+    answer: answer.bytes,
+    solution: solution.bytes,
+    questionPageBySlice: question.pageBySlice,
   };
 }

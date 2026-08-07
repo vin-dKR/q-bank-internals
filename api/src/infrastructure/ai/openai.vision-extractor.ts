@@ -109,10 +109,11 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     pages: PageImage[];
     document: Document;
   }): Promise<QuestionExtraction> {
-    const prompt = questionPrompt(input.document);
     const results: ExtractedQuestion[] = [];
     const usage = this.emptyUsage();
     for (const page of input.pages) {
+      // Per page: the topic config can bind different pages to different fixed question types.
+      const prompt = questionPrompt(input.document, page.pageNumber);
       const { content } = await this.call(prompt, page.png, usage);
       for (const raw of parseQuestions(content)) {
         results.push({

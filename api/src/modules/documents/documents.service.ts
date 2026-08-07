@@ -50,6 +50,7 @@ export class DocumentsService {
       sectionName: input.sectionName ?? null,
       questionType: input.questionType ?? null,
       pageRange: input.pageRange ?? null,
+      topics: input.topics ?? [],
     });
   }
 }

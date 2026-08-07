@@ -1,4 +1,5 @@
 import type { Document } from '@ingest/contracts';
+import { topicBindingForPage } from '../../../modules/extraction/index.js';
 
 /**
  * Prompts ported from the Python PDF Extractor (`backend/prompts/*.py`). The JSON envelopes are
@@ -46,13 +47,32 @@ const TYPE_RULES: Record<string, string> = {
     'This is a MATRIX MATCH type: preserve both columns in question_text; options list the match rows.',
   comprehension:
     'This is a COMPREHENSION type: include the shared passage at the start of each question_text.',
+  assertion_reason:
+    'This is an ASSERTION-REASON type: question_text contains both the Assertion (A) and the Reason (R) statements; options are the four standard evaluations of A and R.',
+  true_false:
+    'This is a TRUE/FALSE type: each question is judged true or false; options are "(A) True", "(B) False" unless the paper prints other choices.',
+  fill_blank:
+    'This is a FILL IN THE BLANK type: keep the blank marker (e.g. ______) inside question_text; options is usually an empty array [].',
+  subjective:
+    'This is a SUBJECTIVE/DESCRIPTIVE type: there are no options — use an empty array []; capture the complete question text.',
 };
 
-/** The question-extraction prompt for a document, chosen by its question type. */
-export function questionPrompt(document: Document): string {
-  const typeRule = document.questionType ? TYPE_RULES[document.questionType] : undefined;
+/**
+ * The question-extraction prompt for one page of a document. The question type comes from the
+ * operator's topic config when the page is covered by a block (stated as fixed so the model cannot
+ * re-classify), else from the document-level question type — exactly mirroring how the worker stamps
+ * the persisted questions.
+ */
+export function questionPrompt(document: Document, pageNumber: number): string {
+  const binding = topicBindingForPage(document.topics, pageNumber);
+  const questionType = binding?.questionType ?? document.questionType;
+  const typeRule = questionType ? TYPE_RULES[questionType] : undefined;
+  const bindingNote = binding
+    ? `This page belongs to the topic "${binding.topicName}" and its questions are of the fixed type "${binding.questionType}", chosen by the operator. Extract the questions exactly as printed for that type — do NOT re-classify them or invent a different type.`
+    : '';
   return [
     `You are given an image of an exam question paper (${context(document)}).`,
+    bindingNote,
     BASE_RULES.trim(),
     typeRule ? `TYPE-SPECIFIC RULE:\n${typeRule}` : '',
   ]

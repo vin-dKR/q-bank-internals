@@ -808,6 +808,30 @@
   .slice-summary {
     @apply flex gap-2;
   }
+  .topic-editor__head {
+    @apply flex items-center justify-between gap-2;
+  }
+  .topic-editor__hint {
+    @apply m-0 text-[13px] text-ink-3;
+  }
+  .topic-card {
+    @apply flex flex-col gap-2 rounded-lg border border-line p-2.5;
+  }
+  .topic-card__head {
+    @apply flex items-center gap-2;
+  }
+  .topic-card__label {
+    @apply flex-none text-xs font-semibold uppercase tracking-wide text-ink-3;
+  }
+  .topic-card__type {
+    @apply flex items-center gap-2;
+  }
+  .topic-card__type-select {
+    @apply min-w-0 flex-1;
+  }
+  .topic-card__type input[type='number'] {
+    @apply w-16;
+  }
   .reflow-panel__head {
     @apply flex items-center justify-between;
   }

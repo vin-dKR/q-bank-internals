@@ -9,6 +9,7 @@ import type { ExtractionJobPayload } from './job-queue.js';
 import type { PdfRasterizer } from './pdf-rasterizer.js';
 import type { AnswerSheet, ExtractedQuestion, VisionExtractor } from './vision-extractor.js';
 import { mergeAnswers } from './merge-answers.js';
+import { topicBindingForPage } from './topic-lookup.js';
 
 /** Statuses that mean "don't touch it" — the guard that makes re-running a job idempotent/resumable. */
 const TERMINAL_OR_ACTIVE = new Set<Document['status']>(['extracting', 'extracted', 'completed']);
@@ -37,9 +38,14 @@ function parseOption(raw: string, index: number, answerLabel: string | null): Qu
   return { label, body, isCorrect: answerLabel !== null && label === answerLabel };
 }
 
-/** Map a model draft into the persisted Question shape (§6.1: the contract shape is canonical). */
+/**
+ * Map a model draft into the persisted Question shape (§6.1: the contract shape is canonical).
+ * Topic + question type come from the operator's cut-time config when the draft's source page is
+ * covered by a block — a deterministic mapping, so the model can never mislabel a type.
+ */
 function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestion {
   const answerLabel = normalizeAnswerLabel(draft.answer);
+  const binding = topicBindingForPage(document.topics, draft.sourcePage);
   return {
     documentId: document.id,
     questionNumber: draft.questionNumber,
@@ -49,9 +55,9 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
     answer: draft.answer ?? '',
     explanation: draft.explanation,
     images: [],
-    questionType: document.questionType,
+    questionType: binding?.questionType ?? document.questionType,
     sectionName: document.sectionName ?? document.path.section,
-    topic: null,
+    topic: binding?.topicName ?? null,
     sourceRegion: { page: draft.sourcePage, bbox: [0, 0, 1, 1] },
   };
 }

@@ -12,12 +12,19 @@ export { useWorkingDocument, type WorkingDocument } from './hooks/use-working-do
 export { useReflowBlocks, type ReflowController } from './hooks/use-reflow-blocks.js';
 export { useUploadChapter, type UploadChapterInput } from './hooks/use-upload-chapter.js';
 export { buildChapterPdfs, type PageKinds } from './lib/build-chapter-pdfs.js';
+export { topicsError, builtTopics } from './lib/topic-config.js';
+export { makeId } from './lib/make-id.js';
 export { applyGridSplit } from './lib/apply-grid-split.js';
 export { applyReflow } from './lib/apply-reflow.js';
 export { deletePage } from './lib/delete-page.js';
 export { aggregateSeparateChapters } from './lib/aggregate-separate.js';
 export type { CutMode, ReadingOrder } from './types/cut-mode.js';
-export { type ChapterGroup, emptyMetadata } from './types/chapter-group.js';
+export {
+  type ChapterGroup,
+  type TopicDraft,
+  type TopicTypeDraft,
+  emptyMetadata,
+} from './types/chapter-group.js';
 export {
   type SeparateFiles,
   type SeparateChapter,

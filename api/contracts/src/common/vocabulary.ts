@@ -17,13 +17,22 @@ export type Module = z.infer<typeof ModuleSchema>;
 export const ChapterKindSchema = z.enum(['question', 'answer', 'solution']);
 export type ChapterKind = z.infer<typeof ChapterKindSchema>;
 
-/** The commonly-used question categories, offered as first-class dropdown options. */
+/**
+ * The predefined question categories, offered as first-class dropdown options. This list is the
+ * operator's vocabulary for topic-level question-type configs: the AI extracts against a type chosen
+ * from here and never picks or invents one (e.g. it can't relabel "only one option correct" as a
+ * generic MCQ). Names follow the existing snake_case convention.
+ */
 export const KNOWN_QUESTION_TYPES = [
-  'single_correct',
-  'multi_correct',
-  'integer',
-  'matrix',
-  'comprehension',
+  'single_correct', // MCQ, exactly one option correct
+  'multi_correct', // MCQ, one or more options correct
+  'integer', // integer / numerical-value answer
+  'matrix', // matrix match (column matching)
+  'comprehension', // passage-based question group
+  'assertion_reason', // assertion (A) + reason (R) evaluation
+  'true_false', // true / false judgement
+  'fill_blank', // fill in the blank
+  'subjective', // subjective / descriptive, no options
 ] as const;
 
 /**
