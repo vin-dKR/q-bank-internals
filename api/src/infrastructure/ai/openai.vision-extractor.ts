@@ -91,9 +91,11 @@ function parseSolutionSheets(content: string, fallbackSection: string | null): A
 }
 
 /**
- * {@link VisionExtractor} backed by OpenAI `gpt-4o` vision — the TypeScript port of the Python
+ * {@link VisionExtractor} backed by an OpenAI vision model — the TypeScript port of the Python
  * extractor's OpenAI service. One image per call (serial, like the Python default) for reliable JSON,
- * `response_format: json_object`, low temperature. Runs in the worker, never the API request path.
+ * `response_format: json_object`. Model-agnostic: works on gpt-4o and on the newer reasoning models
+ * (e.g. gpt-5.4-mini) via `max_completion_tokens` (see {@link OpenAiVisionExtractor.call}). Runs in
+ * the worker, never the API request path.
  */
 export class OpenAiVisionExtractor implements VisionExtractor {
   private readonly client: OpenAI;
@@ -129,8 +131,8 @@ export class OpenAiVisionExtractor implements VisionExtractor {
       }
     }
     logger.info(
-      { documentId: input.document.id, pages: input.pages.length, questions: results.length },
-      'gpt-4o question extraction done',
+      { documentId: input.document.id, model: this.model, pages: input.pages.length, questions: results.length },
+      'question extraction done',
     );
     return { questions: results, usage };
   }
@@ -174,8 +176,11 @@ export class OpenAiVisionExtractor implements VisionExtractor {
   private async call(prompt: string, png: Buffer, usage: AiTokenUsage): Promise<{ content: string }> {
     const response = await this.client.chat.completions.create({
       model: this.model,
-      max_tokens: 4000,
-      temperature: 0.1,
+      // `max_completion_tokens` (not `max_tokens`) and default temperature so the same code runs on
+      // gpt-4o and on the newer reasoning models (e.g. gpt-5.4-mini), which reject `max_tokens` and any
+      // non-default temperature — see the sibling diagram detector. Kept generous because a reasoning
+      // model spends part of this budget on hidden reasoning before the question JSON.
+      max_completion_tokens: 16000,
       response_format: { type: 'json_object' },
       messages: [
         {
