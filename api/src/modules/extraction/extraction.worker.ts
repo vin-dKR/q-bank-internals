@@ -15,18 +15,11 @@ import { topicBindingForPage } from './topic-lookup.js';
 const TERMINAL_OR_ACTIVE = new Set<Document['status']>(['extracting', 'extracted', 'completed']);
 
 const OPTION_RE = /^\s*\(?([A-Da-d1-4])\)?[.)]?\s*([\s\S]*)$/;
+const TRUE_KEY_RE = /^\s*t(?:rue)?\s*$/i;
+const FALSE_KEY_RE = /^\s*f(?:alse)?\s*$/i;
 
-/** Pull a single option letter (A–D) out of a raw answer string like "A", "(A)", or "1". */
-function normalizeAnswerLabel(answer: string | null): string | null {
-  if (!answer) return null;
-  const match = /([A-Da-d1-4])/.exec(answer);
-  if (!match) return null;
-  const token = (match[1] ?? '').toUpperCase();
-  return /[1-4]/.test(token) ? String.fromCharCode(64 + Number(token)) : token;
-}
-
-/** Parse "(A) body" (or "1. body") into a labelled option, marking it correct against the key. */
-function parseOption(raw: string, index: number, answerLabel: string | null): QuestionOption {
+/** Parse "(A) body" (or "1. body") into its label + body, labelling by position as a fallback. */
+function parseOption(raw: string, index: number): Pick<QuestionOption, 'label' | 'body'> {
   const match = OPTION_RE.exec(raw);
   let label = String.fromCharCode(65 + index); // A, B, C, D fallback by position
   let body = raw.trim();
@@ -35,7 +28,27 @@ function parseOption(raw: string, index: number, answerLabel: string | null): Qu
     label = /[1-4]/.test(token) ? String.fromCharCode(64 + Number(token)) : token;
     body = (match[2] ?? '').trim();
   }
-  return { label, body, isCorrect: answerLabel !== null && label === answerLabel };
+  return { label, body };
+}
+
+/**
+ * Resolve a raw answer-key value ("A", "(A)", "1", "AC", "True") to the label of the option it
+ * selects. True/false keys are matched against the option bodies BEFORE the letter scan — the
+ * answer sheet carries them verbatim, and a bare letter scan would pluck the 'a' out of "False"
+ * and mark the wrong option. The letter scan itself only accepts answers made entirely of option
+ * letters/digits (punctuation aside), so it can never pull a letter out of a longer word.
+ */
+function normalizeAnswerLabel(
+  answer: string | null,
+  options: ReadonlyArray<Pick<QuestionOption, 'label' | 'body'>>,
+): string | null {
+  if (!answer) return null;
+  const boolKey = TRUE_KEY_RE.test(answer) ? TRUE_KEY_RE : FALSE_KEY_RE.test(answer) ? FALSE_KEY_RE : null;
+  if (boolKey) return options.find((option) => boolKey.test(option.body))?.label ?? null;
+  const compact = answer.replace(/[^A-Za-z0-9]/g, '');
+  if (!/^[A-Da-d1-4]+$/.test(compact)) return null;
+  const token = compact.charAt(0).toUpperCase(); // multi-correct keys like "AC": first letter, as before
+  return /[1-4]/.test(token) ? String.fromCharCode(64 + Number(token)) : token;
 }
 
 /**
@@ -44,14 +57,19 @@ function parseOption(raw: string, index: number, answerLabel: string | null): Qu
  * covered by a block — a deterministic mapping, so the model can never mislabel a type.
  */
 function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestion {
-  const answerLabel = normalizeAnswerLabel(draft.answer);
+  const options = draft.options.map(parseOption);
+  const answerLabel = normalizeAnswerLabel(draft.answer, options);
   const binding = topicBindingForPage(document.topics, draft.sourcePage);
   return {
     documentId: document.id,
     questionNumber: draft.questionNumber,
     path: document.path,
     stem: draft.questionText,
-    options: draft.options.map((option, index) => parseOption(option, index, answerLabel)),
+    options: options.map(({ label, body }) => ({
+      label,
+      body,
+      isCorrect: answerLabel !== null && label === answerLabel,
+    })),
     answer: draft.answer ?? '',
     explanation: draft.explanation,
     images: [],
