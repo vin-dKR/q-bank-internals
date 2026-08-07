@@ -42,6 +42,20 @@ type PageRange {
   to   Int
 }
 
+// One question-type block inside a topic: a predefined type bound to the page span it occupies in
+// the uploaded question PDF. Fixed by the operator at cut time; consumed by extraction so the model
+// never picks or invents a type.
+type TopicTypeConfig {
+  questionType String
+  pageRange    PageRange
+}
+
+// One topic inside a chapter PDF (Chapter -> Topic -> Question type -> Questions).
+type ChapterTopic {
+  name  String
+  types TopicTypeConfig[]
+}
+
 // One operator's Phase-1 upload run (e.g. a whole module). The durable, resumable unit: Phase 1
 // fills it fast; Phase 2 drains it later, manually or automatically when autoRun is set.
 // Status + document/extracted counts are derived from child documents at read time, not stored,
@@ -71,6 +85,8 @@ model Document {
   sectionName   String?
   questionType  String?
   pageRange     PageRange?
+  // Missing on pre-topic documents; Prisma reads an absent composite list as [] (config absent).
+  topics        ChapterTopic[]
   status        DocumentStatus  @default(uploaded)
   questionCount Int             @default(0)
   extractedAt   DateTime?

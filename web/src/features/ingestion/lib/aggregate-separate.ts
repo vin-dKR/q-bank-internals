@@ -44,7 +44,7 @@ export async function aggregateSeparateChapters(chapters: SeparateChapter[]): Pr
     }
     // Only chapters that contributed at least one page become a group (question is required upstream).
     if (pageCount >= from) {
-      groups.push({ id: chapter.id, from, to: pageCount, metadata: emptyMetadata(), tags: {} });
+      groups.push({ id: chapter.id, from, to: pageCount, metadata: emptyMetadata(), tags: {}, topics: [] });
     }
   }
 

@@ -7,8 +7,10 @@ import {
   emptyMetadata,
 } from '../types/chapter-group.js';
 import { type PageKinds, type SliceTags, slicesForRange } from '../lib/build-chapter-pdfs.js';
+import { makeId } from '../lib/make-id.js';
 import { ChapterMetadataForm } from './chapter-metadata-form.js';
 import { SliceTagList } from './slice-tag-list.js';
+import { TopicConfigEditor } from './topic-config-editor.js';
 
 type ChapterGroupingPanelProps = {
   groups: ChapterGroup[];
@@ -19,10 +21,6 @@ type ChapterGroupingPanelProps = {
   hoveredSliceId: string | null;
   onHoverSlice: (sliceId: string | null) => void;
 };
-
-function makeId(): string {
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
 
 /** Define chapters as page ranges, tag their slices, and capture their Drive metadata. */
 export function ChapterGroupingPanel({
@@ -73,6 +71,7 @@ export function ChapterGroupingPanel({
         to: Math.max(start, numPages),
         metadata: emptyMetadata(),
         tags: {},
+        topics: [],
       },
     ]);
   };
@@ -124,6 +123,12 @@ export function ChapterGroupingPanel({
           <ChapterMetadataForm
             value={group.metadata}
             onChange={(patch) => { updateMetadata(group.id, patch); }}
+          />
+
+          <TopicConfigEditor
+            topics={group.topics}
+            range={{ from: group.from, to: group.to }}
+            onChange={(topics) => { update(group.id, { topics }); }}
           />
 
           <div className="stack stack--tight">

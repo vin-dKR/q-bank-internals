@@ -18,8 +18,11 @@ import {
   applyGridSplit,
   applyReflow,
   buildChapterPdfs,
+  builtTopics,
   deletePage,
   emptySeparateChapter,
+  makeId,
+  topicsError,
   useReflowBlocks,
   useSplitPoints,
   useWorkingDocument,
@@ -103,7 +106,7 @@ export function IngestPage(): JSX.Element {
   // an answer/explanation page default to that kind (see build-chapter-pdfs `sliceKind`).
   const [pageKinds, setPageKinds] = useState<PageKinds>({});
   const [separateChapters, setSeparateChapters] = useState<SeparateChapter[]>([
-    emptySeparateChapter(Math.random().toString(36).slice(2)),
+    emptySeparateChapter(makeId()),
   ]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, string>>({});
@@ -286,7 +289,15 @@ export function IngestPage(): JSX.Element {
     const next: Record<string, string> = {};
 
     for (const group of groups) {
-      const invalid = metadataError(group.metadata);
+      const sliceContext = {
+        range: { from: group.from, to: group.to },
+        splitPoints: splitPoints.splitPoints,
+        tags: group.tags,
+        pageKinds,
+      };
+      const invalid =
+        metadataError(group.metadata) ??
+        (group.topics.length > 0 ? topicsError(group.topics, sliceContext) : null);
       if (invalid) {
         next[group.id] = invalid;
         setResults({ ...next });
@@ -295,18 +306,19 @@ export function IngestPage(): JSX.Element {
 
       let built: Awaited<ReturnType<typeof buildChapterPdfs>>;
       try {
-        built = await buildChapterPdfs({
-          pdfBytes: source,
-          range: { from: group.from, to: group.to },
-          splitPoints: splitPoints.splitPoints,
-          tags: group.tags,
-          pageKinds,
-        });
+        built = await buildChapterPdfs({ pdfBytes: source, ...sliceContext });
       } catch (error) {
         next[group.id] = `Cut failed: ${errorMessage(error)}`;
         setResults({ ...next });
         continue;
       }
+
+      // The topic config, re-expressed in the built question PDF's page space. Only the question
+      // part carries it — answer/solution PDFs have their own pagination the ranges don't describe.
+      const topics =
+        group.topics.length > 0
+          ? builtTopics(group.topics, sliceContext, built.questionPageBySlice)
+          : [];
 
       const base = baseMetadata(sessionId, group.metadata);
       const parts: { kind: ChapterKind; bytes: Uint8Array | null }[] = [
@@ -318,7 +330,12 @@ export function IngestPage(): JSX.Element {
       const done: string[] = [];
       for (const part of parts) {
         if (!part.bytes) continue;
-        await uploadPart(group.id, { ...base, kind: part.kind }, part.bytes, done, next);
+        const metadata: ChapterUploadMetadata = {
+          ...base,
+          kind: part.kind,
+          ...(part.kind === 'question' && topics.length > 0 ? { topics } : {}),
+        };
+        await uploadPart(group.id, metadata, part.bytes, done, next);
       }
       if (done.length === 0) {
         next[group.id] = 'No slices to upload.';
@@ -338,7 +355,7 @@ export function IngestPage(): JSX.Element {
   const startFreshSeparate = (): void => {
     reset();
     setPhase('upload');
-    setSeparateChapters([emptySeparateChapter(Math.random().toString(36).slice(2))]);
+    setSeparateChapters([emptySeparateChapter(makeId())]);
     setUploadError(null);
   };
 

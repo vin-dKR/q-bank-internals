@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ChapterKindSchema, ExamSchema, ModuleSchema, QuestionTypeSchema } from '../common/vocabulary.js';
 import { DriveFileSchema } from '../drive/drive.schema.js';
-import { DocumentSchema } from '../documents/document.schema.js';
+import { ChapterTopicSchema, DocumentSchema } from '../documents/document.schema.js';
 
 /**
  * The nested-folder trail a cut chapter is filed under in Drive: exam → subject → module → chapter.
@@ -27,6 +27,12 @@ export const ChapterUploadMetadataSchema = ChapterPathSchema.extend({
   sectionName: z.string().min(1),
   questionType: QuestionTypeSchema,
   kind: ChapterKindSchema,
+  /**
+   * Optional topic-level structure of a QUESTION part: each topic's predefined question-type blocks
+   * with the page spans they occupy in the uploaded PDF. Omitted for the chapter-wise flow (and for
+   * answer/solution parts) — the pipeline behaves exactly as before when absent.
+   */
+  topics: z.array(ChapterTopicSchema).optional(),
 });
 export type ChapterUploadMetadata = z.infer<typeof ChapterUploadMetadataSchema>;
 

@@ -10,13 +10,36 @@ export type ChapterMetadataDraft = {
   questionType: string;
 };
 
-/** One chapter: a page range, its metadata, and per-slice question/answer tags. */
+/**
+ * One question-type block being edited inside a topic: a predefined type over a span of source pages
+ * (within the chapter's range). `questionType` starts blank and must be picked from
+ * `KNOWN_QUESTION_TYPES` before upload — the config never carries an invented type.
+ */
+export type TopicTypeDraft = {
+  id: string;
+  questionType: string;
+  from: number;
+  to: number;
+};
+
+/** One topic being edited inside a chapter: its name plus its question-type blocks. */
+export type TopicDraft = {
+  id: string;
+  name: string;
+  types: TopicTypeDraft[];
+};
+
+/**
+ * One chapter: a page range, its metadata, per-slice question/answer tags, and the optional
+ * topic-level structure (Chapter → Topic → Question type). No topics = the plain chapter-wise flow.
+ */
 export type ChapterGroup = {
   id: string;
   from: number;
   to: number;
   metadata: ChapterMetadataDraft;
   tags: SliceTags;
+  topics: TopicDraft[];
 };
 
 export function emptyMetadata(): ChapterMetadataDraft {

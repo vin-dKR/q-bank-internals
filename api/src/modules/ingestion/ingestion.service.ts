@@ -56,6 +56,7 @@ export class IngestionService {
       sectionName: metadata.sectionName,
       questionType: metadata.questionType,
       pageRange: null,
+      topics: metadata.topics ?? [],
     });
 
     // Make the (possibly auto-created) session informative by filling its exam/subject/module from

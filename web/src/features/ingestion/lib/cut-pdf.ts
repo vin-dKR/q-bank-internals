@@ -54,20 +54,32 @@ export function drawCellOnA4(target: PDFDocumentType, cell: PDFEmbeddedPage, top
 }
 
 /**
+ * A built PDF plus, for each input slice (by index), the 1-based page it landed on — or null when
+ * the slice was a zero-area cell and produced no page. The map is what lets a source-page topic
+ * config be re-expressed in the built PDF's page space.
+ */
+export type BuiltSlicesPdf = { bytes: Uint8Array; pageNumberOfSlice: (number | null)[] };
+
+/**
  * Build a single PDF from cells of a source PDF: each cell is cropped, reflowed onto its own A4
  * page, and appended. Used to split a chapter's tagged slices into question/answer PDFs.
  */
-export async function buildPdfFromSlices(pdfBytes: PdfInput, slices: Slice[]): Promise<Uint8Array> {
+export async function buildPdfFromSlices(pdfBytes: PdfInput, slices: Slice[]): Promise<BuiltSlicesPdf> {
   const origPdf = await PDFDocument.load(pdfBytes.slice(0));
   const mergedPdf = await PDFDocument.create();
+  const pageNumberOfSlice: (number | null)[] = [];
+  let pageCount = 0;
 
-  for (let idx = 0; idx < slices.length; idx += 1) {
-    const slice = slices[idx];
-    if (!slice) continue;
+  for (const [idx, slice] of slices.entries()) {
     const cell = await embedCell(mergedPdf, origPdf, slice);
-    if (!cell) continue;
+    if (!cell) {
+      pageNumberOfSlice.push(null);
+      continue;
+    }
     drawCellOnA4(mergedPdf, cell, idx > 0 ? TOP_MARGIN : 0);
+    pageCount += 1;
+    pageNumberOfSlice.push(pageCount);
   }
 
-  return mergedPdf.save();
+  return { bytes: await mergedPdf.save(), pageNumberOfSlice };
 }

@@ -14,6 +14,7 @@ type DocumentRow = {
   sectionName: string | null;
   questionType: string | null;
   pageRange: { from: number; to: number } | null;
+  topics: { name: string; types: { questionType: string; pageRange: { from: number; to: number } }[] }[];
   status: DocumentStatus;
   questionCount: number;
   extractedAt: Date | null;
@@ -32,6 +33,7 @@ function toDocument(row: DocumentRow): Document {
     sectionName: row.sectionName,
     questionType: row.questionType,
     pageRange: row.pageRange,
+    topics: row.topics,
     status: row.status,
     questionCount: row.questionCount,
     extractedAt: row.extractedAt ? row.extractedAt.toISOString() : null,
@@ -98,6 +100,7 @@ export class PrismaDocumentRepository implements DocumentRepository {
         sectionName: input.sectionName,
         questionType: input.questionType,
         pageRange: input.pageRange,
+        topics: input.topics,
       },
     });
     return toDocument(row);

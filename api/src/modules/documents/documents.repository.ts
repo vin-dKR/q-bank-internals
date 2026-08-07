@@ -1,5 +1,6 @@
 import type {
   ChapterKind,
+  ChapterTopic,
   Document,
   DocumentListQuery,
   DocumentStatus,
@@ -18,6 +19,8 @@ export type CreateDocumentInput = {
   sectionName: string | null;
   questionType: QuestionType | null;
   pageRange: PageRange | null;
+  /** Topic → question-type config of a question PDF; empty when the chapter has no topic structure. */
+  topics: ChapterTopic[];
 };
 
 /**

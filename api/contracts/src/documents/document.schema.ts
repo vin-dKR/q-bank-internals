@@ -25,6 +25,27 @@ export const PageRangeSchema = z.object({
 export type PageRange = z.infer<typeof PageRangeSchema>;
 
 /**
+ * One question-type block inside a topic: a predefined type bound to the page span it occupies in
+ * the uploaded question PDF. The operator fixes this at cut time, so extraction maps every question
+ * on those pages to exactly this type — the model never picks or invents one.
+ */
+export const TopicTypeConfigSchema = z.object({
+  questionType: QuestionTypeSchema,
+  pageRange: PageRangeSchema,
+});
+export type TopicTypeConfig = z.infer<typeof TopicTypeConfigSchema>;
+
+/**
+ * One topic inside a chapter PDF (Chapter → Topic → Question type → Questions): its name plus the
+ * ordered question-type blocks it contains.
+ */
+export const ChapterTopicSchema = z.object({
+  name: z.string().min(1),
+  types: z.array(TopicTypeConfigSchema).min(1),
+});
+export type ChapterTopic = z.infer<typeof ChapterTopicSchema>;
+
+/**
  * A section PDF that lives in Drive and is (or will be) a source of questions. Belongs to an ingest
  * session; carries the Phase-1 metadata (kind/section/questionType/page range) the extractor needs.
  */
@@ -38,6 +59,8 @@ export const DocumentSchema = z.object({
   sectionName: z.string().nullable(),
   questionType: QuestionTypeSchema.nullable(),
   pageRange: PageRangeSchema.nullable(),
+  /** Operator-defined topic → question-type map of the question PDF; empty for chapter-only documents. */
+  topics: z.array(ChapterTopicSchema),
   status: DocumentStatusSchema,
   questionCount: z.number().int().nonnegative(),
   extractedAt: z.string().datetime().nullable(),
@@ -56,6 +79,7 @@ export const RegisterDocumentSchema = z.object({
   sectionName: z.string().min(1).nullable().optional(),
   questionType: QuestionTypeSchema.nullable().optional(),
   pageRange: PageRangeSchema.nullable().optional(),
+  topics: z.array(ChapterTopicSchema).optional(),
 });
 export type RegisterDocument = z.infer<typeof RegisterDocumentSchema>;
 
