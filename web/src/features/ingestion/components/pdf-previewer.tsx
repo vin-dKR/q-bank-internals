@@ -6,7 +6,8 @@ import 'react-pdf/dist/Page/AnnotationLayer.css';
 // origin, and correctly handled in both dev and build (the `new URL(bare-specifier)` form fails to
 // load in Vite dev with "Failed to fetch dynamically imported module").
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { IconTrash } from '../../../shared/ui/index.js';
+import { IconLayers, IconTrash } from '../../../shared/ui/index.js';
+import { setDraggedPages } from '../lib/page-dnd.js';
 import { PdfPageOverlay } from './pdf-page-overlay.js';
 import { PdfReflowOverlay } from './pdf-reflow-overlay.js';
 import type { SplitPointsController } from '../hooks/use-split-points.js';
@@ -33,6 +34,11 @@ type PdfPreviewerProps = {
   onDeletePage: (pageNumber: number) => void;
   /** Forwarded to the overlay: whether pages carry a question/answer/solution tag chip. */
   taggable?: boolean;
+  /** When true, each page gets a select toggle + a drag handle for binding pages to a tree leaf. */
+  bindable?: boolean;
+  /** Pages currently selected for dragging (a drag carries the whole selection, or just its page). */
+  selectedPages?: ReadonlySet<number>;
+  onToggleSelect?: (pageNumber: number) => void;
 };
 
 /** Renders every page of the PDF with the interactive cut + slice overlay on top. */
@@ -51,6 +57,9 @@ export function PdfPreviewer({
   onNumPages,
   onDeletePage,
   taggable = true,
+  bindable = false,
+  selectedPages,
+  onToggleSelect,
 }: PdfPreviewerProps): JSX.Element {
   const [numPages, setNumPages] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -73,11 +82,32 @@ export function PdfPreviewer({
         {Array.from({ length: numPages }, (_, i) => {
           const pageNumber = i + 1;
           const chapter = chapterForPage(groups, pageNumber);
+          const selected = selectedPages?.has(pageNumber) ?? false;
+          const dragPages = (): number[] =>
+            selected && selectedPages && selectedPages.size > 0 ? [...selectedPages].sort((a, b) => a - b) : [pageNumber];
           return (
             <div key={i} className="page-wrap">
               <div className="page-wrap__num">
-                <span className="muted">Page {pageNumber}</span>
+                {bindable ? (
+                  <label className="inline-flex cursor-pointer items-center gap-1.5 text-[13px] text-ink-2">
+                    <input type="checkbox" className="accent-brand" checked={selected} onChange={() => { onToggleSelect?.(pageNumber); }} />
+                    Page {pageNumber}
+                  </label>
+                ) : (
+                  <span className="muted">Page {pageNumber}</span>
+                )}
                 {chapter ? <span className="chip chip--chapter">Chapter {chapter.chapterIndex + 1}</span> : null}
+                {bindable ? (
+                  <span
+                    draggable
+                    data-page={pageNumber}
+                    onDragStart={(event) => { setDraggedPages(event, dragPages()); }}
+                    className="ml-auto inline-flex cursor-grab items-center gap-1 rounded-md border border-line-strong bg-surface px-2 py-1 text-[12px] font-medium text-ink-2 active:cursor-grabbing hover:bg-surface-2 [&>svg]:size-3.5"
+                    title="Drag onto a leaf's Question / Answer / Solution slot"
+                  >
+                    <IconLayers /> Drag{selected && selectedPages && selectedPages.size > 1 ? ` ${String(selectedPages.size)}` : ''}
+                  </span>
+                ) : null}
                 <button
                   type="button"
                   className="btn btn--ghost btn--xs page-wrap__delete"
@@ -88,7 +118,7 @@ export function PdfPreviewer({
                   <IconTrash /> Delete page
                 </button>
               </div>
-              <div className="page-wrap__canvas">
+              <div className={`page-wrap__canvas ${selected ? 'ring-2 ring-brand rounded-lg' : ''}`}>
                 <Page
                   pageNumber={pageNumber}
                   width={pageWidth}
