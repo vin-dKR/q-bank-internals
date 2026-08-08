@@ -1,9 +1,6 @@
-import { type JSX, useMemo } from 'react';
-import { KNOWN_EXAMS, KNOWN_MODULES, KNOWN_QUESTION_TYPES } from '@ingest/contracts';
+import { type JSX } from 'react';
 import { Combobox } from '../../../shared/ui/index.js';
-import { useDocuments } from '../../documents/index.js';
-import { useDriveVocabulary } from '../../drive-folders/index.js';
-import { useSessions } from '../../sessions/index.js';
+import { useChapterVocabulary } from '../hooks/use-chapter-vocabulary.js';
 import type { ChapterMetadataDraft } from '../types/chapter-group.js';
 
 type ChapterMetadataFormProps = {
@@ -11,42 +8,13 @@ type ChapterMetadataFormProps = {
   onChange: (patch: Partial<ChapterMetadataDraft>) => void;
 };
 
-function distinct(values: readonly (string | null | undefined)[]): string[] {
-  return [...new Set(values.filter((v): v is string => Boolean(v && v.trim())))].sort((a, b) =>
-    a.localeCompare(b),
-  );
-}
-
 /**
  * The metadata that files a chapter into Drive: exam → subject → module → chapter (the folder path
  * the backend auto-creates), plus section name and question type. Every field is a searchable,
- * creatable Combobox seeded with the known defaults, the values already used across existing
- * documents/sessions, and everything created in the All Masters Drive tree (empty when Drive is
- * not configured — the document-derived suggestions still work).
+ * creatable Combobox seeded with the shared {@link useChapterVocabulary} suggestions.
  */
 export function ChapterMetadataForm({ value, onChange }: ChapterMetadataFormProps): JSX.Element {
-  const documents = useDocuments();
-  const sessions = useSessions();
-  const driveVocabulary = useDriveVocabulary();
-
-  const suggestions = useMemo(() => {
-    const docs = documents.data?.items ?? [];
-    const sess = sessions.data?.items ?? [];
-    const drive = driveVocabulary.data;
-    return {
-      exams: distinct([...KNOWN_EXAMS, ...sess.map((s) => s.exam), ...(drive?.exams ?? [])]),
-      subjects: distinct([...sess.map((s) => s.subject), ...(drive?.subjects ?? [])]),
-      modules: distinct([
-        ...KNOWN_MODULES,
-        ...sess.map((s) => s.module),
-        ...docs.map((d) => d.path.module),
-        ...(drive?.modules ?? []),
-      ]),
-      chapters: distinct([...docs.map((d) => d.path.chapter), ...(drive?.chapters ?? [])]),
-      sections: distinct([...docs.map((d) => d.path.section), ...docs.map((d) => d.sectionName)]),
-      questionTypes: distinct([...KNOWN_QUESTION_TYPES, ...docs.map((d) => d.questionType)]),
-    };
-  }, [documents.data, sessions.data, driveVocabulary.data]);
+  const suggestions = useChapterVocabulary();
 
   return (
     <div className="metadata-form">

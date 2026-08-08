@@ -2,6 +2,7 @@ import { createBrowserRouter } from 'react-router-dom';
 import { AppLayout } from './layout/app-layout.js';
 import { PipelinePage } from './pages/pipeline-page.js';
 import { IngestPage } from './pages/ingest-page.js';
+import { TreeIngestPage } from './pages/tree-ingest-page.js';
 import { SessionsPage } from './pages/sessions-page.js';
 import { SessionDetailPage } from './pages/session-detail-page.js';
 import { MastersPage } from './pages/masters-page.js';
@@ -15,6 +16,7 @@ export const router = createBrowserRouter([
     element: <AppLayout />,
     children: [
       { index: true, element: <IngestPage /> },
+      { path: 'tree', element: <TreeIngestPage /> },
       { path: 'sessions', element: <SessionsPage /> },
       { path: 'sessions/:sessionId', element: <SessionDetailPage /> },
       { path: 'verify', element: <PipelinePage /> },

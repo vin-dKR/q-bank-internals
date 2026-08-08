@@ -84,6 +84,10 @@ export function AppLayout(): JSX.Element {
             <IconScissors />
             Cut &amp; upload
           </NavLink>
+          <NavLink to="/tree" className={navClass}>
+            <IconLayers />
+            Cut &amp; upload v2
+          </NavLink>
           <NavLink to="/sessions" className={navClass}>
             <IconLayers />
             Sessions
