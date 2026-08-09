@@ -1,6 +1,6 @@
 import { type JSX, useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { ChapterKind, ChapterUploadMetadata } from '@ingest/contracts';
+import type { ChapterKind, ChapterTopic, ChapterUploadMetadata } from '@ingest/contracts';
 import {
   type CutMode,
   type ReadingOrder,
@@ -12,9 +12,9 @@ import {
   StructureTreePanel,
   applyGridSplit,
   applyReflow,
+  assembleChapterUpload,
   deletePage,
   materializePages,
-  planUploads,
   useChapterVocabulary,
   useReflowBlocks,
   useSplitPoints,
@@ -24,7 +24,7 @@ import {
 } from '../../features/ingestion/index.js';
 import { SessionBar } from '../../features/sessions/index.js';
 import { useCurrentSession } from '../../shared/lib/current-session.js';
-import { PageHeader, Spinner } from '../../shared/ui/index.js';
+import { PageHeader, Spinner, useToast } from '../../shared/ui/index.js';
 
 const DEFAULT_WIDTH = 560;
 const MIN_WIDTH = 320;
@@ -65,6 +65,7 @@ export function TreeIngestPage(): JSX.Element {
   const upload = useUploadChapter();
   const tree = useStructureTree();
   const vocabulary = useChapterVocabulary();
+  const { success, error: toastError } = useToast();
   const { undo, redo } = splitPoints;
 
   const isReflow = cutMode === 'reflow';
@@ -154,35 +155,47 @@ export function TreeIngestPage(): JSX.Element {
 
   const handleUpload = async (): Promise<void> => {
     if (!sessionId) return;
-    const plan = planUploads(tree.tree);
-    if (plan.jobs.length === 0) {
-      setUploadError(
-        plan.problems[0]?.reason
-          ? `Nothing ready to upload — ${plan.problems[0].reason}`
-          : 'Add a leaf with a bound question slice first.',
-      );
+    const assembled = await assembleChapterUpload(tree.tree);
+    if (!assembled.question) {
+      setUploadError(assembled.problems[0] ?? 'Add a leaf with a bound question slice first.');
       return;
     }
     setUploadError(null);
     setUploading(true);
+    // One unit for the whole chapter: question (primary, carries per-section topics) + optional
+    // answer / solution as bound context. Three uploads at most, never one-per-leaf.
+    const parts: { kind: ChapterKind; bytes: Uint8Array; topics?: ChapterTopic[] }[] = [
+      { kind: 'question', bytes: assembled.question.bytes, topics: assembled.question.topics },
+      ...(assembled.answer ? [{ kind: 'answer' as const, bytes: assembled.answer }] : []),
+      ...(assembled.solution ? [{ kind: 'solution' as const, bytes: assembled.solution }] : []),
+    ];
     const lines: string[] = [];
-    for (const job of plan.jobs) {
-      const parts: string[] = [];
-      for (const part of job.parts) {
-        const metadata: ChapterUploadMetadata = { ...job.base, sessionId, kind: part.kind };
-        try {
-          const result = await upload.mutateAsync({ pdfBytes: part.bytes, metadata });
-          setDidUpload(true);
-          parts.push(`${part.kind} → ${result.document.status}`);
-        } catch (error) {
-          parts.push(`${part.kind} failed: ${errorMessage(error)}`);
-        }
+    let failed = false;
+    for (const part of parts) {
+      const metadata: ChapterUploadMetadata = {
+        ...assembled.base,
+        sessionId,
+        kind: part.kind,
+        ...(part.topics ? { topics: part.topics } : {}),
+      };
+      try {
+        const result = await upload.mutateAsync({ pdfBytes: part.bytes, metadata });
+        setDidUpload(true);
+        lines.push(`${part.kind} → ${result.document.status}`);
+      } catch (err) {
+        // Storage is Drive-only: any failure (Drive unreachable, quota, network) surfaces as a toast.
+        failed = true;
+        const message = errorMessage(err);
+        lines.push(`${part.kind} failed: ${message}`);
+        toastError(`Couldn’t upload the ${part.kind} PDF`, message);
       }
-      lines.push(`${job.sectionName}: ${parts.join(' · ')}`);
       setResults([...lines]);
     }
-    for (const problem of plan.problems) lines.push(`${problem.sectionName}: ${problem.reason}`);
+    for (const problem of assembled.problems) lines.push(problem);
     setResults([...lines]);
+    if (!failed) {
+      success('Uploaded to the session', `${String(parts.length)} file${parts.length === 1 ? '' : 's'} filed to Drive.`);
+    }
     setUploading(false);
   };
 

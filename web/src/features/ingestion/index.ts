@@ -19,7 +19,7 @@ export { useStructureTree, type StructureTreeController } from './hooks/use-stru
 export { useChapterVocabulary, type ChapterVocabulary } from './hooks/use-chapter-vocabulary.js';
 export { materializePages } from './lib/materialize-slice.js';
 export { setDraggedPages, readDraggedPages, isPageDrag, PAGE_DND_MIME } from './lib/page-dnd.js';
-export { planUploads, type UploadPlan, type LeafUploadJob, type LeafUploadProblem } from './lib/tree-to-uploads.js';
+export { assembleChapterUpload, type AssembledUpload } from './lib/assemble-chapter.js';
 export { leaves, resolveQuestionType } from './lib/structure-tree.js';
 export {
   type StructureTree,
