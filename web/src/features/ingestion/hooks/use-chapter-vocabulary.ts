@@ -1,11 +1,12 @@
 import { useMemo } from 'react';
-import { KNOWN_EXAMS, KNOWN_MODULES, KNOWN_QUESTION_TYPES } from '@ingest/contracts';
+import { KNOWN_EXAMS, KNOWN_MODULES, KNOWN_QUESTION_TYPES, KNOWN_SOURCES } from '@ingest/contracts';
 import { useDocuments } from '../../documents/index.js';
 import { useDriveVocabulary } from '../../drive-folders/index.js';
 import { useSessions } from '../../sessions/index.js';
 
 /** The known-value suggestion lists that seed every metadata Combobox in the ingestion flow. */
 export type ChapterVocabulary = {
+  sources: string[];
   exams: string[];
   subjects: string[];
   modules: string[];
@@ -35,6 +36,7 @@ export function useChapterVocabulary(): ChapterVocabulary {
     const sess = sessions.data?.items ?? [];
     const drive = driveVocabulary.data;
     return {
+      sources: distinct([...KNOWN_SOURCES, ...docs.map((d) => d.source)]),
       exams: distinct([...KNOWN_EXAMS, ...sess.map((s) => s.exam), ...(drive?.exams ?? [])]),
       subjects: distinct([...sess.map((s) => s.subject), ...(drive?.subjects ?? [])]),
       modules: distinct([

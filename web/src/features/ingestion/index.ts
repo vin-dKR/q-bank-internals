@@ -1,6 +1,6 @@
 // Public surface of the ingestion feature (§4). The page composes these; internals stay private.
 export { PdfUploader } from './components/pdf-uploader.js';
-export { PdfPreviewer } from './components/pdf-previewer.js';
+export { PdfPreviewer, type PreviewView } from './components/pdf-previewer.js';
 export { PdfToolbar } from './components/pdf-toolbar.js';
 export { PdfModeSelector } from './components/pdf-mode-selector.js';
 export { ReflowBlocksPanel } from './components/reflow-blocks-panel.js';
@@ -32,7 +32,7 @@ export {
 } from './types/structure-node.js';
 export { applyGridSplit } from './lib/apply-grid-split.js';
 export { applyReflow } from './lib/apply-reflow.js';
-export { deletePage } from './lib/delete-page.js';
+export { deletePage, deletePages } from './lib/delete-page.js';
 export { aggregateSeparateChapters } from './lib/aggregate-separate.js';
 export type { CutMode, ReadingOrder } from './types/cut-mode.js';
 export {

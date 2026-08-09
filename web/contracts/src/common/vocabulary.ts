@@ -31,6 +31,19 @@ export const ChapterKindSchema = z.enum(['question', 'answer', 'solution']);
 export type ChapterKind = z.infer<typeof ChapterKindSchema>;
 
 /**
+ * Where a chapter's questions originate: previous-year papers, a coaching module, or a textbook.
+ * The operator picks this once per chapter so every extracted question records its provenance.
+ */
+export const KNOWN_SOURCES = ['pyq', 'module', 'textbook'] as const;
+
+/**
+ * Question source. Kept dynamic like {@link ExamSchema} / {@link ModuleSchema} — the three known
+ * sources above seed the dropdown, but any non-empty string is accepted for a future source kind.
+ */
+export const SourceSchema = z.union([z.enum(KNOWN_SOURCES), z.string().min(1)]);
+export type Source = z.infer<typeof SourceSchema>;
+
+/**
  * The predefined question categories, offered as first-class dropdown options. This list is the
  * operator's vocabulary for topic-level question-type configs: the AI extracts against a type chosen
  * from here and never picks or invents one (e.g. it can't relabel "only one option correct" as a

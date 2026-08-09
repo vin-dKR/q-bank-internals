@@ -55,6 +55,7 @@ export function StructureTreePanel({
     <div className="flex flex-col gap-4">
       <section className="flex flex-col gap-2">
         <h3 className="m-0 text-[13px] font-semibold uppercase tracking-wide text-ink-3">Chapter</h3>
+        <MetaField label="Source" value={tree.metadata.source} options={vocabulary.sources} placeholder="pyq / module / textbook" onChange={(v) => { controller.setMetadata({ source: v }); }} />
         <div className="grid grid-cols-2 gap-2">
           <MetaField label="Exam" value={tree.metadata.exam} options={vocabulary.exams} placeholder="e.g. JEE" onChange={(v) => { controller.setMetadata({ exam: v }); }} />
           <MetaField label="Subject" value={tree.metadata.subject} options={vocabulary.subjects} placeholder="e.g. Physics" onChange={(v) => { controller.setMetadata({ subject: v }); }} />

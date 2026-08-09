@@ -120,6 +120,7 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
     sectionName: UNIT_SECTION,
     // Unit-level fallback type (topics cover every question page); use the first leaf's type.
     questionType: resolveQuestionType(firstLeaf.node, firstLeaf.ancestors).trim(),
+    ...(m.source.trim() ? { source: m.source.trim() } : {}),
   };
 
   return {
@@ -139,5 +140,6 @@ function emptyBase(m: StructureTree['metadata']): Base {
     chapter: m.chapter.trim(),
     sectionName: UNIT_SECTION,
     questionType: '',
+    ...(m.source.trim() ? { source: m.source.trim() } : {}),
   };
 }

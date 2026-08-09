@@ -1,4 +1,4 @@
-import { type JSX, useMemo, useState } from 'react';
+import { type DragEvent, type JSX, useMemo, useState } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/TextLayer.css';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -6,7 +6,7 @@ import 'react-pdf/dist/Page/AnnotationLayer.css';
 // origin, and correctly handled in both dev and build (the `new URL(bare-specifier)` form fails to
 // load in Vite dev with "Failed to fetch dynamically imported module").
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { ErrorBoundary, ErrorFallback, IconLayers, IconTrash } from '../../../shared/ui/index.js';
+import { ErrorBoundary, ErrorFallback, IconButton, IconCheck, IconLayers, IconTrash } from '../../../shared/ui/index.js';
 import { setDraggedPages } from '../lib/page-dnd.js';
 import { PdfPageOverlay } from './pdf-page-overlay.js';
 import { PdfReflowOverlay } from './pdf-reflow-overlay.js';
@@ -17,6 +17,14 @@ import { type ChapterGroup, chapterForPage } from '../types/chapter-group.js';
 import type { PageKinds } from '../lib/build-chapter-pdfs.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+
+/** How the pages are laid out: the tall single-column editor, or a compact thumbnail grid. */
+export type PreviewView = 'list' | 'grid';
+
+/** Fixed page width in the grid so every thumbnail is uniform (zoom only affects the list). */
+const GRID_THUMB_WIDTH = 140;
+
+type SelectOptions = { range?: boolean };
 
 type PdfPreviewerProps = {
   pdfBytes: ArrayBuffer | Uint8Array;
@@ -36,12 +44,14 @@ type PdfPreviewerProps = {
   taggable?: boolean;
   /** When true, each page gets a select toggle + a drag handle for binding pages to a tree leaf. */
   bindable?: boolean;
+  /** List (tall editor) or grid (compact thumbnails). Grid drops the cut overlay — it's an overview. */
+  view?: PreviewView;
   /** Pages currently selected for dragging (a drag carries the whole selection, or just its page). */
   selectedPages?: ReadonlySet<number>;
-  onToggleSelect?: (pageNumber: number) => void;
+  onToggleSelect?: (pageNumber: number, options?: SelectOptions) => void;
 };
 
-/** Renders every page of the PDF with the interactive cut + slice overlay on top. */
+/** Renders every page of the PDF, either as the tall cut editor or a compact draggable grid. */
 export function PdfPreviewer({
   pdfBytes,
   mode,
@@ -58,17 +68,24 @@ export function PdfPreviewer({
   onDeletePage,
   taggable = true,
   bindable = false,
+  view = 'list',
   selectedPages,
   onToggleSelect,
 }: PdfPreviewerProps): JSX.Element {
   const [numPages, setNumPages] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const isGrid = view === 'grid';
 
   // A stable copy so pdf.js never reads a detached buffer across re-renders (only recut on new file).
   const file = useMemo(() => ({ data: new Uint8Array(pdfBytes.slice(0)) }), [pdfBytes]);
 
+  const dragPagesFor = (pageNumber: number, selected: boolean): number[] =>
+    selected && selectedPages && selectedPages.size > 0
+      ? [...selectedPages].sort((a, b) => a - b)
+      : [pageNumber];
+
   return (
-    <div className="previewer">
+    <div className={`previewer${isGrid ? ' previewer--grid' : ''}`}>
       {/*
         react-pdf tears the PDF worker transport down when this subtree unmounts (e.g. a route change
         or the browser Back button). A `Page` whose `loadPage` effect fires during that teardown calls
@@ -89,6 +106,7 @@ export function PdfPreviewer({
       >
         <Document
           file={file}
+          className={isGrid ? 'previewer__grid' : undefined}
           onLoadSuccess={(doc: { numPages: number }) => {
             setNumPages(doc.numPages);
             onNumPages(doc.numPages);
@@ -101,12 +119,24 @@ export function PdfPreviewer({
         >
           {Array.from({ length: numPages }, (_, i) => {
             const pageNumber = i + 1;
-            const chapter = chapterForPage(groups, pageNumber);
             const selected = selectedPages?.has(pageNumber) ?? false;
-            const dragPages = (): number[] =>
-              selected && selectedPages && selectedPages.size > 0
-                ? [...selectedPages].sort((a, b) => a - b)
-                : [pageNumber];
+
+            if (isGrid) {
+              return (
+                <PageThumb
+                  key={i}
+                  pageNumber={pageNumber}
+                  selected={selected}
+                  bindable={bindable}
+                  canDelete={numPages > 1}
+                  dragPages={() => dragPagesFor(pageNumber, selected)}
+                  onToggleSelect={onToggleSelect}
+                  onDeletePage={onDeletePage}
+                />
+              );
+            }
+
+            const chapter = chapterForPage(groups, pageNumber);
             return (
               <div key={i} className="page-wrap">
                 <div className="page-wrap__num">
@@ -116,8 +146,10 @@ export function PdfPreviewer({
                         type="checkbox"
                         className="accent-brand"
                         checked={selected}
-                        onChange={() => {
-                          onToggleSelect?.(pageNumber);
+                        onChange={(event) => {
+                          onToggleSelect?.(pageNumber, {
+                            range: (event.nativeEvent as MouseEvent).shiftKey,
+                          });
                         }}
                       />
                       Page {pageNumber}
@@ -133,7 +165,7 @@ export function PdfPreviewer({
                       draggable
                       data-page={pageNumber}
                       onDragStart={(event) => {
-                        setDraggedPages(event, dragPages());
+                        setDraggedPages(event, dragPagesFor(pageNumber, selected));
                       }}
                       className="ml-auto inline-flex cursor-grab items-center gap-1 rounded-md border border-line-strong bg-surface px-2 py-1 text-[12px] font-medium text-ink-2 active:cursor-grabbing hover:bg-surface-2 [&>svg]:size-3.5"
                       title="Drag onto a leaf's Question / Answer / Solution slot"
@@ -190,6 +222,88 @@ export function PdfPreviewer({
           })}
         </Document>
       </ErrorBoundary>
+    </div>
+  );
+}
+
+type PageThumbProps = {
+  pageNumber: number;
+  selected: boolean;
+  bindable: boolean;
+  canDelete: boolean;
+  dragPages: () => number[];
+  onToggleSelect?: ((pageNumber: number, options?: SelectOptions) => void) | undefined;
+  onDeletePage: (pageNumber: number) => void;
+};
+
+/**
+ * One compact page in the grid overview: click to (de)select, shift-click to extend a range, drag to
+ * bind onto a leaf. Dragging a selected page carries the whole selection, so an operator sweeps a
+ * batch of pages and drops them in one gesture. No cut overlay — the grid is for picking, not cutting.
+ */
+function PageThumb({
+  pageNumber,
+  selected,
+  bindable,
+  canDelete,
+  dragPages,
+  onToggleSelect,
+  onDeletePage,
+}: PageThumbProps): JSX.Element {
+  const select = (event: { shiftKey: boolean }): void => {
+    onToggleSelect?.(pageNumber, { range: event.shiftKey });
+  };
+
+  return (
+    <div
+      className={`page-thumb${selected ? ' is-selected' : ''}`}
+      draggable={bindable}
+      onDragStart={(event: DragEvent) => {
+        setDraggedPages(event, dragPages());
+      }}
+      onClick={bindable ? select : undefined}
+      onKeyDown={
+        bindable
+          ? (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                select(event);
+              }
+            }
+          : undefined
+      }
+      role={bindable ? 'button' : undefined}
+      tabIndex={bindable ? 0 : undefined}
+      aria-pressed={bindable ? selected : undefined}
+      title={bindable ? 'Click to select · Shift-click to select a range · Drag to bind' : undefined}
+    >
+      <div className="page-thumb__canvas">
+        <Page
+          pageNumber={pageNumber}
+          width={GRID_THUMB_WIDTH}
+          renderAnnotationLayer={false}
+          renderTextLayer={false}
+          loading={<div className="page-thumb__placeholder">…</div>}
+        />
+        {selected ? (
+          <span className="page-thumb__check" aria-hidden>
+            <IconCheck />
+          </span>
+        ) : null}
+      </div>
+      <div className="page-thumb__bar">
+        <span className="page-thumb__num">Pg {pageNumber}</span>
+        <IconButton
+          icon={<IconTrash />}
+          label={`Delete page ${String(pageNumber)}`}
+          size="sm"
+          disabled={!canDelete}
+          onClick={(event) => {
+            event.stopPropagation();
+            onDeletePage(pageNumber);
+          }}
+        />
+      </div>
     </div>
   );
 }

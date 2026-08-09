@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { SourcePathSchema } from '../common/source-path.js';
 import { PaginationQuerySchema } from '../common/pagination.js';
-import { ChapterKindSchema, QuestionTypeSchema } from '../common/vocabulary.js';
+import { ChapterKindSchema, QuestionTypeSchema, SourceSchema } from '../common/vocabulary.js';
 
 /** Lifecycle of a section PDF as it moves through the pipeline. The web dropdown filters on this. */
 export const DocumentStatusSchema = z.enum([
@@ -65,6 +65,8 @@ export const DocumentSchema = z.object({
   kind: ChapterKindSchema,
   sectionName: z.string().nullable(),
   questionType: QuestionTypeSchema.nullable(),
+  /** Where the questions came from: pyq / module / textbook (open string). Null for legacy documents. */
+  source: SourceSchema.nullable(),
   pageRange: PageRangeSchema.nullable(),
   /** Operator-defined topic → question-type map of the question PDF; empty for chapter-only documents. */
   topics: z.array(ChapterTopicSchema),
@@ -85,6 +87,7 @@ export const RegisterDocumentSchema = z.object({
   kind: ChapterKindSchema.default('question'),
   sectionName: z.string().min(1).nullable().optional(),
   questionType: QuestionTypeSchema.nullable().optional(),
+  source: SourceSchema.nullable().optional(),
   pageRange: PageRangeSchema.nullable().optional(),
   topics: z.array(ChapterTopicSchema).optional(),
 });

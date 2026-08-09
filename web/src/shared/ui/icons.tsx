@@ -169,3 +169,24 @@ export function IconHelp(props: IconProps): JSX.Element {
     </svg>
   );
 }
+
+/** Four cells — the compact thumbnail-grid page view. */
+export function IconGrid(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <rect x="14" y="14" width="7" height="7" rx="1" />
+    </svg>
+  );
+}
+
+/** Stacked rows — the tall single-column page list. */
+export function IconList(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+    </svg>
+  );
+}
