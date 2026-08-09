@@ -195,7 +195,7 @@ function buildLatexRefiner(): LatexRefiner {
 function buildDiagramDetector(): DiagramDetector {
   if (env.OPENAI_API_KEY) {
     logger.info(`Detector: OpenAI ${env.DETECTION_MODEL}`);
-    return new OpenAiDiagramDetector(env.OPENAI_API_KEY, env.DETECTION_MODEL);
+    return new OpenAiDiagramDetector(env.OPENAI_API_KEY, env.DETECTION_MODEL, env.DETECTION_MAX_TOKENS);
   }
   logger.info('Detector: unconfigured. Set OPENAI_API_KEY to auto-detect figures.');
   return new UnconfiguredDiagramDetector();

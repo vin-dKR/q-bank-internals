@@ -34,6 +34,12 @@ const EnvSchema = z.object({
   // strong spatial model — gpt-4o gives loose, mis-placed boxes here; gpt-5.4 (the model the upstream
   // image-auto-cropper uses) produces tight boxes. Override only if you have a better spatial model.
   DETECTION_MODEL: z.string().default('gpt-5.4'),
+  // Output-token budget per detection call. gpt-5.4 is a reasoning model, so this cap covers hidden
+  // reasoning AND the JSON reply; a dense page (many questions + a box per option-picture) needs a big
+  // reply, and too small a cap truncates the JSON — which used to surface as a silent "no figures" and
+  // is why detection worked on sparse page 1 but not on denser later pages. Generous by default; the
+  // detector retries at double once before failing loudly. Raise if very dense pages still truncate.
+  DETECTION_MAX_TOKENS: z.coerce.number().int().positive().default(16000),
 
   // BullMQ (Redis) connection for the extraction queue. Absent → in-process queue (dev, no Redis).
   REDIS_URL: z.string().optional(),
