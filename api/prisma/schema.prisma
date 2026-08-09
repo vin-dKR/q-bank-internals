@@ -88,6 +88,8 @@ model Document {
   kind          String          @default("question")
   sectionName   String?
   questionType  String?
+  // Question provenance chosen at cut time: pyq / module / textbook (open string). Null on legacy docs.
+  source        String?
   pageRange     PageRange?
   // Missing on pre-topic documents; Prisma reads an absent composite list as [] (config absent).
   topics        ChapterTopic[]

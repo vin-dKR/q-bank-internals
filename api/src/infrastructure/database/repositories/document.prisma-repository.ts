@@ -21,6 +21,7 @@ type DocumentRow = {
   kind: string;
   sectionName: string | null;
   questionType: string | null;
+  source: string | null;
   pageRange: PageRangeRow | null;
   topics: { name: string; types: TopicTypeRow[] }[];
   status: DocumentStatus;
@@ -66,6 +67,7 @@ function toDocument(row: DocumentRow): Document {
     kind: row.kind as Document['kind'],
     sectionName: row.sectionName,
     questionType: row.questionType,
+    source: row.source,
     pageRange: row.pageRange,
     topics: toContractTopics(row.topics),
     status: row.status,
@@ -133,6 +135,7 @@ export class PrismaDocumentRepository implements DocumentRepository {
         kind: input.kind,
         sectionName: input.sectionName,
         questionType: input.questionType,
+        source: input.source,
         pageRange: input.pageRange,
         topics: toPrismaTopics(input.topics),
       },

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ChapterKindSchema, ExamSchema, ModuleSchema, QuestionTypeSchema } from '../common/vocabulary.js';
+import { ChapterKindSchema, ExamSchema, ModuleSchema, QuestionTypeSchema, SourceSchema } from '../common/vocabulary.js';
 import { DriveFileSchema } from '../drive/drive.schema.js';
 import { ChapterTopicSchema, DocumentSchema } from '../documents/document.schema.js';
 
@@ -27,6 +27,8 @@ export const ChapterUploadMetadataSchema = ChapterPathSchema.extend({
   sectionName: z.string().min(1),
   questionType: QuestionTypeSchema,
   kind: ChapterKindSchema,
+  /** Optional provenance of the chapter's questions: pyq / module / textbook (open string). */
+  source: SourceSchema.optional(),
   /**
    * Optional topic-level structure of a QUESTION part: each topic's predefined question-type blocks
    * with the page spans they occupy in the uploaded PDF. Omitted for the chapter-wise flow (and for

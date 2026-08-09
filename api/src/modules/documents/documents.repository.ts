@@ -18,6 +18,8 @@ export type CreateDocumentInput = {
   kind: ChapterKind;
   sectionName: string | null;
   questionType: QuestionType | null;
+  /** Question provenance (pyq / module / textbook); null when the operator left it blank. */
+  source: string | null;
   pageRange: PageRange | null;
   /** Topic → question-type config of a question PDF; empty when the chapter has no topic structure. */
   topics: ChapterTopic[];

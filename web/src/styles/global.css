@@ -787,6 +787,62 @@
   .page-wrap__placeholder {
     @apply flex h-96 w-[640px] items-center justify-center bg-surface-2 text-ink-2;
   }
+
+  /* Secondary strip under the cut toolbar: view toggle + selection actions for the bindable flow. */
+  .page-tools {
+    @apply flex flex-none flex-wrap items-center gap-2 rounded-lg border border-line bg-surface px-2 py-1.5;
+  }
+  .page-tools__spacer {
+    @apply flex-1;
+  }
+  .page-tools__count {
+    @apply text-[12px] font-medium text-ink-2;
+  }
+  .page-tools .segmented__item {
+    @apply gap-1.5;
+  }
+  .page-tools .segmented__item svg {
+    @apply size-4;
+  }
+
+  /* Compact thumbnail grid — an overview to sweep many pages and drag a batch onto the tree. */
+  .previewer--grid {
+    @apply block w-full items-stretch;
+  }
+  .previewer__grid {
+    @apply grid justify-center gap-3;
+    grid-template-columns: repeat(auto-fill, 152px);
+  }
+  .page-thumb {
+    @apply relative flex w-full cursor-pointer flex-col gap-1 rounded-md border border-line bg-white p-1 shadow-sm transition-colors;
+  }
+  .page-thumb:hover {
+    @apply border-line-strong;
+  }
+  .page-thumb:focus-visible {
+    @apply outline-none ring-2 ring-brand/40;
+  }
+  .page-thumb.is-selected {
+    @apply border-brand ring-2 ring-brand;
+  }
+  .page-thumb__canvas {
+    @apply relative flex justify-center overflow-hidden rounded bg-white;
+  }
+  .page-thumb__placeholder {
+    @apply flex h-40 w-full items-center justify-center bg-surface-2 text-ink-2;
+  }
+  .page-thumb__check {
+    @apply absolute left-1 top-1 inline-flex size-5 items-center justify-center rounded-full bg-brand text-white shadow-sm;
+  }
+  .page-thumb__check svg {
+    @apply size-3.5;
+  }
+  .page-thumb__bar {
+    @apply flex items-center justify-between gap-1 px-0.5 text-[11px] font-medium text-ink-2;
+  }
+  .page-thumb__num {
+    @apply truncate;
+  }
   .chapter-card {
     @apply flex flex-col gap-3 rounded-xl border border-line bg-surface p-3.5 shadow-sm;
   }

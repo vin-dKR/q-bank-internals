@@ -55,6 +55,7 @@ export class IngestionService {
       kind: metadata.kind,
       sectionName: metadata.sectionName,
       questionType: metadata.questionType,
+      source: metadata.source ?? null,
       pageRange: null,
       topics: metadata.topics ?? [],
     });

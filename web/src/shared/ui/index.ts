@@ -33,4 +33,6 @@ export {
   IconHelp,
   IconLayers,
   IconScan,
+  IconGrid,
+  IconList,
 } from './icons.js';

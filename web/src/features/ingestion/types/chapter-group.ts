@@ -2,6 +2,8 @@ import type { SliceTags } from '../lib/build-chapter-pdfs.js';
 
 /** Editable metadata for one chapter before it is validated into a ChapterUploadMetadata. */
 export type ChapterMetadataDraft = {
+  /** Where the questions came from: pyq / module / textbook. Empty until the operator picks one. */
+  source: string;
   exam: string;
   subject: string;
   module: string;
@@ -43,7 +45,7 @@ export type ChapterGroup = {
 };
 
 export function emptyMetadata(): ChapterMetadataDraft {
-  return { exam: '', subject: '', module: '', chapter: '', sectionName: '', questionType: '' };
+  return { source: '', exam: '', subject: '', module: '', chapter: '', sectionName: '', questionType: '' };
 }
 
 /** The chapter (if any) that owns a given page, resolved for the on-page slice overlay. */
