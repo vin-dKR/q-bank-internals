@@ -13,6 +13,8 @@ export { Combobox } from './combobox.js';
 export { ToastProvider, useToast } from './toast.js';
 export { Spinner, LoadingState, Skeleton } from './spinner.js';
 export { EmptyState } from './empty-state.js';
+export { ErrorFallback } from './error-fallback.js';
+export { ErrorBoundary } from './error-boundary.js';
 export {
   IconTrash,
   IconSparkle,

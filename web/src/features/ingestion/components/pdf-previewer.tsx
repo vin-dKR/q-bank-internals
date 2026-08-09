@@ -6,7 +6,7 @@ import 'react-pdf/dist/Page/AnnotationLayer.css';
 // origin, and correctly handled in both dev and build (the `new URL(bare-specifier)` form fails to
 // load in Vite dev with "Failed to fetch dynamically imported module").
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { IconLayers, IconTrash } from '../../../shared/ui/index.js';
+import { ErrorBoundary, ErrorFallback, IconLayers, IconTrash } from '../../../shared/ui/index.js';
 import { setDraggedPages } from '../lib/page-dnd.js';
 import { PdfPageOverlay } from './pdf-page-overlay.js';
 import { PdfReflowOverlay } from './pdf-reflow-overlay.js';
@@ -69,84 +69,127 @@ export function PdfPreviewer({
 
   return (
     <div className="previewer">
-      <Document
-        file={file}
-        onLoadSuccess={(doc: { numPages: number }) => {
-          setNumPages(doc.numPages);
-          onNumPages(doc.numPages);
-        }}
-        onLoadError={(err: Error) => { setError(err.message); }}
-        loading={<p className="muted">Loading PDF…</p>}
-        error={<p className="error">Failed to load the PDF{error ? `: ${error}` : ''}</p>}
+      {/*
+        react-pdf tears the PDF worker transport down when this subtree unmounts (e.g. a route change
+        or the browser Back button). A `Page` whose `loadPage` effect fires during that teardown calls
+        `getPage` on the now-destroyed transport, which throws synchronously and — with no boundary —
+        crashes the whole SPA. Contain it here: keyed on `file`, the boundary self-heals on the next
+        document and the operator sees a recoverable panel instead of a white screen.
+      */}
+      <ErrorBoundary
+        resetKeys={[file]}
+        fallback={(_error, reset) => (
+          <ErrorFallback
+            title="Couldn’t render the PDF preview"
+            body="The preview hit an error while loading. Reload it — your pages and tree are untouched."
+            retryLabel="Reload preview"
+            onRetry={reset}
+          />
+        )}
       >
-        {Array.from({ length: numPages }, (_, i) => {
-          const pageNumber = i + 1;
-          const chapter = chapterForPage(groups, pageNumber);
-          const selected = selectedPages?.has(pageNumber) ?? false;
-          const dragPages = (): number[] =>
-            selected && selectedPages && selectedPages.size > 0 ? [...selectedPages].sort((a, b) => a - b) : [pageNumber];
-          return (
-            <div key={i} className="page-wrap">
-              <div className="page-wrap__num">
-                {bindable ? (
-                  <label className="inline-flex cursor-pointer items-center gap-1.5 text-[13px] text-ink-2">
-                    <input type="checkbox" className="accent-brand" checked={selected} onChange={() => { onToggleSelect?.(pageNumber); }} />
-                    Page {pageNumber}
-                  </label>
-                ) : (
-                  <span className="muted">Page {pageNumber}</span>
-                )}
-                {chapter ? <span className="chip chip--chapter">Chapter {chapter.chapterIndex + 1}</span> : null}
-                {bindable ? (
-                  <span
-                    draggable
-                    data-page={pageNumber}
-                    onDragStart={(event) => { setDraggedPages(event, dragPages()); }}
-                    className="ml-auto inline-flex cursor-grab items-center gap-1 rounded-md border border-line-strong bg-surface px-2 py-1 text-[12px] font-medium text-ink-2 active:cursor-grabbing hover:bg-surface-2 [&>svg]:size-3.5"
-                    title="Drag onto a leaf's Question / Answer / Solution slot"
+        <Document
+          file={file}
+          onLoadSuccess={(doc: { numPages: number }) => {
+            setNumPages(doc.numPages);
+            onNumPages(doc.numPages);
+          }}
+          onLoadError={(err: Error) => {
+            setError(err.message);
+          }}
+          loading={<p className="muted">Loading PDF…</p>}
+          error={<p className="error">Failed to load the PDF{error ? `: ${error}` : ''}</p>}
+        >
+          {Array.from({ length: numPages }, (_, i) => {
+            const pageNumber = i + 1;
+            const chapter = chapterForPage(groups, pageNumber);
+            const selected = selectedPages?.has(pageNumber) ?? false;
+            const dragPages = (): number[] =>
+              selected && selectedPages && selectedPages.size > 0
+                ? [...selectedPages].sort((a, b) => a - b)
+                : [pageNumber];
+            return (
+              <div key={i} className="page-wrap">
+                <div className="page-wrap__num">
+                  {bindable ? (
+                    <label className="inline-flex cursor-pointer items-center gap-1.5 text-[13px] text-ink-2">
+                      <input
+                        type="checkbox"
+                        className="accent-brand"
+                        checked={selected}
+                        onChange={() => {
+                          onToggleSelect?.(pageNumber);
+                        }}
+                      />
+                      Page {pageNumber}
+                    </label>
+                  ) : (
+                    <span className="muted">Page {pageNumber}</span>
+                  )}
+                  {chapter ? (
+                    <span className="chip chip--chapter">Chapter {chapter.chapterIndex + 1}</span>
+                  ) : null}
+                  {bindable ? (
+                    <span
+                      draggable
+                      data-page={pageNumber}
+                      onDragStart={(event) => {
+                        setDraggedPages(event, dragPages());
+                      }}
+                      className="ml-auto inline-flex cursor-grab items-center gap-1 rounded-md border border-line-strong bg-surface px-2 py-1 text-[12px] font-medium text-ink-2 active:cursor-grabbing hover:bg-surface-2 [&>svg]:size-3.5"
+                      title="Drag onto a leaf's Question / Answer / Solution slot"
+                    >
+                      <IconLayers /> Drag
+                      {selected && selectedPages && selectedPages.size > 1
+                        ? ` ${String(selectedPages.size)}`
+                        : ''}
+                    </span>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--xs page-wrap__delete"
+                    title="Delete this page (Revert restores it)"
+                    disabled={numPages <= 1}
+                    onClick={() => {
+                      onDeletePage(pageNumber);
+                    }}
                   >
-                    <IconLayers /> Drag{selected && selectedPages && selectedPages.size > 1 ? ` ${String(selectedPages.size)}` : ''}
-                  </span>
-                ) : null}
-                <button
-                  type="button"
-                  className="btn btn--ghost btn--xs page-wrap__delete"
-                  title="Delete this page (Revert restores it)"
-                  disabled={numPages <= 1}
-                  onClick={() => { onDeletePage(pageNumber); }}
+                    <IconTrash /> Delete page
+                  </button>
+                </div>
+                <div
+                  className={`page-wrap__canvas ${selected ? 'ring-2 ring-brand rounded-lg' : ''}`}
                 >
-                  <IconTrash /> Delete page
-                </button>
-              </div>
-              <div className={`page-wrap__canvas ${selected ? 'ring-2 ring-brand rounded-lg' : ''}`}>
-                <Page
-                  pageNumber={pageNumber}
-                  width={pageWidth}
-                  renderAnnotationLayer={false}
-                  renderTextLayer={false}
-                  loading={<div className="page-wrap__placeholder">Loading page {pageNumber}…</div>}
-                />
-                {mode === 'reflow' ? (
-                  <PdfReflowOverlay pageNumber={pageNumber} controller={reflow} />
-                ) : (
-                  <PdfPageOverlay
+                  <Page
                     pageNumber={pageNumber}
-                    mode={mode}
-                    order={order}
-                    controller={controller}
-                    chapter={chapter}
-                    pageKinds={pageKinds}
-                    hoveredSliceId={hoveredSliceId}
-                    onHoverSlice={onHoverSlice}
-                    onToggleTag={onToggleTag}
-                    taggable={taggable}
+                    width={pageWidth}
+                    renderAnnotationLayer={false}
+                    renderTextLayer={false}
+                    loading={
+                      <div className="page-wrap__placeholder">Loading page {pageNumber}…</div>
+                    }
                   />
-                )}
+                  {mode === 'reflow' ? (
+                    <PdfReflowOverlay pageNumber={pageNumber} controller={reflow} />
+                  ) : (
+                    <PdfPageOverlay
+                      pageNumber={pageNumber}
+                      mode={mode}
+                      order={order}
+                      controller={controller}
+                      chapter={chapter}
+                      pageKinds={pageKinds}
+                      hoveredSliceId={hoveredSliceId}
+                      onHoverSlice={onHoverSlice}
+                      onToggleTag={onToggleTag}
+                      taggable={taggable}
+                    />
+                  )}
+                </div>
               </div>
-            </div>
-          );
-        })}
-      </Document>
+            );
+          })}
+        </Document>
+      </ErrorBoundary>
     </div>
   );
 }
