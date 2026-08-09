@@ -2,6 +2,7 @@
 export { PdfUploader } from './components/pdf-uploader.js';
 export { PdfPreviewer, type PreviewView } from './components/pdf-previewer.js';
 export { PdfToolbar } from './components/pdf-toolbar.js';
+export { PdfPagesToolbar } from './components/pdf-pages-toolbar.js';
 export { PdfModeSelector } from './components/pdf-mode-selector.js';
 export { ReflowBlocksPanel } from './components/reflow-blocks-panel.js';
 export { ChapterGroupingPanel } from './components/chapter-grouping-panel.js';

@@ -9,6 +9,7 @@ import {
   ToolbarGroup,
   ToolbarSpacer,
 } from '../../../shared/ui/index.js';
+import { ENTER_KEY, MOD_KEY, combo } from '../../../shared/lib/platform.js';
 import type { CutMode, ReadingOrder } from '../types/cut-mode.js';
 
 type ModeOption = {
@@ -114,10 +115,10 @@ export function PdfModeSelector({
         )}
         <button
           type="button"
-          className="btn btn--xs"
+          className="btn btn--primary btn--xs"
           disabled={lineCount === 0 || applying}
           onClick={onApply}
-          title={isReflow ? 'Stack each block onto one page' : 'Split the pages along the current lines into a new PDF'}
+          title={isReflow ? `Stack each block onto one page (${combo(MOD_KEY, ENTER_KEY)})` : `Split the pages along the current lines into a new PDF (${combo(MOD_KEY, ENTER_KEY)})`}
         >
           {applying ? 'Applying…' : applyLabel}
         </button>

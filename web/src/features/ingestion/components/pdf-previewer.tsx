@@ -138,7 +138,7 @@ export function PdfPreviewer({
 
             const chapter = chapterForPage(groups, pageNumber);
             return (
-              <div key={i} className="page-wrap">
+              <div key={i} id={`cut-page-${String(pageNumber)}`} className="page-wrap">
                 <div className="page-wrap__num">
                   {bindable ? (
                     <label className="inline-flex cursor-pointer items-center gap-1.5 text-[13px] text-ink-2">
@@ -256,6 +256,7 @@ function PageThumb({
 
   return (
     <div
+      id={`cut-page-${String(pageNumber)}`}
       className={`page-thumb${selected ? ' is-selected' : ''}`}
       draggable={bindable}
       onDragStart={(event: DragEvent) => {

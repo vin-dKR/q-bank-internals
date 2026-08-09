@@ -535,8 +535,40 @@
     @apply relative flex-none;
   }
   .tbar__help-pop {
-    @apply absolute right-0 z-50 w-64 rounded-lg border border-line bg-surface p-3 text-xs leading-relaxed text-ink-2 shadow-lg;
+    @apply absolute right-0 z-50 w-72 rounded-lg border border-line bg-surface p-3 text-xs leading-relaxed text-ink-2 shadow-lg;
     top: calc(100% + 4px);
+  }
+  /* Go-to-page jump field: an icon + a slim numeric input, sized to a page number. */
+  .tbar__page {
+    @apply inline-flex flex-none items-center gap-1.5 rounded-lg border border-line-strong bg-surface px-2 text-ink-3;
+  }
+  .tbar__page svg {
+    @apply size-4 flex-none;
+  }
+  .tbar__page input {
+    @apply w-16 border-0 bg-transparent px-0 py-1.5 text-[13px] text-ink outline-none placeholder:text-ink-3;
+  }
+
+  /* Shortcut cheat-sheet inside the toolbar help popover. */
+  .shortcuts__title {
+    @apply m-0 mb-2 text-[11px] font-semibold uppercase tracking-wide text-ink-3;
+  }
+  .shortcuts__list {
+    @apply m-0 flex list-none flex-col gap-1.5 p-0;
+  }
+  .shortcuts__row {
+    @apply flex items-center gap-2;
+  }
+  .shortcuts__keys {
+    @apply inline-flex flex-none flex-wrap items-center gap-1;
+    min-width: 72px;
+  }
+  .shortcuts__row kbd {
+    @apply inline-flex min-w-5 items-center justify-center rounded border border-line-strong bg-surface-2 px-1.5 py-0.5 text-[11px] font-semibold text-ink-2;
+    font-family: inherit;
+  }
+  .shortcuts__what {
+    @apply text-[12px] text-ink-2;
   }
 
   /* ==========================================================================
@@ -755,6 +787,23 @@
     @apply w-auto py-1.5;
     min-width: 160px;
   }
+  /* Session + file header, now living at the top of the right panel (above the chapter) instead of a
+     full-width strip — so the PDF viewport owns the full height on the left. */
+  .panel-head {
+    @apply flex flex-col gap-2 rounded-xl border border-line bg-surface p-2.5 shadow-sm;
+  }
+  .panel-head .session-bar--compact {
+    @apply flex-wrap gap-x-2 gap-y-1.5;
+  }
+  .panel-file {
+    @apply flex items-center justify-between gap-2 border-t border-line pt-2;
+  }
+  .panel-file__name {
+    @apply min-w-0 flex-1 truncate text-[13px] font-semibold text-ink;
+  }
+  .panel-file__meta {
+    @apply flex flex-none items-center gap-2 whitespace-nowrap text-xs text-ink-2;
+  }
   .workspace .cutter-layout {
     @apply min-h-0 flex-1 items-stretch;
     height: auto;
@@ -788,20 +837,8 @@
     @apply flex h-96 w-[640px] items-center justify-center bg-surface-2 text-ink-2;
   }
 
-  /* Secondary strip under the cut toolbar: view toggle + selection actions for the bindable flow. */
-  .page-tools {
-    @apply flex flex-none flex-wrap items-center gap-2 rounded-lg border border-line bg-surface px-2 py-1.5;
-  }
-  .page-tools__spacer {
-    @apply flex-1;
-  }
-  .page-tools__count {
-    @apply text-[12px] font-medium text-ink-2;
-  }
-  .page-tools .segmented__item {
-    @apply gap-1.5;
-  }
-  .page-tools .segmented__item svg {
+  /* View-toggle segmented control inside a toolbar: keep the icon a hair smaller than the label. */
+  .tbar .segmented__item svg {
     @apply size-4;
   }
 
