@@ -25,6 +25,7 @@ export type AssembledUpload = {
 };
 
 type Leaf = { node: StructureNode; ancestors: StructureNode[] };
+type Span = { leaf: Leaf; from: number; to: number };
 
 /** The leaf's section identity: its ancestor labels + own label, path-joined. */
 function pathLabel({ node, ancestors }: Leaf): string {
@@ -38,9 +39,9 @@ function pathLabel({ node, ancestors }: Leaf): string {
 async function assembleKind(
   orderedLeaves: Leaf[],
   kind: ChapterKind,
-): Promise<{ bytes: Uint8Array; spans: { leaf: Leaf; from: number; to: number }[] } | null> {
+): Promise<{ bytes: Uint8Array; spans: Span[] } | null> {
   const out = await PDFDocument.create();
-  const spans: { leaf: Leaf; from: number; to: number }[] = [];
+  const spans: Span[] = [];
   for (const leaf of orderedLeaves) {
     const artifact = leaf.node.bindings?.[kind];
     if (!artifact) continue;
@@ -88,16 +89,27 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
   const answerAsm = await assembleKind(questionLeaves, 'answer');
   const solutionAsm = await assembleKind(questionLeaves, 'solution');
 
+  // Each leaf's span in the answer / solution PDF, so extraction reads its answers from exactly its
+  // own pages and binds them to its questions (no section-name-and-number guessing).
+  const answerByLeaf = new Map<string, Span>(answerAsm?.spans.map((s) => [s.leaf.node.id, s]) ?? []);
+  const solutionByLeaf = new Map<string, Span>(solutionAsm?.spans.map((s) => [s.leaf.node.id, s]) ?? []);
+
   const topics: ChapterTopic[] = questionAsm
-    ? questionAsm.spans.map(({ leaf, from, to }) => ({
-        name: pathLabel(leaf) || 'Section',
-        types: [
-          {
-            questionType: resolveQuestionType(leaf.node, leaf.ancestors).trim(),
-            pageRange: { from, to },
-          },
-        ],
-      }))
+    ? questionAsm.spans.map(({ leaf, from, to }) => {
+        const a = answerByLeaf.get(leaf.node.id);
+        const s = solutionByLeaf.get(leaf.node.id);
+        return {
+          name: pathLabel(leaf) || 'Section',
+          types: [
+            {
+              questionType: resolveQuestionType(leaf.node, leaf.ancestors).trim(),
+              pageRange: { from, to },
+              ...(a ? { answerPageRange: { from: a.from, to: a.to } } : {}),
+              ...(s ? { solutionPageRange: { from: s.from, to: s.to } } : {}),
+            },
+          ],
+        };
+      })
     : [];
 
   const base: Base = {

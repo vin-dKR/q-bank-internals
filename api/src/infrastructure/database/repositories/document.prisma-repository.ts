@@ -1,6 +1,14 @@
 import type { PrismaClient } from '@prisma/client';
-import type { Document, DocumentListQuery, DocumentStatus } from '@ingest/contracts';
+import type { ChapterTopic, Document, DocumentListQuery, DocumentStatus } from '@ingest/contracts';
 import type { CreateDocumentInput, DocumentRepository } from '../../../modules/documents/index.js';
+
+type PageRangeRow = { from: number; to: number };
+type TopicTypeRow = {
+  questionType: string;
+  pageRange: PageRangeRow;
+  answerPageRange?: PageRangeRow | null;
+  solutionPageRange?: PageRangeRow | null;
+};
 
 // Prisma's row shape for a Document, narrowed to what we map. Kept local so the mapper is the one
 // place row → DTO conversion happens (§6.1: the boundary shape lives in @ingest/contracts).
@@ -13,14 +21,40 @@ type DocumentRow = {
   kind: string;
   sectionName: string | null;
   questionType: string | null;
-  pageRange: { from: number; to: number } | null;
-  topics: { name: string; types: { questionType: string; pageRange: { from: number; to: number } }[] }[];
+  pageRange: PageRangeRow | null;
+  topics: { name: string; types: TopicTypeRow[] }[];
   status: DocumentStatus;
   questionCount: number;
   extractedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 };
+
+/** Row → contract topics: drop the null of an absent optional range back to an omitted key. */
+function toContractTopics(rows: { name: string; types: TopicTypeRow[] }[]): ChapterTopic[] {
+  return rows.map((topic) => ({
+    name: topic.name,
+    types: topic.types.map((block) => ({
+      questionType: block.questionType,
+      pageRange: block.pageRange,
+      ...(block.answerPageRange ? { answerPageRange: block.answerPageRange } : {}),
+      ...(block.solutionPageRange ? { solutionPageRange: block.solutionPageRange } : {}),
+    })),
+  }));
+}
+
+/** Contract → Prisma topics: an absent optional range is written as null (Prisma wants null, not undefined). */
+function toPrismaTopics(topics: ChapterTopic[]): { name: string; types: TopicTypeRow[] }[] {
+  return topics.map((topic) => ({
+    name: topic.name,
+    types: topic.types.map((block) => ({
+      questionType: block.questionType,
+      pageRange: block.pageRange,
+      answerPageRange: block.answerPageRange ?? null,
+      solutionPageRange: block.solutionPageRange ?? null,
+    })),
+  }));
+}
 
 function toDocument(row: DocumentRow): Document {
   return {
@@ -33,7 +67,7 @@ function toDocument(row: DocumentRow): Document {
     sectionName: row.sectionName,
     questionType: row.questionType,
     pageRange: row.pageRange,
-    topics: row.topics,
+    topics: toContractTopics(row.topics),
     status: row.status,
     questionCount: row.questionCount,
     extractedAt: row.extractedAt ? row.extractedAt.toISOString() : null,
@@ -100,7 +134,7 @@ export class PrismaDocumentRepository implements DocumentRepository {
         sectionName: input.sectionName,
         questionType: input.questionType,
         pageRange: input.pageRange,
-        topics: input.topics,
+        topics: toPrismaTopics(input.topics),
       },
     });
     return toDocument(row);
