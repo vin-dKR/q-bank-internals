@@ -24,7 +24,7 @@ import {
 } from '../../features/ingestion/index.js';
 import { SessionBar } from '../../features/sessions/index.js';
 import { useCurrentSession } from '../../shared/lib/current-session.js';
-import { PageHeader, Spinner } from '../../shared/ui/index.js';
+import { PageHeader, Spinner, useToast } from '../../shared/ui/index.js';
 
 const DEFAULT_WIDTH = 560;
 const MIN_WIDTH = 320;
@@ -65,6 +65,7 @@ export function TreeIngestPage(): JSX.Element {
   const upload = useUploadChapter();
   const tree = useStructureTree();
   const vocabulary = useChapterVocabulary();
+  const { success, error: toastError } = useToast();
   const { undo, redo } = splitPoints;
 
   const isReflow = cutMode === 'reflow';
@@ -169,6 +170,7 @@ export function TreeIngestPage(): JSX.Element {
       ...(assembled.solution ? [{ kind: 'solution' as const, bytes: assembled.solution }] : []),
     ];
     const lines: string[] = [];
+    let failed = false;
     for (const part of parts) {
       const metadata: ChapterUploadMetadata = {
         ...assembled.base,
@@ -180,13 +182,20 @@ export function TreeIngestPage(): JSX.Element {
         const result = await upload.mutateAsync({ pdfBytes: part.bytes, metadata });
         setDidUpload(true);
         lines.push(`${part.kind} → ${result.document.status}`);
-      } catch (error) {
-        lines.push(`${part.kind} failed: ${errorMessage(error)}`);
+      } catch (err) {
+        // Storage is Drive-only: any failure (Drive unreachable, quota, network) surfaces as a toast.
+        failed = true;
+        const message = errorMessage(err);
+        lines.push(`${part.kind} failed: ${message}`);
+        toastError(`Couldn’t upload the ${part.kind} PDF`, message);
       }
       setResults([...lines]);
     }
     for (const problem of assembled.problems) lines.push(problem);
     setResults([...lines]);
+    if (!failed) {
+      success('Uploaded to the session', `${String(parts.length)} file${parts.length === 1 ? '' : 's'} filed to Drive.`);
+    }
     setUploading(false);
   };
 
