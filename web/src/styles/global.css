@@ -867,12 +867,37 @@
     grid-template-columns: minmax(0, 1fr) 460px;
   }
   .verify__canvas {
-    @apply sticky flex flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-sm;
+    @apply sticky flex flex-row overflow-hidden rounded-xl border border-line bg-surface shadow-sm;
     top: 16px;
     height: calc(100vh - 32px);
   }
   .verify__stage {
-    @apply flex min-h-0 flex-1 p-3;
+    @apply flex min-h-0 min-w-0 flex-1 p-3;
+  }
+  /* Vertical tool rail on the left of the page, so the page itself owns the full frame height. */
+  .verify__rail {
+    @apply flex flex-none flex-col items-center gap-2 self-stretch overflow-y-auto border-r border-line bg-surface px-1.5 py-2;
+    width: 52px;
+  }
+  .verify__rail-group {
+    @apply flex flex-col items-center gap-1;
+  }
+  .verify__rail-divider {
+    @apply my-0.5 h-px w-7 flex-none bg-line;
+  }
+  .verify__rail-count {
+    @apply text-center text-[11px] leading-tight text-ink-2;
+    font-variant-numeric: tabular-nums;
+  }
+  .verify__rail-spacer {
+    @apply min-h-2 flex-1;
+  }
+  /* The session picker + publish, pinned to the top of the right panel (was the top bar). */
+  .verify__session {
+    @apply sticky top-0 z-10 flex flex-none flex-col gap-2 rounded-xl border border-line bg-surface px-3 py-2 shadow-sm;
+  }
+  .verify__session-row {
+    @apply flex items-center gap-2;
   }
   .verify__panel {
     @apply flex min-w-0 flex-col gap-3.5;

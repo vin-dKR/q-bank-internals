@@ -5,6 +5,7 @@ import type {
   DetectedFiguresBatch,
   Question,
   QuestionBatchUpdate,
+  ReExtractedQuestion,
   UpdateQuestion,
 } from '@ingest/contracts';
 import {
@@ -13,6 +14,7 @@ import {
   DetectedFiguresSchema,
   PublishResultSchema,
   QuestionSchema,
+  ReExtractedQuestionSchema,
   RefinedLatexSchema,
 } from '@ingest/contracts';
 import { request } from '../../../shared/api/http-client.js';
@@ -76,6 +78,18 @@ export const questionsApi = {
       schema: RefinedLatexSchema,
     });
     return result.text;
+  },
+
+  /**
+   * AI "read the page again": re-extract one question's fields (stem, options, answer, explanation)
+   * straight from its source page image — the companion to {@link refine}, which only cleans text.
+   */
+  reExtract: (documentId: string, questionId: string): Promise<ReExtractedQuestion> => {
+    return request('/questions/re-extract', {
+      method: 'POST',
+      body: { documentId, questionId },
+      schema: ReExtractedQuestionSchema,
+    });
   },
 
   /** Upload one cropped image under `name`; returns the public URL to save on the question. */

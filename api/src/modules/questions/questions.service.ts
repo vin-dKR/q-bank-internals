@@ -5,6 +5,7 @@ import type {
   DetectedFiguresPage,
   Question,
   QuestionBatchUpdate,
+  ReExtractedQuestion,
   UpdateQuestion,
 } from '@ingest/contracts';
 import { mapWithConcurrency } from '../../shared/async/map-with-concurrency.js';
@@ -17,6 +18,7 @@ import { matchFiguresToQuestions } from './figure-matcher.js';
 import type { ImageStore } from './image-store.js';
 import type { LatexRefiner } from './latex-refiner.js';
 import type { PageRenderer } from './page-renderer.js';
+import type { QuestionReExtractor } from './question-reextractor.js';
 import type { QuestionRepository } from './questions.repository.js';
 
 /**
@@ -39,6 +41,7 @@ export class QuestionsService {
     private readonly usage: UsageService,
     private readonly detector: DiagramDetector,
     private readonly pages: PageRenderer,
+    private readonly reExtractor: QuestionReExtractor,
   ) {}
 
   /** The questions extracted from a single document, in PDF reading order. */
@@ -142,6 +145,32 @@ export class QuestionsService {
       'figure detection matched to questions',
     );
     return { imageWidth: width, imageHeight: height, figures };
+  }
+
+  /**
+   * Re-read one already-extracted question's source page and return its fields afresh (stem,
+   * options, answer, explanation) — the verify screen's "read the page again" action. The question
+   * is resolved from its document (which also gives the page to render); answer/explanation are
+   * best-effort, since a question paper rarely prints them.
+   */
+  async reExtractQuestion(documentId: string, questionId: string): Promise<ReExtractedQuestion> {
+    const questions = await this.questions.findByDocument(documentId);
+    const question = questions.find((candidate) => candidate.id === questionId);
+    if (!question) throw errors.questionNotFound(questionId);
+    const png = await this.pages.renderPage(documentId, question.sourceRegion.page);
+    const { stem, options, answer, explanation, usage } = await this.reExtractor.reExtract({
+      png,
+      questionNumber: question.questionNumber,
+      stemHint: question.stem,
+      questionType: question.questionType,
+    });
+    try {
+      await this.usage.recordUsage({ source: 'reextract', documentId, ...usage });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn({ err: message }, 'Failed to record question re-extract token usage');
+    }
+    return { stem, options, answer, explanation };
   }
 
   /** One-click "Fix LaTeX": wrap the math in `\(...\)`. Empty text is returned unchanged. */

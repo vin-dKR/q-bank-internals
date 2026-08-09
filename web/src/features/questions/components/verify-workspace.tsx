@@ -1,4 +1,4 @@
-import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type JSX, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { DetectedFigure, Question } from '@ingest/contracts';
 import { DETECT_FIGURES_MAX_PAGES } from '@ingest/contracts';
@@ -22,15 +22,12 @@ import {
   IconLayers,
   IconRedo,
   IconSparkle,
+  IconTrash,
   IconUndo,
   IconX,
   LoadingState,
   Spinner,
-  Toolbar,
-  ToolbarDivider,
-  ToolbarGroup,
   ToolbarHelp,
-  ToolbarSpacer,
 } from '../../../shared/ui/index.js';
 import { type CardBox, type CardDrawTarget, EditableQuestionCard } from './editable-question-card.js';
 
@@ -166,9 +163,12 @@ function CropThumb({
 export function VerifyWorkspace({
   documentId,
   autoRun = false,
+  sessionBar = null,
 }: {
   documentId: string;
   autoRun?: boolean;
+  /** The unit picker + publish controls, rendered pinned to the top of the right panel. */
+  sessionBar?: ReactNode;
 }): JSX.Element {
   const questions = useQuestions(documentId);
   const pageCount = usePageCount(documentId);
@@ -841,67 +841,66 @@ export function VerifyWorkspace({
   return (
     <div className="verify">
       <div className="verify__canvas">
-        <Toolbar ariaLabel="Source page tools">
-          <ToolbarGroup>
+        <div className="verify__rail" role="toolbar" aria-label="Source page tools">
+          <div className="verify__rail-group">
             <IconButton
               icon={<IconChevronLeft />}
               label="Previous page"
               disabled={page <= 1}
               onClick={() => { goToPage(page - 1); }}
             />
-            <span className="tbar__count">Page {page} / {totalPages}</span>
+            <span className="verify__rail-count">
+              {page}<br />/ {totalPages}
+            </span>
             <IconButton
               icon={<IconChevronRight />}
               label="Next page"
               disabled={page >= totalPages}
               onClick={() => { goToPage(page + 1); }}
             />
-          </ToolbarGroup>
+          </div>
 
-          <ToolbarDivider />
+          <span className="verify__rail-divider" aria-hidden="true" />
 
-          <ToolbarGroup>
+          <div className="verify__rail-group">
             <IconButton icon={<IconUndo />} label="Undo" disabled={past.current.length === 0} onClick={undo} />
             <IconButton icon={<IconRedo />} label="Redo" disabled={future.current.length === 0} onClick={redo} />
-            <button
-              type="button"
-              className="btn btn--ghost btn--xs"
-              title="Remove every box on this page (saved crops stay attached)"
+            <IconButton
+              icon={<IconTrash />}
+              label="Remove every box on this page (saved crops stay attached)"
               disabled={boxes.length === 0}
               onClick={() => { commit(() => []); }}
-            >
-              Clear
-            </button>
-          </ToolbarGroup>
+            />
+          </div>
 
-          <ToolbarSpacer />
+          <span className="verify__rail-divider" aria-hidden="true" />
 
-          <ToolbarGroup>
-            <Button
-              size="xs"
+          <div className="verify__rail-group">
+            <IconButton
+              icon={aiBusy ? <Spinner /> : <IconSparkle />}
+              label="Auto-detect figures on this page"
               disabled={aiBusy || allProgress !== null || !size}
               onClick={() => { void detectCurrentPage(); }}
-            >
-              {aiBusy ? <><Spinner /> Detecting…</> : <><IconSparkle /> Auto-detect figures</>}
-            </Button>
-            <Button
-              size="xs"
-              variant="ghost"
+            />
+            <IconButton
+              icon={allProgress ? <Spinner /> : <IconLayers />}
+              label="Detect figures across all pages"
               disabled={aiBusy || allProgress !== null}
               onClick={() => { void detectAllPages(); }}
-            >
-              {allProgress ? <><Spinner /> Working…</> : <><IconLayers /> Detect all pages</>}
-            </Button>
-            <ToolbarHelp>
-              <b>Add region</b> on a question, then draw — the crop uploads and attaches by itself.
-              <b> Drag</b> a box or its <b>handles</b> to adjust; a saved (green) box re-saves on
-              release. <b>Right-click</b> removes a box — a saved box&rsquo;s image is detached too.
-              <b> Auto-detect</b> only marks AI suggestions; nothing saves until you Confirm.
-              <b> Detect all pages</b> detects and attaches figures across the whole document in one
-              run, skipping targets that already have an image — review the cards afterwards.
-            </ToolbarHelp>
-          </ToolbarGroup>
-        </Toolbar>
+            />
+          </div>
+
+          <span className="verify__rail-spacer" />
+
+          <ToolbarHelp>
+            <b>Add region</b> on a question, then draw — the crop uploads and attaches by itself.
+            <b> Drag</b> a box or its <b>handles</b> to adjust; a saved (green) box re-saves on
+            release. <b>Right-click</b> removes a box — a saved box&rsquo;s image is detached too.
+            <b> Auto-detect</b> only marks AI suggestions; nothing saves until you Confirm.
+            <b> Detect all pages</b> detects and attaches figures across the whole document in one
+            run, skipping targets that already have an image — review the cards afterwards.
+          </ToolbarHelp>
+        </div>
 
         <div className="verify__stage">
           <CropCanvas
@@ -920,21 +919,25 @@ export function VerifyWorkspace({
       </div>
 
       <div className="verify__panel">
-        <div className="sticky top-0 z-10 flex flex-none items-center justify-between gap-2 rounded-xl border border-line bg-surface px-3 py-2 shadow-sm">
-          <span className="text-sm text-ink-2">
-            {drafts.dirtyIds.size > 0
-              ? `${String(drafts.dirtyIds.size)} question(s) with unsaved edits`
-              : 'All edits saved'}
-          </span>
-          <Button
-            size="xs"
-            disabled={drafts.dirtyIds.size === 0 || drafts.isSaving}
-            onClick={() => { void drafts.save([...drafts.dirtyIds]); }}
-          >
-            {drafts.isSaving
-              ? <><Spinner /> Saving…</>
-              : `Update all${drafts.dirtyIds.size > 0 ? ` (${String(drafts.dirtyIds.size)})` : ''}`}
-          </Button>
+        <div className="verify__session">
+          {sessionBar ? <div className="verify__session-row">{sessionBar}</div> : null}
+          <div className="verify__session-row">
+            <span className="text-sm text-ink-2">
+              {drafts.dirtyIds.size > 0
+                ? `${String(drafts.dirtyIds.size)} question(s) with unsaved edits`
+                : 'All edits saved'}
+            </span>
+            <Button
+              size="xs"
+              className="ml-auto flex-none"
+              disabled={drafts.dirtyIds.size === 0 || drafts.isSaving}
+              onClick={() => { void drafts.save([...drafts.dirtyIds]); }}
+            >
+              {drafts.isSaving
+                ? <><Spinner /> Saving…</>
+                : `Update all${drafts.dirtyIds.size > 0 ? ` (${String(drafts.dirtyIds.size)})` : ''}`}
+            </Button>
+          </div>
         </div>
 
         {aiError ? <p className="error">{aiError}</p> : null}

@@ -4,6 +4,7 @@ import {
   DetectFiguresBatchRequestSchema,
   DetectFiguresRequestSchema,
   QuestionListQuerySchema,
+  ReExtractQuestionSchema,
   RefineLatexSchema,
   UpdateQuestionSchema,
 } from '@ingest/contracts';
@@ -20,6 +21,7 @@ export function createQuestionsController(service: QuestionsService): {
   batchUpdate: RequestHandler;
   uploadImage: RequestHandler;
   refine: RequestHandler;
+  reExtract: RequestHandler;
   detectFigures: RequestHandler;
   detectFiguresBatch: RequestHandler;
 } {
@@ -42,6 +44,11 @@ export function createQuestionsController(service: QuestionsService): {
     refine: asyncHandler(async (req, res) => {
       const { text } = parseOrThrow(RefineLatexSchema, req.body);
       ok(res, { text: await service.refineLatex(text) });
+    }),
+
+    reExtract: asyncHandler(async (req, res) => {
+      const { documentId, questionId } = parseOrThrow(ReExtractQuestionSchema, req.body);
+      ok(res, await service.reExtractQuestion(documentId, questionId));
     }),
 
     update: asyncHandler(async (req, res) => {
