@@ -1,4 +1,4 @@
-import { type JSX, useCallback, useEffect, useState } from 'react';
+import { type JSX, useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ChapterKind, ChapterTopic, ChapterUploadMetadata } from '@ingest/contracts';
 import {
@@ -6,8 +6,8 @@ import {
   type PreviewView,
   type ReadingOrder,
   PdfModeSelector,
+  PdfPagesToolbar,
   PdfPreviewer,
-  PdfToolbar,
   PdfUploader,
   ReflowBlocksPanel,
   StructureTreePanel,
@@ -26,7 +26,7 @@ import {
 } from '../../features/ingestion/index.js';
 import { SessionBar } from '../../features/sessions/index.js';
 import { useCurrentSession } from '../../shared/lib/current-session.js';
-import { IconGrid, IconList, IconTrash, PageHeader, Spinner, useToast } from '../../shared/ui/index.js';
+import { PageHeader, Spinner, useToast } from '../../shared/ui/index.js';
 
 const DEFAULT_WIDTH = 560;
 const MIN_WIDTH = 320;
@@ -160,6 +160,13 @@ export function TreeIngestPage(): JSX.Element {
     setAnchorPage(numPages > 0 ? 1 : null);
   }, [numPages]);
 
+  /** Scroll a page into view — the go-to-page jump and (later) any deep-link to a page. */
+  const goToPage = useCallback((pageNumber: number): void => {
+    document
+      .getElementById(`cut-page-${String(pageNumber)}`)
+      ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, []);
+
   /** Drop → materialize an immutable copy of the dragged pages and bind it to the leaf's part. */
   const onBindPages = useCallback(
     (leafId: string, kind: ChapterKind, pages: number[]): void => {
@@ -179,20 +186,66 @@ export function TreeIngestPage(): JSX.Element {
     [activeBytes, tree, clearSelection],
   );
 
-  // Undo / redo shortcuts for the cut lines, ignored while typing in a field.
+  // The keyboard handler reads the latest state/handlers through a ref, so it never re-subscribes and
+  // never sees a stale closure (applyMode / handleDeleteSelected are re-created every render).
+  const keys = useRef({
+    setCutMode,
+    setView,
+    selectAll,
+    clearSelection,
+    applyMode,
+    handleDeleteSelected,
+    undo,
+    redo,
+    hasSelection: false,
+    canApply: false,
+  });
+  keys.current = {
+    setCutMode,
+    setView,
+    selectAll,
+    clearSelection,
+    applyMode,
+    handleDeleteSelected,
+    undo,
+    redo,
+    hasSelection: selectedPages.size > 0,
+    canApply: pendingCount > 0,
+  };
+
+  // Power-user shortcuts for the whole workbench, ignored while typing in a field. Cut modes H/V/R,
+  // views L/G, ⌘Z / ⌘⇧Z undo-redo, ⌘A select all, ⌘↵ apply, Esc deselect, Del delete selected.
   useEffect(() => {
     if (!activeBytes) return;
     const onKey = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null;
       if (target && ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) return;
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z') return;
-      event.preventDefault();
-      if (event.shiftKey) redo();
-      else undo();
+      const a = keys.current;
+      const mod = event.metaKey || event.ctrlKey;
+      const key = event.key.toLowerCase();
+      if (mod) {
+        if (key === 'z') { event.preventDefault(); if (event.shiftKey) a.redo(); else a.undo(); }
+        else if (key === 'a') { event.preventDefault(); a.selectAll(); }
+        else if (key === 'enter' && a.canApply) { event.preventDefault(); void a.applyMode(); }
+        return;
+      }
+      switch (key) {
+        case 'h': event.preventDefault(); a.setCutMode('horizontal'); break;
+        case 'v': event.preventDefault(); a.setCutMode('vertical'); break;
+        case 'r': event.preventDefault(); a.setCutMode('reflow'); break;
+        case 'l': event.preventDefault(); a.setView('list'); break;
+        case 'g': event.preventDefault(); a.setView('grid'); break;
+        case 'escape': a.clearSelection(); break;
+        case 'delete':
+        case 'backspace':
+          if (a.hasSelection) { event.preventDefault(); void a.handleDeleteSelected(); }
+          break;
+        default: break;
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); };
-  }, [activeBytes, undo, redo]);
+  }, [activeBytes]);
 
   const handleUpload = async (): Promise<void> => {
     if (!sessionId) return;
@@ -266,16 +319,6 @@ export function TreeIngestPage(): JSX.Element {
 
   return (
     <section className="workspace">
-      <div className="ws-bar">
-        <SessionBar compact />
-        <span className="ws-bar__divider" />
-        <div className="ws-file">
-          <span className="ws-file__name" title={fileName ?? undefined}>{fileName ?? 'Loaded PDF'}</span>
-          {numPages > 0 ? <span className="muted">· {numPages} page{numPages === 1 ? '' : 's'}</span> : null}
-          <button type="button" className="btn btn--ghost btn--xs" onClick={resetDoc}>Change file</button>
-        </div>
-      </div>
-
       <div className="cutter-layout">
         <div className="cutter-layout__preview">
           <PdfModeSelector
@@ -295,62 +338,22 @@ export function TreeIngestPage(): JSX.Element {
             onRevert={workingDoc.revert}
             onRedo={workingDoc.redo}
           />
-          <PdfToolbar
-            controller={splitPoints}
+          <PdfPagesToolbar
+            view={view}
+            onViewChange={setView}
             zoomPercent={Math.round((pageWidth / DEFAULT_WIDTH) * 100)}
             onZoomIn={() => { setPageWidth((w) => Math.min(MAX_WIDTH, w + ZOOM_STEP)); }}
             onZoomOut={() => { setPageWidth((w) => Math.max(MIN_WIDTH, w - ZOOM_STEP)); }}
             onZoomReset={() => { setPageWidth(DEFAULT_WIDTH); }}
+            cutCount={pendingCount}
+            cutNoun={isReflow ? 'crops' : 'cuts'}
+            numPages={numPages}
+            onGoToPage={goToPage}
+            selectedCount={selectedPages.size}
+            onSelectAll={selectAll}
+            onClearSelection={clearSelection}
+            onDeleteSelected={() => { void handleDeleteSelected(); }}
           />
-          <div className="page-tools">
-            <div className="segmented" role="group" aria-label="Page view">
-              <button
-                type="button"
-                className={`segmented__item${view === 'list' ? ' is-active' : ''}`}
-                aria-pressed={view === 'list'}
-                onClick={() => { setView('list'); }}
-              >
-                <IconList /> List
-              </button>
-              <button
-                type="button"
-                className={`segmented__item${view === 'grid' ? ' is-active' : ''}`}
-                aria-pressed={view === 'grid'}
-                onClick={() => { setView('grid'); }}
-              >
-                <IconGrid /> Grid
-              </button>
-            </div>
-            <span className="page-tools__spacer" />
-            <span className="page-tools__count">
-              {selectedPages.size > 0 ? `${String(selectedPages.size)} selected` : 'Shift-click for a range'}
-            </span>
-            <button
-              type="button"
-              className="btn btn--ghost btn--xs"
-              onClick={selectAll}
-              disabled={numPages === 0 || selectedPages.size === numPages}
-            >
-              Select all
-            </button>
-            <button
-              type="button"
-              className="btn btn--ghost btn--xs"
-              onClick={clearSelection}
-              disabled={selectedPages.size === 0}
-            >
-              Clear
-            </button>
-            <button
-              type="button"
-              className="btn btn--danger btn--xs"
-              onClick={() => { void handleDeleteSelected(); }}
-              disabled={selectedPages.size === 0 || selectedPages.size >= numPages}
-              title="Delete every selected page (Revert restores them)"
-            >
-              <IconTrash /> Delete{selectedPages.size > 0 ? ` ${String(selectedPages.size)}` : ''}
-            </button>
-          </div>
           <div className="cutter-layout__scroll">
             <PdfPreviewer
               pdfBytes={activeBytes}
@@ -375,6 +378,17 @@ export function TreeIngestPage(): JSX.Element {
         </div>
 
         <aside className="cutter-layout__panel stack">
+          <div className="panel-head">
+            <SessionBar compact />
+            <div className="panel-file">
+              <span className="panel-file__name" title={fileName ?? undefined}>{fileName ?? 'Loaded PDF'}</span>
+              <span className="panel-file__meta">
+                {numPages > 0 ? <span>{numPages} page{numPages === 1 ? '' : 's'}</span> : null}
+                <button type="button" className="btn btn--ghost btn--xs" onClick={resetDoc}>Change file</button>
+              </span>
+            </div>
+          </div>
+
           {isReflow ? <ReflowBlocksPanel controller={reflow} /> : null}
 
           <StructureTreePanel
