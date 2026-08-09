@@ -15,6 +15,7 @@ import {
   type DiagramDetector,
   type ImageStore,
   type LatexRefiner,
+  type QuestionReExtractor,
   type QuestionRepository,
 } from './modules/questions/index.js';
 import {
@@ -55,6 +56,8 @@ import { OpenAiLatexRefiner } from './infrastructure/ai/openai.latex-refiner.js'
 import { UnconfiguredLatexRefiner } from './infrastructure/ai/unconfigured.latex-refiner.js';
 import { OpenAiDiagramDetector } from './infrastructure/ai/openai.diagram-detector.js';
 import { UnconfiguredDiagramDetector } from './infrastructure/ai/unconfigured.diagram-detector.js';
+import { OpenAiQuestionReExtractor } from './infrastructure/ai/openai.question-reextractor.js';
+import { UnconfiguredQuestionReExtractor } from './infrastructure/ai/unconfigured.question-reextractor.js';
 import { MongoBankPublisher } from './infrastructure/bank/mongo.bank-publisher.js';
 import { UnconfiguredBankPublisher } from './infrastructure/bank/unconfigured.bank-publisher.js';
 import { MongoBankQuestionStore } from './infrastructure/bank/mongo.bank-question-store.js';
@@ -198,6 +201,16 @@ function buildDiagramDetector(): DiagramDetector {
   return new UnconfiguredDiagramDetector();
 }
 
+/** OpenAI vision re-extractor for the Verify "read the page again" button; otherwise a null-object. */
+function buildQuestionReExtractor(): QuestionReExtractor {
+  if (env.OPENAI_API_KEY) {
+    logger.info(`Re-extractor: OpenAI ${env.EXTRACTION_MODEL}`);
+    return new OpenAiQuestionReExtractor(env.OPENAI_API_KEY, env.EXTRACTION_MODEL);
+  }
+  logger.info('Re-extractor: unconfigured. Set OPENAI_API_KEY to re-extract questions.');
+  return new UnconfiguredQuestionReExtractor();
+}
+
 export function createContainer(): Container {
   const { documents, sessions, jobs, questions, usage, limits } = buildPersistence();
   const jobQueue = buildQueue();
@@ -216,6 +229,7 @@ export function createContainer(): Container {
     usageService,
     buildDiagramDetector(),
     pagesService,
+    buildQuestionReExtractor(),
   );
   const bankPublisher =
     env.DB_DRIVER === 'mongo'

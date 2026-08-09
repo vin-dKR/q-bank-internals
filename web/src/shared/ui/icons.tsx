@@ -151,6 +151,16 @@ export function IconFileText(props: IconProps): JSX.Element {
   );
 }
 
+/** A viewfinder / scan frame — the "re-read this from the page" action. */
+export function IconScan(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2" />
+      <path d="M4 12h16" />
+    </svg>
+  );
+}
+
 export function IconHelp(props: IconProps): JSX.Element {
   return (
     <svg {...base(props)}>

@@ -80,6 +80,45 @@ export function questionPrompt(document: Document, pageNumber: number): string {
     .join('\n\n');
 }
 
+/**
+ * Re-extract ONE already-extracted question from its source page (the verify screen's "read the page
+ * again" button). Unlike {@link questionPrompt}, which pulls every question on the page, this targets
+ * a single question by its printed number (with the current stem as a fallback hint) and asks for all
+ * four editable fields — including any answer/explanation the page itself happens to print.
+ */
+export function reExtractQuestionPrompt(target: {
+  questionNumber: number | null;
+  stemHint: string;
+  questionType: string | null;
+}): string {
+  const hint = target.stemHint.replace(/\s+/g, ' ').trim().slice(0, 120);
+  const typeRule = target.questionType ? TYPE_RULES[target.questionType] : undefined;
+  return [
+    'You are given an image of one page from an exam question paper.',
+    `Re-read the SINGLE question printed as number ${
+      target.questionNumber === null ? '(unknown)' : String(target.questionNumber)
+    }${hint ? `, which begins: "${hint}"` : ''} and extract only that one question.`,
+    `Return ONLY this exact JSON shape:
+
+{
+  "stem": "the full question text, math as LaTeX like \\\\( \\\\sqrt{3} \\\\)",
+  "options": [ { "label": "A", "body": "…", "is_correct": false } ],
+  "answer": "the correct option label(s) e.g. \\"A\\" or \\"AC\\", a numeric/text answer, or \\"\\" if the page does not state it",
+  "explanation": "the worked solution if the page prints one, else null"
+}`,
+    `RE-EXTRACT RULES:
+1. Extract ONLY the target question — ignore every other question on the page.
+2. options: one entry per printed choice; normalize labels (1)(2)(3)(4) to (A)(B)(C)(D). Set is_correct true only when the page marks that choice as correct, else false.
+3. For a question with no options, use an empty array [].
+4. answer: use "" when the page does not indicate the correct answer (question papers usually do not).
+5. explanation: use null when no worked solution is printed on this page.
+6. Preserve all math as LaTeX. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`,
+    typeRule ? `TYPE-SPECIFIC RULE:\n${typeRule}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
 /** The answer-key extraction prompt, returning one entry per section found on the sheet. */
 export function answerPrompt(document: Document): string {
   return `You are given an image of an exam answer sheet (${context(document)}).

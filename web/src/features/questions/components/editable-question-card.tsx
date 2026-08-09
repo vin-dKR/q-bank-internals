@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
-import { KNOWN_QUESTION_TYPES, type Question } from '@ingest/contracts';
-import { Badge, Button, Combobox, IconButton, IconPlus, IconSparkle, IconX, Spinner } from '../../../shared/ui/index.js';
+import { KNOWN_QUESTION_TYPES, type Question, type ReExtractedQuestion } from '@ingest/contracts';
+import { Badge, Button, Combobox, IconButton, IconPlus, IconScan, IconSparkle, IconX, Spinner } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { questionsApi } from '../api/questions.api.js';
 import { useUpdateQuestion } from '../hooks/use-questions.js';
@@ -52,11 +52,23 @@ function splitUrls(value: string | null): string[] {
 
 const FIELD_LABEL = 'text-[13px] font-medium text-ink-2';
 
-/** A tiny sparkle button that AI-refines a single field's LaTeX. */
-function AiButton({ busy, onClick }: { busy: boolean; onClick: () => void }): JSX.Element {
+/** A tiny ghost icon button for one of a field's AI actions ("Fix LaTeX" or "read the page again"). */
+function AiButton({
+  busy,
+  disabled = false,
+  title,
+  icon,
+  onClick,
+}: {
+  busy: boolean;
+  disabled?: boolean;
+  title: string;
+  icon: JSX.Element;
+  onClick: () => void;
+}): JSX.Element {
   return (
-    <Button variant="ghost" size="xs" disabled={busy} onClick={onClick} title="Fix LaTeX with AI">
-      {busy ? '…' : <IconSparkle />}
+    <Button variant="ghost" size="xs" disabled={busy || disabled} onClick={onClick} title={title}>
+      {busy ? '…' : icon}
     </Button>
   );
 }
@@ -93,6 +105,7 @@ export function EditableQuestionCard({
 }: Props): JSX.Element {
   const update = useUpdateQuestion();
   const [fixing, setFixing] = useState<string | null>(null);
+  const [reading, setReading] = useState<string | null>(null);
 
   const set = <K extends keyof QuestionDraft>(key: K, value: QuestionDraft[K]): void => {
     onDraftChange({ ...draft, [key]: value });
@@ -112,6 +125,56 @@ export function EditableQuestionCard({
       setFixing(null);
     }
   };
+
+  // "Read the page again": re-extract this question from its source page image and drop ONE field of
+  // the fresh result into the draft. Each field's second AI button re-reads independently (a few
+  // seconds per call), so a click on the answer/explanation can also fill a field left blank on the
+  // question sheet whenever the page itself shows it.
+  const reExtract = async (
+    field: string,
+    apply: (fresh: ReExtractedQuestion) => void,
+  ): Promise<void> => {
+    setReading(field);
+    try {
+      apply(await questionsApi.reExtract(question.documentId, question.id));
+    } finally {
+      setReading(null);
+    }
+  };
+
+  /**
+   * The two AI buttons a text field carries: sparkle = clean this field's LaTeX in place; scan =
+   * re-read the whole question from the page and pull just this field out of the fresh extraction.
+   * The two are mutually exclusive per field so a re-read never races an in-place refine.
+   */
+  const fieldAi = (
+    key: string,
+    current: string,
+    applyText: (text: string) => void,
+    pick: (fresh: ReExtractedQuestion) => string | null,
+  ): JSX.Element => (
+    <>
+      <AiButton
+        busy={fixing === key}
+        disabled={reading === key}
+        title="Fix LaTeX with AI"
+        icon={<IconSparkle />}
+        onClick={() => { void refine(key, current, applyText); }}
+      />
+      <AiButton
+        busy={reading === key}
+        disabled={fixing === key}
+        title="Re-read this question from the page"
+        icon={<IconScan />}
+        onClick={() => {
+          void reExtract(key, (fresh) => {
+            const value = pick(fresh);
+            if (value !== null) applyText(value);
+          });
+        }}
+      />
+    </>
+  );
 
   const toggle = (key: 'isQuestionImage' | 'isOptionImage', value: boolean): void => {
     void update.mutateAsync({ id: question.id, patch: { [key]: value } });
@@ -167,94 +230,9 @@ export function EditableQuestionCard({
 
       <div className="flex flex-col gap-1.5">
         <span className={`flex items-center gap-1.5 ${FIELD_LABEL}`}>
-          Question text <AiButton busy={fixing === 'stem'} onClick={() => { void refine('stem', draft.stem, (t) => { set('stem', t); }); }} />
+          Question text {fieldAi('stem', draft.stem, (t) => { set('stem', t); }, (fresh) => fresh.stem)}
         </span>
         <EditableLatexValue value={draft.stem} onChange={(v) => { set('stem', v); }} multiline />
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <div className="flex items-center justify-between">
-          <span className={FIELD_LABEL}>Options</span>
-          <Button
-            size="xs"
-            onClick={() => {
-              const nextLabel = String.fromCharCode(65 + draft.options.length);
-              set('options', [...draft.options, { label: nextLabel, body: '', isCorrect: false }]);
-            }}
-          >
-            <IconPlus /> Add option
-          </Button>
-        </div>
-        {draft.options.map((option, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <strong>{option.label}.</strong>
-            <div className="flex-1">
-              <EditableLatexValue value={option.body} onChange={(v) => { setOption(i, v); }} placeholder="Click to edit option" />
-            </div>
-            <AiButton busy={fixing === `opt${String(i)}`} onClick={() => { void refine(`opt${String(i)}`, option.body, (t) => { setOption(i, t); }); }} />
-            {question.isOptionImage ? (
-              <Button
-                size="xs"
-                variant={armedFor('option', i) ? 'primary' : 'default'}
-                disabled={cropDisabled}
-                title={armedFor('option', i) ? 'Cancel drawing' : 'Draw this option’s figure on the page — it saves automatically'}
-                onClick={() => { onDrawRegion(question, 'option', i); }}
-              >
-                {armedFor('option', i) ? 'Drawing…' : 'Region'}
-              </Button>
-            ) : null}
-            <IconButton
-              icon={<IconX />}
-              label="Remove option"
-              size="sm"
-              onClick={() => { set('options', draft.options.filter((_, j) => j !== i)); }}
-            />
-          </div>
-        ))}
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <span className={`flex items-center gap-1.5 ${FIELD_LABEL}`}>
-          Answer <AiButton busy={fixing === 'answer'} onClick={() => { void refine('answer', draft.answer, (t) => { set('answer', t); }); }} />
-        </span>
-        <EditableLatexValue value={draft.answer} onChange={(v) => { set('answer', v); }} placeholder="Click to add answer" />
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <span className={`flex items-center gap-1.5 ${FIELD_LABEL}`}>
-          Explanation <AiButton busy={fixing === 'explanation'} onClick={() => { void refine('explanation', draft.explanation, (t) => { set('explanation', t); }); }} />
-        </span>
-        <EditableLatexValue value={draft.explanation} onChange={(v) => { set('explanation', v); }} multiline placeholder="Click to add explanation" />
-      </div>
-
-      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-        <label className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Question type</span>
-          <Combobox
-            value={draft.questionType}
-            options={questionTypeOptions}
-            placeholder="Select type…"
-            onChange={(v) => { set('questionType', v); }}
-          />
-        </label>
-        <label className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Section</span>
-          <Combobox
-            value={draft.sectionName}
-            options={sectionOptions}
-            placeholder="e.g. Exercise-1"
-            onChange={(v) => { set('sectionName', v); }}
-          />
-        </label>
-        <label className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Topic</span>
-          <Combobox
-            value={draft.topic}
-            options={topicSuggestions}
-            placeholder="e.g. Kinematics"
-            onChange={(v) => { set('topic', v); }}
-          />
-        </label>
       </div>
 
       {question.isQuestionImage ? (
@@ -296,6 +274,96 @@ export function EditableQuestionCard({
           </div>
         </div>
       ) : null}
+
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center justify-between">
+          <span className={FIELD_LABEL}>Options</span>
+          <Button
+            size="xs"
+            onClick={() => {
+              const nextLabel = String.fromCharCode(65 + draft.options.length);
+              set('options', [...draft.options, { label: nextLabel, body: '', isCorrect: false }]);
+            }}
+          >
+            <IconPlus /> Add option
+          </Button>
+        </div>
+        {draft.options.map((option, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <strong>{option.label}.</strong>
+            <div className="flex-1">
+              <EditableLatexValue value={option.body} onChange={(v) => { setOption(i, v); }} placeholder="Click to edit option" />
+            </div>
+            {fieldAi(
+              `opt${String(i)}`,
+              option.body,
+              (t) => { setOption(i, t); },
+              (fresh) => fresh.options[i]?.body ?? null,
+            )}
+            {question.isOptionImage ? (
+              <Button
+                size="xs"
+                variant={armedFor('option', i) ? 'primary' : 'default'}
+                disabled={cropDisabled}
+                title={armedFor('option', i) ? 'Cancel drawing' : 'Draw this option’s figure on the page — it saves automatically'}
+                onClick={() => { onDrawRegion(question, 'option', i); }}
+              >
+                {armedFor('option', i) ? 'Drawing…' : 'Region'}
+              </Button>
+            ) : null}
+            <IconButton
+              icon={<IconX />}
+              label="Remove option"
+              size="sm"
+              onClick={() => { set('options', draft.options.filter((_, j) => j !== i)); }}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <span className={`flex items-center gap-1.5 ${FIELD_LABEL}`}>
+          Answer {fieldAi('answer', draft.answer, (t) => { set('answer', t); }, (fresh) => fresh.answer)}
+        </span>
+        <EditableLatexValue value={draft.answer} onChange={(v) => { set('answer', v); }} placeholder="Click to add answer" />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <span className={`flex items-center gap-1.5 ${FIELD_LABEL}`}>
+          Explanation {fieldAi('explanation', draft.explanation, (t) => { set('explanation', t); }, (fresh) => fresh.explanation ?? '')}
+        </span>
+        <EditableLatexValue value={draft.explanation} onChange={(v) => { set('explanation', v); }} multiline placeholder="Click to add explanation" />
+      </div>
+
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+        <label className="flex flex-col gap-1.5">
+          <span className={FIELD_LABEL}>Question type</span>
+          <Combobox
+            value={draft.questionType}
+            options={questionTypeOptions}
+            placeholder="Select type…"
+            onChange={(v) => { set('questionType', v); }}
+          />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className={FIELD_LABEL}>Section</span>
+          <Combobox
+            value={draft.sectionName}
+            options={sectionOptions}
+            placeholder="e.g. Exercise-1"
+            onChange={(v) => { set('sectionName', v); }}
+          />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className={FIELD_LABEL}>Topic</span>
+          <Combobox
+            value={draft.topic}
+            options={topicSuggestions}
+            placeholder="e.g. Kinematics"
+            onChange={(v) => { set('topic', v); }}
+          />
+        </label>
+      </div>
 
       {question.isOptionImage ? (
         <div className="flex flex-col gap-2 rounded-lg border border-dashed border-line-strong bg-surface-2 p-2.5">

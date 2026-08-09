@@ -32,4 +32,5 @@ export {
   IconFileText,
   IconHelp,
   IconLayers,
+  IconScan,
 } from './icons.js';

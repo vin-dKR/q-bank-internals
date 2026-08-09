@@ -13,3 +13,8 @@ export type {
   DiagramDetector,
   QuestionTop,
 } from './diagram-detector.js';
+export type {
+  QuestionReExtraction,
+  QuestionReExtractor,
+  ReExtractInput,
+} from './question-reextractor.js';

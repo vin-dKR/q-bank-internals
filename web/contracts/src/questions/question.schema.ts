@@ -111,6 +111,30 @@ export type RefineLatex = z.infer<typeof RefineLatexSchema>;
 export const RefinedLatexSchema = z.object({ text: z.string() });
 export type RefinedLatex = z.infer<typeof RefinedLatexSchema>;
 
+/**
+ * Ask the AI to re-read the source page of ONE already-extracted question and re-extract its fields
+ * from scratch (stem, options, answer, explanation) — the "read the page again" companion to the
+ * LaTeX refiner. Addressed by the question's id together with its document (which resolves the page).
+ */
+export const ReExtractQuestionSchema = z.object({
+  documentId: z.string().min(1),
+  questionId: z.string().min(1),
+});
+export type ReExtractQuestion = z.infer<typeof ReExtractQuestionSchema>;
+
+/**
+ * The freshly re-extracted fields for one question, ready to drop into the verify card's draft.
+ * `answer`/`explanation` are best-effort: a question paper rarely prints them, so they come back
+ * empty/null unless the page itself shows the correct choice or a worked solution.
+ */
+export const ReExtractedQuestionSchema = z.object({
+  stem: z.string(),
+  options: z.array(QuestionOptionSchema),
+  answer: z.string(),
+  explanation: z.string().nullable(),
+});
+export type ReExtractedQuestion = z.infer<typeof ReExtractedQuestionSchema>;
+
 /** Result of publishing extracted questions into the main bank: how many rows were inserted. */
 export const PublishResultSchema = z.object({ published: z.number().int().nonnegative() });
 export type PublishResult = z.infer<typeof PublishResultSchema>;

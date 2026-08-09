@@ -43,17 +43,22 @@ export function PipelinePage(): JSX.Element {
     );
   }
 
+  // The unit picker + publish now live at the top of the workspace's right panel (beside the page),
+  // so the PDF and question editor own the full viewport height instead of losing a top bar to them.
+  const sessionBar = (
+    <>
+      <div className="min-w-0 flex-1">
+        <DocumentPicker value={documentId} onChange={setDocumentId} />
+      </div>
+      <Button variant="primary" className="flex-none" disabled={publish.isPending} onClick={onPublish}>
+        {publish.isPending ? <><Spinner /> Publishing…</> : 'Publish to bank →'}
+      </Button>
+    </>
+  );
+
   return (
     <section className="workspace max-[1000px]:h-auto">
-      <div className="ws-bar">
-        <div className="min-w-0 max-w-md flex-1">
-          <DocumentPicker value={documentId} onChange={setDocumentId} />
-        </div>
-        <Button variant="primary" className="ml-auto flex-none" disabled={publish.isPending} onClick={onPublish}>
-          {publish.isPending ? <><Spinner /> Publishing…</> : 'Publish to bank →'}
-        </Button>
-      </div>
-      <VerifyWorkspace documentId={documentId} autoRun={autoRun} />
+      <VerifyWorkspace documentId={documentId} autoRun={autoRun} sessionBar={sessionBar} />
       {confirmDialog}
     </section>
   );
