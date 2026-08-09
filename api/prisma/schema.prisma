@@ -48,6 +48,10 @@ type PageRange {
 type TopicTypeConfig {
   questionType String
   pageRange    PageRange
+  // The same topic's spans in the sibling answer / solution PDFs (v2 assembled uploads), so the
+  // extractor reads this topic's key from exactly its own pages instead of guessing by name/number.
+  answerPageRange   PageRange?
+  solutionPageRange PageRange?
 }
 
 // One topic inside a chapter PDF (Chapter -> Topic -> Question type -> Questions).

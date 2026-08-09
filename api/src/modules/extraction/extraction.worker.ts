@@ -7,7 +7,13 @@ import type { AiTokenUsage, UsageService } from '../usage/index.js';
 import type { ExtractionJobStore } from './extraction.repository.js';
 import type { ExtractionJobPayload } from './job-queue.js';
 import type { PdfRasterizer } from './pdf-rasterizer.js';
-import type { AnswerSheet, ExtractedQuestion, VisionExtractor } from './vision-extractor.js';
+import type {
+  AnswerEntry,
+  AnswerExtraction,
+  AnswerSheet,
+  ExtractedQuestion,
+  VisionExtractor,
+} from './vision-extractor.js';
 import { mergeAnswers } from './merge-answers.js';
 import { topicBindingForPage } from './topic-lookup.js';
 
@@ -203,18 +209,82 @@ export class ExtractionWorker {
     const solutionDocs = siblings.filter((s) => s.kind === 'solution' && sameUnit(s, document));
     if (answerDocs.length === 0 && solutionDocs.length === 0) return drafts;
 
+    // v2 assembled uploads pin each topic's answer/solution pages, so we read every topic's key from
+    // exactly its own pages and tag it with the topic name — the drag binding decides the match, not a
+    // section-name-and-number guess. Legacy uploads (no ranges) keep the whole-PDF path unchanged.
+    const hasRanges = document.topics.some((topic) =>
+      topic.types.some((block) => block.answerPageRange ?? block.solutionPageRange),
+    );
+
     const sheets: AnswerSheet[] = [];
-    for (const answerDoc of answerDocs) {
-      await this.collectSheets(answerDoc, sheets, (pages) =>
-        this.extractor.extractAnswers({ pages, document: answerDoc }),
-      );
-    }
-    for (const solutionDoc of solutionDocs) {
-      await this.collectSheets(solutionDoc, sheets, (pages) =>
-        this.extractor.extractSolutions({ pages, document: solutionDoc }),
-      );
+    if (hasRanges) {
+      for (const answerDoc of answerDocs) {
+        await this.collectTopicSheets(answerDoc, document.topics, 'answer', sheets, (pages) =>
+          this.extractor.extractAnswers({ pages, document: answerDoc }),
+        );
+      }
+      for (const solutionDoc of solutionDocs) {
+        await this.collectTopicSheets(solutionDoc, document.topics, 'solution', sheets, (pages) =>
+          this.extractor.extractSolutions({ pages, document: solutionDoc }),
+        );
+      }
+    } else {
+      for (const answerDoc of answerDocs) {
+        await this.collectSheets(answerDoc, sheets, (pages) =>
+          this.extractor.extractAnswers({ pages, document: answerDoc }),
+        );
+      }
+      for (const solutionDoc of solutionDocs) {
+        await this.collectSheets(solutionDoc, sheets, (pages) =>
+          this.extractor.extractSolutions({ pages, document: solutionDoc }),
+        );
+      }
     }
     return mergeAnswers(drafts, sheets, document.topics);
+  }
+
+  /**
+   * Exact per-topic answer/solution extraction (v2): download + rasterize the sibling once, then for
+   * each topic read ONLY its bound page range and tag the produced key with the topic's own name — so
+   * mergeAnswers binds it to that topic's questions by number with zero cross-topic ambiguity. The
+   * association is the operator's drag, not a guess. Errors are logged and swallowed so a bad sibling
+   * PDF never sinks the questions it was only meant to enrich.
+   */
+  private async collectTopicSheets(
+    source: Document,
+    topics: Document['topics'],
+    kind: 'answer' | 'solution',
+    sink: AnswerSheet[],
+    extract: (pages: Awaited<ReturnType<PdfRasterizer['rasterize']>>) => Promise<AnswerExtraction>,
+  ): Promise<void> {
+    try {
+      const pdf = await this.drive.downloadPdf(source.driveFileId);
+      const pages = await this.rasterizer.rasterize(pdf);
+      for (const topic of topics) {
+        for (const block of topic.types) {
+          const range = kind === 'answer' ? block.answerPageRange : block.solutionPageRange;
+          if (!range) continue;
+          const slice = pages.filter((page) => page.pageNumber >= range.from && page.pageNumber <= range.to);
+          if (slice.length === 0) continue;
+          const result = await extract(slice);
+          await this.recordUsage(source, result.usage);
+          // Fold every entry this range produced under the topic's own name (first write wins).
+          const entries: Record<string, AnswerEntry> = {};
+          for (const sheet of result.sheets) {
+            for (const [number, entry] of Object.entries(sheet.entries)) {
+              if (!(number in entries)) entries[number] = entry;
+            }
+          }
+          if (Object.keys(entries).length > 0) sink.push({ sectionName: topic.name, entries });
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(
+        { sourceDoc: source.id, kind: source.kind, err: message },
+        'Per-topic answer/solution extraction failed; keeping questions as-is',
+      );
+    }
   }
 
   /**

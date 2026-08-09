@@ -28,10 +28,17 @@ export type PageRange = z.infer<typeof PageRangeSchema>;
  * One question-type block inside a topic: a predefined type bound to the page span it occupies in
  * the uploaded question PDF. The operator fixes this at cut time, so extraction maps every question
  * on those pages to exactly this type — the model never picks or invents one.
+ *
+ * `answerPageRange` / `solutionPageRange` are the same topic's spans in the sibling answer / solution
+ * PDFs. When present (v2 assembled uploads), the extractor reads this topic's answers/explanations
+ * from exactly those pages and binds them to this topic's questions — the operator's drag decides the
+ * association, not a section-name-and-number guess. Absent for legacy uploads (behaviour unchanged).
  */
 export const TopicTypeConfigSchema = z.object({
   questionType: QuestionTypeSchema,
   pageRange: PageRangeSchema,
+  answerPageRange: PageRangeSchema.optional(),
+  solutionPageRange: PageRangeSchema.optional(),
 });
 export type TopicTypeConfig = z.infer<typeof TopicTypeConfigSchema>;
 
