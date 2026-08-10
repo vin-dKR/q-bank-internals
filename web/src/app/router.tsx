@@ -9,6 +9,11 @@ import { SessionDetailPage } from './pages/session-detail-page.js';
 import { MastersPage } from './pages/masters-page.js';
 import { UsagePage } from './pages/usage-page.js';
 import { BankPage } from './pages/bank-page.js';
+import { ChapterSplitterPage } from './pages/chapter-splitter-page.js';
+import { PdfCutterPage } from './pages/pdf-cutter-page.js';
+import { QnaPdfPage } from './pages/qna-pdf-page.js';
+import { ImageRenamerPage } from './pages/image-renamer-page.js';
+import { PdfEditorPage } from './pages/pdf-editor-page.js';
 
 // The one app-wide fallback for anything a page throws. On a child route it replaces only the
 // `<Outlet />` content, so the shell (sidebar) stays; on the root it also covers a layout-level throw.
@@ -29,6 +34,11 @@ export const router = createBrowserRouter([
       { path: 'bank', element: <BankPage />, errorElement },
       { path: 'masters', element: <MastersPage />, errorElement },
       { path: 'usage', element: <UsagePage />, errorElement },
+      { path: 'tools/chapters', element: <ChapterSplitterPage />, errorElement },
+      { path: 'tools/cut', element: <PdfCutterPage />, errorElement },
+      { path: 'tools/qna', element: <QnaPdfPage />, errorElement },
+      { path: 'tools/rename', element: <ImageRenamerPage />, errorElement },
+      { path: 'tools/edit', element: <PdfEditorPage />, errorElement },
     ],
   },
 ]);
