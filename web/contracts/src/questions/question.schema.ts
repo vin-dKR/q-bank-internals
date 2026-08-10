@@ -16,6 +16,62 @@ export const QuestionOptionSchema = z.object({
 });
 export type QuestionOption = z.infer<typeof QuestionOptionSchema>;
 
+/** One labelled entry in a match-the-column column — e.g. `{ label: 'A', body: 'V = \\(\\sqrt{GM/r}\\)' }`. */
+export const MatchEntrySchema = z.object({
+  label: z.string().min(1), // "A".."D" (col I), "p".."s" (col II), "t".."w" (col III)
+  body: z.string(), // LaTeX-bearing
+});
+export type MatchEntry = z.infer<typeof MatchEntrySchema>;
+
+/** One column of a match-the-column question: a heading plus its labelled entries. */
+export const MatchColumnSchema = z.object({
+  title: z.string(), // "Column I (Velocity)"
+  entries: z.array(MatchEntrySchema),
+});
+export type MatchColumn = z.infer<typeof MatchColumnSchema>;
+
+/**
+ * Structured "match the column" data. `columns` holds two OR MORE columns (papers use 2 or 3), each
+ * with its own labelled entries. `key` is the correct matching FROM the first column's labels to the
+ * labels they match in the later columns, e.g. `{ A: ['p','t'], B: ['q','u'] }`; it may be empty when
+ * the question sheet does not print the answer (filled from the answer key, or by the operator in
+ * verify). The flat `answer` string mirrors this map ("A-p,t; B-q,u") so a plain renderer still shows
+ * the matching. Null on every non-match question.
+ */
+export const MatchDataSchema = z.object({
+  columns: z.array(MatchColumnSchema).min(2),
+  key: z.record(z.string(), z.array(z.string())),
+});
+export type MatchData = z.infer<typeof MatchDataSchema>;
+
+/** Render a match key as the flat mirror string, e.g. `{ A:['p','t'], B:['q'] }` → `"A-p,t; B-q"`. */
+export function matchKeyToAnswer(key: Record<string, readonly string[]>): string {
+  return Object.entries(key)
+    .filter(([, targets]) => targets.length > 0)
+    .map(([label, targets]) => `${label}-${targets.join(',')}`)
+    .join('; ');
+}
+
+/**
+ * Best-effort parse of a flat match-answer string ("A-p,t; B-q,u", "A→pt", "A - p, t") back into the
+ * structured key. Segments split on ';' or newlines; each is "<label><sep><targets>" where the
+ * targets split on commas/whitespace, or — when run together as single characters ("pt") — per
+ * character. Unparseable input yields `{}` so the operator can fill the matching in verify.
+ */
+export function parseMatchKey(answer: string): Record<string, string[]> {
+  const key: Record<string, string[]> = {};
+  for (const segment of answer.split(/[;\n]+/)) {
+    const match = /^\s*([A-Za-z0-9]+)\s*(?:[-–—>:→=]+|\s)\s*(.+)$/.exec(segment.trim());
+    if (!match) continue;
+    const label = (match[1] ?? '').trim();
+    const rest = (match[2] ?? '').trim();
+    if (!label || !rest) continue;
+    const targets = /[,\s]/.test(rest) ? rest.split(/[,\s]+/).filter(Boolean) : [...rest];
+    if (targets.length > 0) key[label] = targets;
+  }
+  return key;
+}
+
 /**
  * The verified question record — the thing published to the bank.
  * `sourceRegion` keeps the page + bounding box it was read from, so a bad extraction stays fixable.
@@ -34,6 +90,9 @@ export const QuestionSchema = z.object({
   // Null when no solution source was provided for the question.
   explanation: z.string().nullable(),
   images: z.array(QuestionImageSchema),
+  // Structured match-the-column data (columns + correct matching) when this is a MATRIX MATCH
+  // question; null for every other type. The flat `answer` above mirrors `match.key` as text.
+  match: MatchDataSchema.nullable(),
   // Bank-aligned image fields (mirrors the main Question collection so publish is a straight copy).
   // `questionImage` is a comma-separated list of Supabase URLs; `optionImages[i]` is the URL for option i.
   isQuestionImage: z.boolean(),
@@ -64,6 +123,7 @@ export const UpdateQuestionSchema = QuestionSchema.pick({
   stem: true,
   options: true,
   answer: true,
+  match: true,
   explanation: true,
   images: true,
   isQuestionImage: true,

@@ -79,6 +79,8 @@ function combineGroup(group: ExtractedQuestion[]): ExtractedQuestion {
     sectionName: first.sectionName,
     questionType: first.questionType,
     sourcePage: first.sourcePage,
+    // A comprehension block is never a match question.
+    match: null,
     // Collapsed already — clear the passage so it is never re-grouped.
     passage: null,
   };

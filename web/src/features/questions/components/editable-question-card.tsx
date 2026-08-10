@@ -1,8 +1,9 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
-import { KNOWN_QUESTION_TYPES, type Question, type ReExtractedQuestion } from '@ingest/contracts';
+import { KNOWN_QUESTION_TYPES, matchKeyToAnswer, type MatchData, type Question, type ReExtractedQuestion } from '@ingest/contracts';
 import { Badge, Button, Combobox, IconButton, IconPlus, IconScan, IconSparkle, IconUndo, IconX, Spinner } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
+import { MatchTableEditor } from './match-table-editor.js';
 import { questionsApi } from '../api/questions.api.js';
 import { useUpdateQuestion } from '../hooks/use-questions.js';
 import type { QuestionDraft } from '../hooks/use-question-drafts.js';
@@ -119,6 +120,17 @@ export function EditableQuestionCard({
       ...draft,
       options: draft.options.map((o, j) => (j === i ? { ...o, body } : o)),
     });
+  };
+  // A match question edits through the structured table; the flat answer always mirrors its key.
+  const setMatch = (next: MatchData): void => {
+    onDraftChange({
+      ...draft,
+      match: next,
+      answer: Object.keys(next.key).length > 0 ? matchKeyToAnswer(next.key) : draft.answer,
+    });
+  };
+  const seedMatch = (): void => {
+    setMatch({ columns: [{ title: 'Column I', entries: [] }, { title: 'Column II', entries: [] }], key: {} });
   };
 
   /** Apply an AI-produced value to a field, remembering the previous value so it can be undone. */
@@ -302,58 +314,89 @@ export function EditableQuestionCard({
         </div>
       ) : null}
 
-      <div className="flex flex-col gap-1.5">
-        <div className="flex items-center justify-between">
-          <span className={FIELD_LABEL}>Options</span>
-          <Button
-            size="xs"
-            onClick={() => {
-              const nextLabel = String.fromCharCode(65 + draft.options.length);
-              set('options', [...draft.options, { label: nextLabel, body: '', isCorrect: false }]);
-            }}
-          >
-            <IconPlus /> Add option
-          </Button>
-        </div>
-        {draft.options.map((option, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <strong>{option.label}.</strong>
-            <div className="flex-1">
-              <EditableLatexValue value={option.body} onChange={(v) => { setOption(i, v); }} placeholder="Click to edit option" />
-            </div>
-            {fieldAi(
-              `opt${String(i)}`,
-              option.body,
-              (t) => { setOption(i, t); },
-              (fresh) => fresh.options[i]?.body ?? null,
-            )}
-            {question.isOptionImage ? (
+      {draft.match ? (
+        <>
+          <MatchTableEditor value={draft.match} onChange={setMatch} disabled={saving} />
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <span className={FIELD_LABEL}>Answer key</span>
               <Button
+                variant="ghost"
                 size="xs"
-                variant={armedFor('option', i) ? 'primary' : 'default'}
-                disabled={cropDisabled}
-                title={armedFor('option', i) ? 'Cancel drawing' : 'Draw this option’s figure on the page — it saves automatically'}
-                onClick={() => { onDrawRegion(question, 'option', i); }}
+                title="Switch this question back to plain options"
+                onClick={() => { onDraftChange({ ...draft, match: null }); }}
               >
-                {armedFor('option', i) ? 'Drawing…' : 'Region'}
+                Remove match table
               </Button>
-            ) : null}
-            <IconButton
-              icon={<IconX />}
-              label="Remove option"
-              size="sm"
-              onClick={() => { set('options', draft.options.filter((_, j) => j !== i)); }}
-            />
+            </div>
+            <div className="min-h-[38px] rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm text-ink-2">
+              {draft.answer.trim() ? draft.answer : <span className="text-ink-3">Set the matching above to build the key</span>}
+            </div>
           </div>
-        ))}
-      </div>
+        </>
+      ) : (
+        <>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <span className={FIELD_LABEL}>Options</span>
+              <div className="flex items-center gap-2">
+                {draft.questionType === 'matrix' ? (
+                  <Button size="xs" variant="ghost" title="Build a match-the-column table" onClick={seedMatch}>
+                    <IconPlus /> Match columns
+                  </Button>
+                ) : null}
+                <Button
+                  size="xs"
+                  onClick={() => {
+                    const nextLabel = String.fromCharCode(65 + draft.options.length);
+                    set('options', [...draft.options, { label: nextLabel, body: '', isCorrect: false }]);
+                  }}
+                >
+                  <IconPlus /> Add option
+                </Button>
+              </div>
+            </div>
+            {draft.options.map((option, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <strong>{option.label}.</strong>
+                <div className="flex-1">
+                  <EditableLatexValue value={option.body} onChange={(v) => { setOption(i, v); }} placeholder="Click to edit option" />
+                </div>
+                {fieldAi(
+                  `opt${String(i)}`,
+                  option.body,
+                  (t) => { setOption(i, t); },
+                  (fresh) => fresh.options[i]?.body ?? null,
+                )}
+                {question.isOptionImage ? (
+                  <Button
+                    size="xs"
+                    variant={armedFor('option', i) ? 'primary' : 'default'}
+                    disabled={cropDisabled}
+                    title={armedFor('option', i) ? 'Cancel drawing' : 'Draw this option’s figure on the page — it saves automatically'}
+                    onClick={() => { onDrawRegion(question, 'option', i); }}
+                  >
+                    {armedFor('option', i) ? 'Drawing…' : 'Region'}
+                  </Button>
+                ) : null}
+                <IconButton
+                  icon={<IconX />}
+                  label="Remove option"
+                  size="sm"
+                  onClick={() => { set('options', draft.options.filter((_, j) => j !== i)); }}
+                />
+              </div>
+            ))}
+          </div>
 
-      <div className="flex flex-col gap-1.5">
-        <span className={`flex items-center gap-1.5 ${FIELD_LABEL}`}>
-          Answer {fieldAi('answer', draft.answer, (t) => { set('answer', t); }, (fresh) => fresh.answer)}
-        </span>
-        <EditableLatexValue value={draft.answer} onChange={(v) => { set('answer', v); }} placeholder="Click to add answer" />
-      </div>
+          <div className="flex flex-col gap-1.5">
+            <span className={`flex items-center gap-1.5 ${FIELD_LABEL}`}>
+              Answer {fieldAi('answer', draft.answer, (t) => { set('answer', t); }, (fresh) => fresh.answer)}
+            </span>
+            <EditableLatexValue value={draft.answer} onChange={(v) => { set('answer', v); }} placeholder="Click to add answer" />
+          </div>
+        </>
+      )}
 
       <div className="flex flex-col gap-1.5">
         <span className={`flex items-center gap-1.5 ${FIELD_LABEL}`}>

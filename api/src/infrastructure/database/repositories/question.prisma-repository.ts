@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import type { Question, UpdateQuestion } from '@ingest/contracts';
+import { type MatchData, MatchDataSchema, type Question, type UpdateQuestion } from '@ingest/contracts';
 import { type NewQuestion, type QuestionRepository, sortByPdfOrder } from '../../../modules/questions/index.js';
 
 // Prisma's row shape for a Question, narrowed to what we map back to the contract shape.
@@ -11,6 +11,8 @@ type QuestionRow = {
   stem: string;
   options: { label: string; body: string; isCorrect: boolean }[];
   answer: string;
+  // Prisma `Json?`: the structured match data, validated back into shape by `toMatch`.
+  match: unknown;
   explanation: string | null;
   images: { driveFileId: string; alt: string }[];
   isQuestionImage: boolean;
@@ -25,6 +27,13 @@ type QuestionRow = {
   updatedAt: Date;
 };
 
+/** Validate a Prisma `Json?` match column into the contract shape; malformed/absent data → null. */
+function toMatch(value: unknown): MatchData | null {
+  if (value === null || value === undefined) return null;
+  const parsed = MatchDataSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 function toQuestion(row: QuestionRow): Question {
   const [x0, y0, x1, y1] = row.sourceRegion.bbox;
   return {
@@ -35,6 +44,7 @@ function toQuestion(row: QuestionRow): Question {
     stem: row.stem,
     options: row.options,
     answer: row.answer,
+    match: toMatch(row.match),
     explanation: row.explanation,
     images: row.images,
     isQuestionImage: row.isQuestionImage,
@@ -68,6 +78,7 @@ export class PrismaQuestionRepository implements QuestionRepository {
         stem: question.stem,
         options: question.options,
         answer: question.answer,
+        match: question.match,
         explanation: question.explanation,
         images: question.images,
         questionType: question.questionType,
@@ -99,6 +110,7 @@ export class PrismaQuestionRepository implements QuestionRepository {
         ...(patch.stem !== undefined ? { stem: patch.stem } : {}),
         ...(patch.options !== undefined ? { options: patch.options } : {}),
         ...(patch.answer !== undefined ? { answer: patch.answer } : {}),
+        ...(patch.match !== undefined ? { match: patch.match } : {}),
         ...(patch.explanation !== undefined ? { explanation: patch.explanation } : {}),
         ...(patch.images !== undefined ? { images: patch.images } : {}),
         ...(patch.isQuestionImage !== undefined ? { isQuestionImage: patch.isQuestionImage } : {}),

@@ -44,7 +44,7 @@ const TYPE_RULES: Record<string, string> = {
     'This is a MULTIPLE CORRECT type: four options (A)(B)(C)(D), one or more may be correct.',
   integer: 'This is an INTEGER type: the answer is a number; options is usually an empty array [].',
   matrix:
-    'This is a MATRIX MATCH type: preserve both columns in question_text; options list the match rows.',
+    'This is a MATRIX MATCH (match-the-column) type. Return ONE JSON entry for the whole question. Put ONLY the instruction/stem (e.g. "Match Column I with Columns II and III") in question_text — do NOT copy the columns into it — and leave options as an empty array []. Add a "columns" field: an array of EVERY column in printed order (there are usually TWO, sometimes THREE), each { "title": the column heading e.g. "Column I (Velocity)", "entries": [ { "label": the printed label e.g. "A"/"p"/"t", "body": that entry\'s text with math as LaTeX } ] }. If the page prints the correct matching, also add a "match" field mapping each FIRST-column label to the labels it matches, e.g. { "A": ["p","t"], "B": ["q","u"] }; omit it when the answer is not shown on the question page.',
   comprehension:
     'This is a COMPREHENSION type: a shared passage is followed by several sub-questions. Return ONE JSON entry PER SUB-QUESTION. Put ONLY that sub-question\'s own text in question_text — do NOT copy the passage into it. Add a "passage" field to every sub-question carrying the FULL shared passage VERBATIM, byte-for-byte IDENTICAL across all sub-questions that share it (this is how they are grouped into one question). question_number is each sub-question\'s printed number; options are that sub-question\'s own choices.',
   assertion_reason:

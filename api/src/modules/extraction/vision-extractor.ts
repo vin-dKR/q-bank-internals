@@ -1,4 +1,4 @@
-import type { Document } from '@ingest/contracts';
+import type { Document, MatchData } from '@ingest/contracts';
 import type { AiTokenUsage } from '../usage/index.js';
 
 /** One rasterized PDF page handed to the vision model. */
@@ -18,6 +18,12 @@ export type ExtractedQuestion = {
   sectionName: string | null;
   questionType: string | null;
   sourcePage: number;
+  /**
+   * Structured match-the-column data (columns + best-effort key) when the model read this as a MATRIX
+   * MATCH question; null otherwise. When set, {@link toNewQuestion} persists it and mirrors the key
+   * into the flat `answer` — the stem stays the bare instruction and `options` stays empty.
+   */
+  match: MatchData | null;
   /**
    * The shared comprehension passage this draft belongs under, returned VERBATIM and identical across
    * every sub-question of the same passage — null for ordinary questions. It is the grouping key that
