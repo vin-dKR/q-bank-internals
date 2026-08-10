@@ -3,15 +3,31 @@ import type { DriveFolderList } from '@ingest/contracts';
 import { ApiError } from '../../../shared/api/http-client.js';
 import { driveFoldersApi } from '../api/drive-folders.api.js';
 
-/** The distinct folder names at each level of the masters chapter tree (exam → subject → module → chapter). */
+/**
+ * The masters chapter tree (exam → subject → module → chapter), kept as both the distinct names at
+ * each level AND the parent→child links between them, so the metadata dropdowns can depend on each
+ * other (a chosen module scopes the chapters offered) instead of listing every value flat.
+ */
 export type DriveVocabulary = {
   exams: string[];
   subjects: string[];
   modules: string[];
   chapters: string[];
+  /** Child names grouped by parent name, one map per adjacent level of the tree. */
+  subjectsByExam: Record<string, string[]>;
+  modulesBySubject: Record<string, string[]>;
+  chaptersByModule: Record<string, string[]>;
 };
 
-const EMPTY_VOCABULARY: DriveVocabulary = { exams: [], subjects: [], modules: [], chapters: [] };
+const EMPTY_VOCABULARY: DriveVocabulary = {
+  exams: [],
+  subjects: [],
+  modules: [],
+  chapters: [],
+  subjectsByExam: {},
+  modulesBySubject: {},
+  chaptersByModule: {},
+};
 
 async function listChildren(parents: DriveFolderList): Promise<DriveFolderList> {
   const lists = await Promise.all(parents.map((folder) => driveFoldersApi.list(folder.id)));
@@ -20,6 +36,18 @@ async function listChildren(parents: DriveFolderList): Promise<DriveFolderList> 
 
 function names(folders: DriveFolderList): string[] {
   return [...new Set(folders.map((folder) => folder.name))];
+}
+
+/** Group each child folder's name under its parent folder's name (children keep `parentId`). */
+function groupByParent(parents: DriveFolderList, children: DriveFolderList): Record<string, string[]> {
+  const nameById = new Map(parents.map((folder) => [folder.id, folder.name]));
+  const out: Record<string, string[]> = {};
+  for (const child of children) {
+    const parentName = child.parentId ? nameById.get(child.parentId) : undefined;
+    if (!parentName) continue;
+    (out[parentName] ??= []).push(child.name);
+  }
+  return out;
 }
 
 /** Walk the masters tree breadth-first from the configured root, one folder level per vocabulary level. */
@@ -33,6 +61,9 @@ async function fetchDriveVocabulary(): Promise<DriveVocabulary> {
     subjects: names(subjects),
     modules: names(modules),
     chapters: names(chapters),
+    subjectsByExam: groupByParent(exams, subjects),
+    modulesBySubject: groupByParent(subjects, modules),
+    chaptersByModule: groupByParent(modules, chapters),
   };
 }
 

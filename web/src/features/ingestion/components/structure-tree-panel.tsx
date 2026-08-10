@@ -3,6 +3,7 @@ import type { ChapterKind } from '@ingest/contracts';
 import { Combobox, EmptyState, IconButton, IconLayers, IconPlus, IconTrash, IconX, Spinner } from '../../../shared/ui/index.js';
 import type { ChapterVocabulary } from '../hooks/use-chapter-vocabulary.js';
 import type { StructureTreeController } from '../hooks/use-structure-tree.js';
+import { cascadeMetadata } from '../lib/metadata-cascade.js';
 import { isPageDrag, readDraggedPages } from '../lib/page-dnd.js';
 import { type NodeLevel, type StructureNode, isLeaf } from '../types/structure-node.js';
 
@@ -57,10 +58,10 @@ export function StructureTreePanel({
         <h3 className="m-0 text-[13px] font-semibold uppercase tracking-wide text-ink-3">Chapter</h3>
         <MetaField label="Source" value={tree.metadata.source} options={vocabulary.sources} placeholder="pyq / module / textbook" onChange={(v) => { controller.setMetadata({ source: v }); }} />
         <div className="grid grid-cols-2 gap-2">
-          <MetaField label="Exam" value={tree.metadata.exam} options={vocabulary.exams} placeholder="e.g. JEE" onChange={(v) => { controller.setMetadata({ exam: v }); }} />
-          <MetaField label="Subject" value={tree.metadata.subject} options={vocabulary.subjects} placeholder="e.g. Physics" onChange={(v) => { controller.setMetadata({ subject: v }); }} />
-          <MetaField label="Module" value={tree.metadata.module} options={vocabulary.modules} placeholder="e.g. Resonance" onChange={(v) => { controller.setMetadata({ module: v }); }} />
-          <MetaField label="Chapter" value={tree.metadata.chapter} options={vocabulary.chapters} placeholder="e.g. Gravitation" onChange={(v) => { controller.setMetadata({ chapter: v }); }} />
+          <MetaField label="Exam" value={tree.metadata.exam} options={vocabulary.exams} placeholder="e.g. JEE" onChange={(v) => { controller.setMetadata(cascadeMetadata('exam', v, tree.metadata, vocabulary)); }} />
+          <MetaField label="Subject" value={tree.metadata.subject} options={vocabulary.subjectsFor(tree.metadata.exam)} placeholder="e.g. Physics" onChange={(v) => { controller.setMetadata(cascadeMetadata('subject', v, tree.metadata, vocabulary)); }} />
+          <MetaField label="Module" value={tree.metadata.module} options={vocabulary.modulesFor(tree.metadata.subject)} placeholder="e.g. Resonance" onChange={(v) => { controller.setMetadata(cascadeMetadata('module', v, tree.metadata, vocabulary)); }} />
+          <MetaField label="Chapter" value={tree.metadata.chapter} options={vocabulary.chaptersFor(tree.metadata.module)} placeholder="e.g. Gravitation" onChange={(v) => { controller.setMetadata(cascadeMetadata('chapter', v, tree.metadata, vocabulary)); }} />
         </div>
       </section>
 
