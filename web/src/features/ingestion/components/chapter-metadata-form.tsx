@@ -1,6 +1,7 @@
 import { type JSX } from 'react';
 import { Combobox } from '../../../shared/ui/index.js';
 import { useChapterVocabulary } from '../hooks/use-chapter-vocabulary.js';
+import { cascadeMetadata } from '../lib/metadata-cascade.js';
 import type { ChapterMetadataDraft } from '../types/chapter-group.js';
 
 type ChapterMetadataFormProps = {
@@ -11,7 +12,9 @@ type ChapterMetadataFormProps = {
 /**
  * The metadata that files a chapter into Drive: exam → subject → module → chapter (the folder path
  * the backend auto-creates), plus section name and question type. Every field is a searchable,
- * creatable Combobox seeded with the shared {@link useChapterVocabulary} suggestions.
+ * creatable Combobox seeded with the shared {@link useChapterVocabulary} suggestions — and the
+ * exam→subject→module→chapter→section fields are *dependent*: each offers only the children of the
+ * value chosen above it, and changing a parent clears any descendant it no longer allows.
  */
 export function ChapterMetadataForm({ value, onChange }: ChapterMetadataFormProps): JSX.Element {
   const suggestions = useChapterVocabulary();
@@ -24,7 +27,7 @@ export function ChapterMetadataForm({ value, onChange }: ChapterMetadataFormProp
           value={value.exam}
           options={suggestions.exams}
           placeholder="e.g. JEE"
-          onChange={(next) => { onChange({ exam: next }); }}
+          onChange={(next) => { onChange(cascadeMetadata('exam', next, value, suggestions)); }}
         />
       </label>
 
@@ -32,9 +35,9 @@ export function ChapterMetadataForm({ value, onChange }: ChapterMetadataFormProp
         <span>Subject</span>
         <Combobox
           value={value.subject}
-          options={suggestions.subjects}
+          options={suggestions.subjectsFor(value.exam)}
           placeholder="e.g. Physics"
-          onChange={(next) => { onChange({ subject: next }); }}
+          onChange={(next) => { onChange(cascadeMetadata('subject', next, value, suggestions)); }}
         />
       </label>
 
@@ -42,9 +45,9 @@ export function ChapterMetadataForm({ value, onChange }: ChapterMetadataFormProp
         <span>Module</span>
         <Combobox
           value={value.module}
-          options={suggestions.modules}
+          options={suggestions.modulesFor(value.subject)}
           placeholder="e.g. Allen"
-          onChange={(next) => { onChange({ module: next }); }}
+          onChange={(next) => { onChange(cascadeMetadata('module', next, value, suggestions)); }}
         />
       </label>
 
@@ -52,9 +55,9 @@ export function ChapterMetadataForm({ value, onChange }: ChapterMetadataFormProp
         <span>Chapter</span>
         <Combobox
           value={value.chapter}
-          options={suggestions.chapters}
+          options={suggestions.chaptersFor(value.module)}
           placeholder="e.g. Kinematics"
-          onChange={(next) => { onChange({ chapter: next }); }}
+          onChange={(next) => { onChange(cascadeMetadata('chapter', next, value, suggestions)); }}
         />
       </label>
 
@@ -62,7 +65,7 @@ export function ChapterMetadataForm({ value, onChange }: ChapterMetadataFormProp
         <span>Section</span>
         <Combobox
           value={value.sectionName}
-          options={suggestions.sections}
+          options={suggestions.sectionsFor(value.module, value.chapter)}
           placeholder="e.g. Exercise-1"
           onChange={(next) => { onChange({ sectionName: next }); }}
         />
