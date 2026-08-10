@@ -1,4 +1,4 @@
-import type { Document, QuestionOption } from '@ingest/contracts';
+import { type Document, matchKeyToAnswer, parseMatchKey, type QuestionOption } from '@ingest/contracts';
 import { logger } from '../../shared/logger/logger.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { NewQuestion, QuestionRepository } from '../questions/index.js';
@@ -64,9 +64,35 @@ function normalizeAnswerLabel(
  * covered by a block — a deterministic mapping, so the model can never mislabel a type.
  */
 function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestion {
+  const binding = topicBindingForPage(document.topics, draft.sourcePage);
+
+  // A match-the-column question persists its structured columns instead of options: the stem is the
+  // bare instruction, options stays empty, and the flat `answer` mirrors the match key. The question
+  // page rarely prints the matching, so back-fill an empty key from the merged answer sheet string.
+  if (draft.match) {
+    const key = Object.keys(draft.match.key).length > 0
+      ? draft.match.key
+      : parseMatchKey(draft.answer ?? '');
+    const answer = Object.keys(key).length > 0 ? matchKeyToAnswer(key) : draft.answer ?? '';
+    return {
+      documentId: document.id,
+      questionNumber: draft.questionNumber,
+      path: document.path,
+      stem: draft.questionText,
+      options: [],
+      answer,
+      match: { columns: draft.match.columns, key },
+      explanation: draft.explanation,
+      images: [],
+      questionType: binding?.questionType ?? document.questionType,
+      sectionName: document.sectionName ?? document.path.section,
+      topic: binding?.topicName ?? null,
+      sourceRegion: { page: draft.sourcePage, bbox: [0, 0, 1, 1] },
+    };
+  }
+
   const options = draft.options.map(parseOption);
   const answerLabel = normalizeAnswerLabel(draft.answer, options);
-  const binding = topicBindingForPage(document.topics, draft.sourcePage);
   return {
     documentId: document.id,
     questionNumber: draft.questionNumber,
@@ -78,6 +104,7 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
       isCorrect: answerLabel !== null && label === answerLabel,
     })),
     answer: draft.answer ?? '',
+    match: null,
     explanation: draft.explanation,
     images: [],
     questionType: binding?.questionType ?? document.questionType,

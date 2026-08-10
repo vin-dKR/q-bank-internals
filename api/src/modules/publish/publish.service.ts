@@ -1,4 +1,4 @@
-import type { Document, Question } from '@ingest/contracts';
+import { type Document, matchKeyToAnswer, type Question } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { QuestionRepository } from '../questions/index.js';
@@ -66,13 +66,22 @@ function toBankQuestion(
     isOptionImage: question.isOptionImage,
     options: question.options.map((option) => `(${option.label}) ${option.body}`),
     option_images: question.optionImages,
+    // Structured match-the-column data (2+ columns + the label→labels key) for MATRIX questions;
+    // null for every other type. New bank fields — a flat renderer still shows the matching via the
+    // mirrored `answer` string below, so nothing breaks if the bank ignores them.
+    match_columns: question.match ? question.match.columns : null,
+    match_key: question.match ? question.match.key : null,
     section_name: question.sectionName ?? document.sectionName ?? question.path.section,
     question_type: question.questionType ?? document.questionType ?? null,
     topic: question.topic,
     exam_name: exam,
     subject,
     chapter: question.path.chapter,
-    answer: question.answer || null,
+    // For a match question the answer is the key mirrored to text ("A-p,t; B-q,u"); else the raw answer.
+    answer:
+      (question.match && Object.keys(question.match.key).length > 0
+        ? matchKeyToAnswer(question.match.key)
+        : question.answer) || null,
     // Worked explanation merged from the sibling solution/explanation PDF (null when none was given).
     // New field on the bank — no prior explanation/solution column existed in the `Question` collection.
     explanation: question.explanation,

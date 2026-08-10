@@ -1,5 +1,5 @@
 import { OpenAI } from 'openai';
-import type { Document } from '@ingest/contracts';
+import type { Document, MatchData } from '@ingest/contracts';
 import type {
   AnswerExtraction,
   AnswerSheet,
@@ -19,10 +19,47 @@ type RawQuestion = {
   options?: unknown;
   /** Only present for comprehension questions — the shared passage, repeated on each sub-question. */
   passage?: unknown;
+  /** Only present for matrix-match questions — the ordered columns and (optionally) the answer key. */
+  columns?: unknown;
+  match?: unknown;
 };
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+/**
+ * Build structured match-the-column data from a matrix question's raw `columns`/`match`. Returns null
+ * unless at least two well-formed columns are present, so a non-matrix (or malformed) response simply
+ * falls back to the ordinary question path. The key keeps only string→string[] entries.
+ */
+function toMatchData(rawColumns: unknown, rawMatch: unknown): MatchData | null {
+  if (!Array.isArray(rawColumns)) return null;
+  const columns: MatchData['columns'] = [];
+  for (const rawColumn of rawColumns) {
+    const record = rawColumn as { title?: unknown; entries?: unknown };
+    const entries = Array.isArray(record.entries)
+      ? record.entries
+          .map((rawEntry) => {
+            const entry = rawEntry as { label?: unknown; body?: unknown };
+            return { label: asString(entry.label).trim(), body: asString(entry.body) };
+          })
+          .filter((entry) => entry.label.length > 0)
+      : [];
+    if (entries.length > 0) columns.push({ title: asString(record.title), entries });
+  }
+  if (columns.length < 2) return null;
+
+  const key: Record<string, string[]> = {};
+  if (rawMatch && typeof rawMatch === 'object') {
+    for (const [label, targets] of Object.entries(rawMatch as Record<string, unknown>)) {
+      const list = Array.isArray(targets)
+        ? targets.map(asString).map((t) => t.trim()).filter(Boolean)
+        : [];
+      if (list.length > 0) key[label.trim()] = list;
+    }
+  }
+  return { columns, key };
 }
 
 function toQuestionNumber(value: unknown): number | null {
@@ -133,6 +170,7 @@ export class OpenAiVisionExtractor implements VisionExtractor {
           sectionName: input.document.sectionName,
           questionType: input.document.questionType,
           sourcePage: page.pageNumber,
+          match: toMatchData(raw.columns, raw.match),
           passage: asStringOrNull(raw.passage),
         });
       }

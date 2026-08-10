@@ -130,6 +130,9 @@ model Question {
   options         QuestionOption[]
   answer          String
   explanation     String?
+  // Structured match-the-column data ({ columns, key }) for MATRIX MATCH questions; null otherwise.
+  // Stored as Json so the nested columns + the label→labels key map need no composite-type schema.
+  match           Json?
   images          QuestionImage[]
   isQuestionImage Boolean          @default(false)
   questionImage   String?

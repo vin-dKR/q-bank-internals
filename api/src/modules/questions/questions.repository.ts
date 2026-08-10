@@ -1,4 +1,5 @@
 import type {
+  MatchData,
   Question,
   QuestionImage,
   QuestionOption,
@@ -14,6 +15,7 @@ export type NewQuestion = {
   stem: string;
   options: QuestionOption[];
   answer: string;
+  match: MatchData | null;
   explanation: string | null;
   images: QuestionImage[];
   questionType: string | null;

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { Question, QuestionBatchUpdate, QuestionOption, UpdateQuestion } from '@ingest/contracts';
+import type { MatchData, Question, QuestionBatchUpdate, QuestionOption, UpdateQuestion } from '@ingest/contracts';
 import { useToast } from '../../../shared/ui/index.js';
 import { useBatchUpdateQuestions } from './use-questions.js';
 
@@ -12,6 +12,8 @@ export type QuestionDraft = {
   sectionName: string;
   topic: string;
   options: QuestionOption[];
+  /** Structured match-the-column data (columns + key) for MATRIX questions; null for every other. */
+  match: MatchData | null;
 };
 
 /** Document-level fallbacks shown (and saved on first edit) when the question's own field is blank. */
@@ -26,11 +28,18 @@ function toQuestionDraft(question: Question, fallbacks: DraftFallbacks): Questio
     sectionName: question.sectionName ?? fallbacks.sectionName ?? '',
     topic: question.topic ?? '',
     options: question.options.map((option) => ({ ...option })),
+    match: question.match,
   };
 }
 
 function optionEquals(a: QuestionOption, b: QuestionOption): boolean {
   return a.label === b.label && a.body === b.body && a.isCorrect === b.isCorrect;
+}
+
+/** Deep-compare structured match data. A cheap JSON compare is enough — the shape is small and any
+ * false "dirty" only enables Update, never loses an edit. */
+function matchEquals(a: MatchData | null, b: MatchData | null): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function draftEquals(a: QuestionDraft, b: QuestionDraft): boolean {
@@ -41,6 +50,7 @@ function draftEquals(a: QuestionDraft, b: QuestionDraft): boolean {
     a.questionType === b.questionType &&
     a.sectionName === b.sectionName &&
     a.topic === b.topic &&
+    matchEquals(a.match, b.match) &&
     a.options.length === b.options.length &&
     a.options.every((option, i) => {
       const other = b.options[i];
@@ -55,6 +65,7 @@ function draftToPatch(draft: QuestionDraft): UpdateQuestion {
     answer: draft.answer,
     explanation: draft.explanation || null,
     options: draft.options,
+    match: draft.match,
     questionType: draft.questionType || null,
     sectionName: draft.sectionName || null,
     topic: draft.topic || null,
