@@ -49,6 +49,67 @@ type DrawTarget = { questionId: string; type: 'question' | 'option'; optionIndex
 /** One in-flight auto-save per box; `again` re-runs it with the latest rect once the current pass ends. */
 type SaveRun = { again: boolean; done: Promise<void> };
 
+/**
+ * A saved crop box remembered for its page in resolution-independent NATURAL image pixels, so it can
+ * be redrawn at the same region on any fit when the operator navigates back to that page. Session-only
+ * — the durable record is the attached image URL on the question; this just re-materialises the box.
+ */
+type SavedBoxSpec = {
+  id: string;
+  questionId: string;
+  type: 'question' | 'option';
+  optionIndex: number;
+  label: string;
+  source: 'manual' | 'ai';
+  snippet?: string;
+  /** Crop rect in natural image pixels. */
+  nx: number;
+  ny: number;
+  nw: number;
+  nh: number;
+  /** The image URL this saved crop attached to its question. */
+  url: string;
+};
+
+/** Rebuild a display-pixel box from a natural-pixel spec against the page's current fitted size. */
+function specToBox(spec: SavedBoxSpec, size: CanvasSize): Box {
+  const sx = size.displayWidth / size.naturalWidth;
+  const sy = size.displayHeight / size.naturalHeight;
+  return {
+    id: spec.id,
+    questionId: spec.questionId,
+    type: spec.type,
+    optionIndex: spec.optionIndex,
+    label: spec.label,
+    source: spec.source,
+    ...(spec.snippet !== undefined ? { snippet: spec.snippet } : {}),
+    x: spec.nx * sx,
+    y: spec.ny * sy,
+    width: spec.nw * sx,
+    height: spec.nh * sy,
+  };
+}
+
+/** Capture a saved box as a natural-pixel spec so it survives a page's changing fitted size. */
+function boxToSpec(box: Box, url: string, size: CanvasSize): SavedBoxSpec {
+  const sx = size.naturalWidth / size.displayWidth;
+  const sy = size.naturalHeight / size.displayHeight;
+  return {
+    id: box.id,
+    questionId: box.questionId,
+    type: box.type,
+    optionIndex: box.optionIndex,
+    label: box.label,
+    source: box.source,
+    ...(box.snippet !== undefined ? { snippet: box.snippet } : {}),
+    nx: box.x * sx,
+    ny: box.y * sy,
+    nw: box.width * sx,
+    nh: box.height * sy,
+    url,
+  };
+}
+
 function splitUrls(value: string | null): string[] {
   return value ? value.split(',').map((u) => u.trim()).filter(Boolean) : [];
 }
@@ -204,6 +265,16 @@ export function VerifyWorkspace({
   const savedUrlsRef = useRef<ReadonlyMap<string, string>>(new Map());
   const saveRuns = useRef(new Map<string, SaveRun>());
 
+  // Saved crop boxes are per-page canvas overlays that goToPage wipes on navigation. Remember each
+  // page's saved boxes (in natural pixels) here so returning to a page — or landing on one a whole-
+  // document run just cropped — redraws its boxes. `pendingRestore` is the page a navigation asked to
+  // restore, applied once that page's fitted size is known.
+  const pageCache = useRef(new Map<number, SavedBoxSpec[]>());
+  const pendingRestore = useRef<number | null>(null);
+  // The visible page, mirrored so an async run (which can outlive a navigation) decides "is this page
+  // on screen?" against where the operator actually is, not where the run started.
+  const pageRef = useRef(1);
+
   // Questions are read straight from the query cache at write time — useUpdateQuestion writes each
   // mutation result back into that cache before mutateAsync resolves, so a save that follows another
   // save (or a card edit) of the same question always sees the post-patch record, never a stale one.
@@ -294,6 +365,7 @@ export function VerifyWorkspace({
   const imageSrc = questionsApi.pageImageUrl(documentId, page);
   const imageSrcRef = useRef(imageSrc);
   imageSrcRef.current = imageSrc;
+  pageRef.current = page;
 
   const onThisPage = useMemo(
     () => (questions.data ?? []).filter((q) => q.sourceRegion.page === page),
@@ -326,7 +398,18 @@ export function VerifyWorkspace({
   };
   useEffect(() => () => { if (highlightTimer.current) clearTimeout(highlightTimer.current); }, []);
 
+  /** Snapshot the current page's saved boxes (natural pixels) so navigating back to it redraws them. */
+  const cacheCurrentPage = (pageNumber: number): void => {
+    const s = sizeRef.current;
+    if (!s || s.displayWidth === 0) return;
+    const specs = boxesRef.current
+      .filter((b) => savedUrlsRef.current.has(b.id))
+      .map((b) => boxToSpec(b, savedUrlsRef.current.get(b.id) as string, s));
+    pageCache.current.set(pageNumber, specs);
+  };
+
   const goToPage = (next: number): void => {
+    cacheCurrentPage(page);
     applyBoxes(() => []);
     past.current = [];
     future.current = [];
@@ -335,6 +418,7 @@ export function VerifyWorkspace({
     setDrawTarget(null);
     setAiResult(null);
     setAiError(null);
+    pendingRestore.current = next;
     setPage(next);
   };
 
@@ -584,6 +668,19 @@ export function VerifyWorkspace({
     }
   }, [questions.data, applyBoxes]);
 
+  // Redraw a page's cached saved boxes when navigation lands on it — once the fitted size is known so
+  // the natural-pixel specs map to the right display region. Only fires for the page a navigation
+  // asked to restore, so it never clobbers live work on a page the operator is already editing.
+  useEffect(() => {
+    if (pendingRestore.current !== page) return;
+    if (!size || size.displayWidth === 0 || size.naturalWidth === 0) return;
+    pendingRestore.current = null;
+    const specs = pageCache.current.get(page) ?? [];
+    if (specs.length === 0) return;
+    applyBoxes(() => specs.map((spec) => specToBox(spec, size)));
+    applySavedUrls(() => new Map(specs.map((spec) => [spec.id, spec.url])));
+  }, [page, size, applyBoxes, applySavedUrls]);
+
   // --- AI detection: mark the current page's figures for review, never auto-save. ---
   const detectCurrentPage = useCallback(async (): Promise<void> => {
     if (!size || size.displayWidth === 0) {
@@ -705,6 +802,10 @@ export function VerifyWorkspace({
       let attached = 0;
       let failed = 0;
       const touchedPages = new Set<number>();
+      // Saved-box specs (natural pixels) for every attached figure, grouped by the page it sits on, so
+      // navigation can redraw the boxes this run cropped. Only committed once a question's patch lands.
+      const cachedByPage = new Map<number, SavedBoxSpec[]>();
+      let specSeq = 0;
       setAllProgress({ phase: 'apply', done, total });
       for (const [questionId, group] of byQuestion) {
         const question = freshById.get(questionId);
@@ -715,6 +816,7 @@ export function VerifyWorkspace({
         let touchedOption = false;
         let attachedHere = 0;
         const pagesHere = new Set<number>();
+        const specsHere: { sourcePage: number; spec: SavedBoxSpec }[] = [];
         for (const { page: sourcePage, figure } of group) {
           try {
             const [x, y, w, h] = figure.bbox;
@@ -731,6 +833,23 @@ export function VerifyWorkspace({
               optionImages[figure.optionIndex] = url;
               touchedOption = true;
             }
+            specsHere.push({
+              sourcePage,
+              spec: {
+                id: `all_${questionId}_${figure.target}_${String(figure.optionIndex)}_${String(specSeq++)}`,
+                questionId,
+                type: figure.target,
+                optionIndex: figure.optionIndex,
+                label: `Q${String(questionNumberById.get(questionId) ?? '?')}${figure.target === 'option' ? ` · option ${String(figure.optionIndex + 1)}` : ''}`,
+                source: 'ai',
+                snippet: figure.snippet,
+                nx: x,
+                ny: y,
+                nw: w,
+                nh: h,
+                url,
+              },
+            });
             attachedHere += 1;
             pagesHere.add(sourcePage);
           } catch (caught) {
@@ -753,11 +872,35 @@ export function VerifyWorkspace({
           });
           attached += attachedHere;
           for (const touched of pagesHere) touchedPages.add(touched);
+          // Patch landed — the crops are attached, so their boxes can now be redrawn per page.
+          for (const { sourcePage, spec } of specsHere) {
+            const list = cachedByPage.get(sourcePage) ?? [];
+            list.push(spec);
+            cachedByPage.set(sourcePage, list);
+          }
         } catch (caught) {
           failed += attachedHere;
           firstFailure ??= caught instanceof Error ? caught.message : String(caught);
         }
       }
+
+      // Stash each page's new boxes for restore-on-navigation; the current page gets them live now so
+      // the run's result is visible on the canvas without leaving and coming back.
+      const currentSize = sizeRef.current;
+      for (const [pg, specs] of cachedByPage) {
+        if (pg === pageRef.current && currentSize && currentSize.displayWidth > 0) {
+          applyBoxes((prev) => [...prev, ...specs.map((spec) => specToBox(spec, currentSize))]);
+          applySavedUrls((prev) => {
+            const nextMap = new Map(prev);
+            for (const spec of specs) nextMap.set(spec.id, spec.url);
+            return nextMap;
+          });
+        } else {
+          const existing = pageCache.current.get(pg) ?? [];
+          pageCache.current.set(pg, [...existing, ...specs]);
+        }
+      }
+
       setAllSummary({ attached, skipped, pages: touchedPages.size, failed, failedPages: failedPages.size });
       setError(firstFailure);
     } catch (caught) {
@@ -766,7 +909,7 @@ export function VerifyWorkspace({
       runActiveRef.current = false;
       setAllProgress(null);
     }
-  }, [documentId, questions.data, patchQuestion]);
+  }, [documentId, questions.data, patchQuestion, questionNumberById, applyBoxes, applySavedUrls]);
 
   // Auto-detect once on arrival when the session pushed us here with ?auto=1 (still only marks).
   const autoStarted = useRef(false);
