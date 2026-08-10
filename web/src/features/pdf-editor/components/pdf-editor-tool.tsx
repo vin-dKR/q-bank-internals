@@ -13,6 +13,7 @@ import {
   IconZoomIn,
   IconZoomOut,
   LoadedFileBar,
+  useToast,
 } from '../../../shared/ui/index.js';
 import { bytesToBlob, readFileAsDataUrl, saveBlob } from '../../../shared/lib/files.js';
 import { usePdfFile } from '../../../shared/lib/use-pdf-file.js';
@@ -31,6 +32,7 @@ const MAX_ZOOM = 2;
  */
 export function PdfEditorTool(): JSX.Element {
   const pdf = usePdfFile();
+  const { error: toastError } = useToast();
   const [numPages, setNumPages] = useState(0);
   const [elements, setElements] = useState<EditorElement[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -80,6 +82,11 @@ export function PdfEditorTool(): JSX.Element {
     const chosen = event.target.files?.[0];
     event.target.value = '';
     if (!chosen) return;
+    // Export embeds via pdf-lib, which only supports PNG and JPEG — reject anything else up front.
+    if (chosen.type !== 'image/png' && chosen.type !== 'image/jpeg') {
+      toastError('Unsupported image', 'Only PNG or JPG images can be added.');
+      return;
+    }
     void readFileAsDataUrl(chosen).then((dataUrl) => {
       const id = crypto.randomUUID();
       setElements((prev) => [
@@ -94,6 +101,13 @@ export function PdfEditorTool(): JSX.Element {
     setBusy(true);
     try {
       saveBlob(bytesToBlob(await exportEditedPdf(file.bytes, elements, PAGE_WIDTH)), 'edited.pdf');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '';
+      // pdf-lib's built-in Helvetica is Latin-1 only; non-WinAnsi glyphs (Greek, ₹, most math) throw.
+      const friendly = /WinAnsi|encode/i.test(message)
+        ? 'Some text uses characters the built-in font can’t embed (e.g. Greek or math symbols). Remove or replace them and try again.'
+        : message || 'Please try again.';
+      toastError('Export failed', friendly);
     } finally {
       setBusy(false);
     }
@@ -129,7 +143,7 @@ export function PdfEditorTool(): JSX.Element {
         <Button variant="primary" size="xs" onClick={() => { void exportPdf(); }} disabled={busy}>
           {busy ? 'Exporting…' : 'Export PDF'}
         </Button>
-        <input ref={imageInputRef} type="file" accept="image/*" hidden onChange={addImage} />
+        <input ref={imageInputRef} type="file" accept="image/png,image/jpeg" hidden onChange={addImage} />
       </div>
 
       <ErrorBoundary

@@ -10,14 +10,26 @@ type FileDropzoneProps = {
   icon?: ReactNode;
 };
 
-/** Keep only the files whose type matches the `accept` list (handles `image/*` style wildcards). */
+/** The file extensions a MIME accept-pattern implies, for the fallback when the OS reports no type. */
+function extensionsFor(pattern: string): string[] {
+  if (pattern === 'application/pdf') return ['.pdf'];
+  if (pattern.startsWith('image/')) return ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'];
+  return [];
+}
+
+/** Keep only the files whose type matches the `accept` list (handles `image/*` and empty-MIME files). */
 function matchesAccept(file: File, accept: string): boolean {
   const patterns = accept.split(',').map((p) => p.trim()).filter(Boolean);
   if (patterns.length === 0) return true;
-  return patterns.some((pattern) => {
-    if (pattern.endsWith('/*')) return file.type.startsWith(pattern.slice(0, -1));
-    return file.type === pattern;
-  });
+  if (file.type) {
+    return patterns.some((pattern) =>
+      pattern.endsWith('/*') ? file.type.startsWith(pattern.slice(0, -1)) : file.type === pattern,
+    );
+  }
+  // Some OSes hand over a PDF with an empty MIME type — fall back to the file extension.
+  const dot = file.name.lastIndexOf('.');
+  const ext = dot >= 0 ? file.name.slice(dot).toLowerCase() : '';
+  return patterns.some((pattern) => extensionsFor(pattern).includes(ext));
 }
 
 /**

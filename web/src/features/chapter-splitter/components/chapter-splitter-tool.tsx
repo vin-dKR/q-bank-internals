@@ -7,6 +7,7 @@ import {
   IconLayers,
   IconTrash,
   LoadedFileBar,
+  useToast,
 } from '../../../shared/ui/index.js';
 import { bytesToBlob, saveBlob } from '../../../shared/lib/files.js';
 import { usePdfFile } from '../../../shared/lib/use-pdf-file.js';
@@ -27,6 +28,7 @@ const EMPTY_DRAFT: Draft = { start: '', end: '', name: '' };
  */
 export function ChapterSplitterTool(): JSX.Element {
   const pdf = usePdfFile();
+  const { error: toastError } = useToast();
   const [pageCount, setPageCount] = useState<number | null>(null);
   const [ranges, setRanges] = useState<ChapterRange[]>([]);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
@@ -105,6 +107,8 @@ export function ChapterSplitterTool(): JSX.Element {
     try {
       const bytes = await buildChapterPdf(file.bytes, range);
       saveBlob(bytesToBlob(bytes), chapterFileName(range));
+    } catch (err) {
+      toastError('Couldn’t build that chapter', err instanceof Error ? err.message : 'Please try again.');
     } finally {
       setBusy(false);
     }
@@ -114,6 +118,8 @@ export function ChapterSplitterTool(): JSX.Element {
     setBusy(true);
     try {
       saveBlob(await buildChaptersZip(file.bytes, ranges), 'chapters.zip');
+    } catch (err) {
+      toastError('Couldn’t build the zip', err instanceof Error ? err.message : 'Please try again.');
     } finally {
       setBusy(false);
     }

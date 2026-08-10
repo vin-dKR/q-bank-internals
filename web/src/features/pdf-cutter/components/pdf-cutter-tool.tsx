@@ -10,6 +10,7 @@ import {
   FileDropzone,
   IconScissors,
   LoadedFileBar,
+  useToast,
 } from '../../../shared/ui/index.js';
 import { bytesToBlob, saveBlob } from '../../../shared/lib/files.js';
 import { usePdfFile } from '../../../shared/lib/use-pdf-file.js';
@@ -26,6 +27,7 @@ const PAGE_WIDTH = 640;
  */
 export function PdfCutterTool(): JSX.Element {
   const pdf = usePdfFile();
+  const { error: toastError } = useToast();
   const [numPages, setNumPages] = useState(0);
   const [splits, setSplits] = useState<SplitPoint[]>([]);
   const [busy, setBusy] = useState(false);
@@ -65,6 +67,8 @@ export function PdfCutterTool(): JSX.Element {
     setBusy(true);
     try {
       saveBlob(bytesToBlob(await buildMergedPdf(file.bytes, splits)), 'merged.pdf');
+    } catch (err) {
+      toastError('Export failed', err instanceof Error ? err.message : 'Please try again.');
     } finally {
       setBusy(false);
     }

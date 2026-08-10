@@ -12,6 +12,7 @@ import {
   IconCheck,
   IconScan,
   LoadedFileBar,
+  useToast,
 } from '../../../shared/ui/index.js';
 import { saveBlob } from '../../../shared/lib/files.js';
 import { usePdfFile } from '../../../shared/lib/use-pdf-file.js';
@@ -25,6 +26,7 @@ const THUMB_WIDTH = 150;
  */
 export function QnaPdfTool(): JSX.Element {
   const pdf = usePdfFile();
+  const { error: toastError } = useToast();
   const [numPages, setNumPages] = useState(0);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [name, setName] = useState('');
@@ -69,6 +71,8 @@ export function QnaPdfTool(): JSX.Element {
     setBusy(true);
     try {
       saveBlob(await buildQnaZip(file.bytes, selected, name), `${name.trim() || 'qna'}.zip`);
+    } catch (err) {
+      toastError('Export failed', err instanceof Error ? err.message : 'Please try again.');
     } finally {
       setBusy(false);
     }
