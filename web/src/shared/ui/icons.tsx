@@ -30,6 +30,37 @@ export function IconTrash(props: IconProps): JSX.Element {
   );
 }
 
+export function IconScissors(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <circle cx="6" cy="6" r="3" />
+      <circle cx="6" cy="18" r="3" />
+      <line x1="20" y1="4" x2="8.12" y2="15.88" />
+      <line x1="14.47" y1="14.48" x2="20" y2="20" />
+      <line x1="8.12" y1="8.12" x2="12" y2="12" />
+    </svg>
+  );
+}
+
+export function IconImage(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="m21 15-3.9-3.9a2 2 0 0 0-2.8 0L6 19" />
+    </svg>
+  );
+}
+
+export function IconEdit(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
 export function IconSparkle(props: IconProps): JSX.Element {
   return (
     <svg {...base(props)}>

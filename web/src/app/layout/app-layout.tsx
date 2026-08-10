@@ -1,6 +1,6 @@
 import type { JSX } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
-import { IconLayers } from '../../shared/ui/index.js';
+import { IconEdit, IconFileText, IconImage, IconLayers, IconScan } from '../../shared/ui/index.js';
 
 /** Minimal line icons (inline so there are no asset/CSP dependencies). */
 function IconScissors(): JSX.Element {
@@ -127,6 +127,32 @@ export function AppLayout(): JSX.Element {
           <NavLink to="/masters" className={navClass}>
             <IconMasters />
             All masters
+          </NavLink>
+        </nav>
+
+        <div className="px-2 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-ink-3 max-[820px]:hidden">
+          Tools
+        </div>
+        <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
+          <NavLink to="/tools/chapters" className={navClass}>
+            <IconFileText />
+            Chapter Splitter
+          </NavLink>
+          <NavLink to="/tools/cut" className={navClass}>
+            <IconScissors />
+            PDF Page Cutter
+          </NavLink>
+          <NavLink to="/tools/qna" className={navClass}>
+            <IconScan />
+            QnA PDF Generator
+          </NavLink>
+          <NavLink to="/tools/rename" className={navClass}>
+            <IconImage />
+            Image Renamer
+          </NavLink>
+          <NavLink to="/tools/edit" className={navClass}>
+            <IconEdit />
+            Pdf Editor
           </NavLink>
         </nav>
 
