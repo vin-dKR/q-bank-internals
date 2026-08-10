@@ -2,38 +2,8 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import type { BankQuestion } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
+import { ejsonBool, ejsonNumber, escapeRegex, firstBatch, oid } from '../database/mongo-ejson.js';
 import type { BankImagePatch, BankQuestionStore } from '../../modules/bank/index.js';
-
-/** Escape user text so it is matched as a literal substring by `$regex`, never as a pattern. */
-function escapeRegex(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** `$runCommandRaw` returns extended JSON: numbers may be wrapped as `{ $numberInt: "1" }` etc. */
-const ejsonNumber = z.preprocess((value) => {
-  if (typeof value === 'number') return value;
-  if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    const raw = record.$numberInt ?? record.$numberLong ?? record.$numberDouble;
-    if (typeof raw === 'string') return Number(raw);
-  }
-  return value;
-}, z.number());
-
-/** Booleans stored as 1/"true"/true all mean true; anything else is false. */
-const ejsonBool = z.preprocess(
-  (value) => value === true || value === 1 || value === '1' || value === 'true',
-  z.boolean(),
-);
-
-/** The Mongo `_id` comes back as `{ $oid: "…" }`; unwrap it to the hex string. */
-const oid = z.preprocess((value) => {
-  if (value && typeof value === 'object') {
-    const hex = (value as Record<string, unknown>).$oid;
-    if (typeof hex === 'string') return hex;
-  }
-  return value;
-}, z.string());
 
 const RawIngestRefSchema = z
   .object({
@@ -149,11 +119,8 @@ export class MongoBankQuestionStore implements BankQuestionStore {
 
   /** Pull the `cursor.firstBatch` out of a raw `find` reply and parse each document, dropping junk. */
   private readBatch(result: unknown): BankQuestion[] {
-    const cursor = (result as { cursor?: { firstBatch?: unknown } }).cursor;
-    const batch = cursor?.firstBatch;
-    if (!Array.isArray(batch)) return [];
     const questions: BankQuestion[] = [];
-    for (const item of batch) {
+    for (const item of firstBatch(result)) {
       const parsed = RawBankQuestionSchema.safeParse(item);
       if (parsed.success) questions.push(parsed.data);
     }

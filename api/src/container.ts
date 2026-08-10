@@ -26,6 +26,7 @@ import {
 import { PagesService } from './modules/pages/index.js';
 import { PublishService } from './modules/publish/index.js';
 import { BankService } from './modules/bank/index.js';
+import { CatalogService } from './modules/catalog/index.js';
 import { DriveService } from './modules/drive/index.js';
 import { IngestionService } from './modules/ingestion/index.js';
 import { InMemoryDocumentRepository } from './infrastructure/database/repositories/document.in-memory-repository.js';
@@ -62,6 +63,8 @@ import { MongoBankPublisher } from './infrastructure/bank/mongo.bank-publisher.j
 import { UnconfiguredBankPublisher } from './infrastructure/bank/unconfigured.bank-publisher.js';
 import { MongoBankQuestionStore } from './infrastructure/bank/mongo.bank-question-store.js';
 import { UnconfiguredBankQuestionStore } from './infrastructure/bank/unconfigured.bank-question-store.js';
+import { MongoCatalogStore } from './infrastructure/catalog/mongo.catalog-store.js';
+import { UnconfiguredCatalogStore } from './infrastructure/catalog/unconfigured.catalog-store.js';
 
 /**
  * The COMPOSITION ROOT (§5). The single file allowed to `new` infrastructure and decide which
@@ -75,6 +78,7 @@ export type Container = {
   pagesService: PagesService;
   publishService: PublishService;
   bankService: BankService;
+  catalogService: CatalogService;
   extractionService: ExtractionService;
   extractionWorker: ExtractionWorker;
   jobQueue: JobQueue;
@@ -241,6 +245,11 @@ export function createContainer(): Container {
       ? new MongoBankQuestionStore(getPrisma())
       : new UnconfiguredBankQuestionStore();
   const bankService = new BankService(bankQuestionStore);
+  const catalogStore =
+    env.DB_DRIVER === 'mongo'
+      ? new MongoCatalogStore(getPrisma())
+      : new UnconfiguredCatalogStore();
+  const catalogService = new CatalogService(catalogStore);
   const extractionService = new ExtractionService(
     documents,
     jobs,
@@ -287,6 +296,7 @@ export function createContainer(): Container {
     pagesService,
     publishService,
     bankService,
+    catalogService,
     extractionService,
     extractionWorker,
     jobQueue,
