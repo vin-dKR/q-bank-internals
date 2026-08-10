@@ -42,6 +42,16 @@ function IconMasters(): JSX.Element {
   );
 }
 
+function IconQuestions(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 4h13a2 2 0 0 1 2 2v14l-4-3H6a2 2 0 0 1-2-2Z" />
+      <path d="M9.5 9a2 2 0 0 1 3.5 1.3c0 1.3-2 1.7-2 3" />
+      <path d="M11 15.5h.01" />
+    </svg>
+  );
+}
+
 function IconGauge(): JSX.Element {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -95,6 +105,10 @@ export function AppLayout(): JSX.Element {
           <NavLink to="/verify" className={navClass}>
             <IconCheck />
             Verify
+          </NavLink>
+          <NavLink to="/questions" className={navClass}>
+            <IconQuestions />
+            Questions
           </NavLink>
           <NavLink to="/bank" className={navClass}>
             <IconWrench />

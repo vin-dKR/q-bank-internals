@@ -8,5 +8,6 @@ export * from './sessions/index.js';
 export * from './documents/index.js';
 export * from './questions/index.js';
 export * from './bank/index.js';
+export * from './catalog/index.js';
 export * from './extraction/index.js';
 export * from './usage/index.js';
