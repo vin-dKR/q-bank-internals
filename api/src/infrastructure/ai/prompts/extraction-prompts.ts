@@ -32,7 +32,7 @@ EXTRACTION RULES:
 3. question_text: the complete question text, including any passage and math (use LaTeX like \\( \\sqrt{3} \\)).
 4. options: an array of strings, always prefixed and normalized as "(A) …", "(B) …", "(C) …", "(D) …".
 5. Normalize option labels printed as (1)(2)(3)(4) to (A)(B)(C)(D).
-6. For a comprehension passage, include the passage at the start of question_text.
+6. Do NOT repeat a shared comprehension passage inside every question_text — a comprehension paper is handled by the TYPE-SPECIFIC RULE below.
 7. For subjective questions with no options, use an empty array [].
 8. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.
 `;
@@ -46,7 +46,7 @@ const TYPE_RULES: Record<string, string> = {
   matrix:
     'This is a MATRIX MATCH type: preserve both columns in question_text; options list the match rows.',
   comprehension:
-    'This is a COMPREHENSION type: include the shared passage at the start of each question_text.',
+    'This is a COMPREHENSION type: a shared passage is followed by several sub-questions. Return ONE JSON entry PER SUB-QUESTION. Put ONLY that sub-question\'s own text in question_text — do NOT copy the passage into it. Add a "passage" field to every sub-question carrying the FULL shared passage VERBATIM, byte-for-byte IDENTICAL across all sub-questions that share it (this is how they are grouped into one question). question_number is each sub-question\'s printed number; options are that sub-question\'s own choices.',
   assertion_reason:
     'This is an ASSERTION-REASON type: question_text contains both the Assertion (A) and the Reason (R) statements; options are the four standard evaluations of A and R.',
   true_false:

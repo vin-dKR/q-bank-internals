@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
 import { KNOWN_QUESTION_TYPES, type Question, type ReExtractedQuestion } from '@ingest/contracts';
-import { Badge, Button, Combobox, IconButton, IconPlus, IconScan, IconSparkle, IconX, Spinner } from '../../../shared/ui/index.js';
+import { Badge, Button, Combobox, IconButton, IconPlus, IconScan, IconSparkle, IconUndo, IconX, Spinner } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { questionsApi } from '../api/questions.api.js';
 import { useUpdateQuestion } from '../hooks/use-questions.js';
@@ -106,6 +106,10 @@ export function EditableQuestionCard({
   const update = useUpdateQuestion();
   const [fixing, setFixing] = useState<string | null>(null);
   const [reading, setReading] = useState<string | null>(null);
+  // The value each field held just before its last AI action replaced it — a one-deep, per-field undo.
+  // An AI re-read of the answer/explanation commonly returns "" (question papers rarely print the
+  // answer), which would silently wipe a good value; this lets the operator put it straight back.
+  const [preAi, setPreAi] = useState<Record<string, string>>({});
 
   const set = <K extends keyof QuestionDraft>(key: K, value: QuestionDraft[K]): void => {
     onDraftChange({ ...draft, [key]: value });
@@ -117,10 +121,23 @@ export function EditableQuestionCard({
     });
   };
 
+  /** Apply an AI-produced value to a field, remembering the previous value so it can be undone. */
+  const applyAi = (key: string, previous: string, next: string, apply: (t: string) => void): void => {
+    setPreAi((prev) => ({ ...prev, [key]: previous }));
+    apply(next);
+  };
+  /** Put a field back to what it held before its last AI action, and drop its undo entry. */
+  const undoAi = (key: string, apply: (t: string) => void): void => {
+    const previous = preAi[key];
+    if (previous === undefined) return;
+    apply(previous);
+    setPreAi((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => k !== key)));
+  };
+
   const refine = async (field: string, value: string, apply: (t: string) => void): Promise<void> => {
     setFixing(field);
     try {
-      apply(await questionsApi.refine(value));
+      applyAi(field, value, await questionsApi.refine(value), apply);
     } finally {
       setFixing(null);
     }
@@ -143,9 +160,10 @@ export function EditableQuestionCard({
   };
 
   /**
-   * The two AI buttons a text field carries: sparkle = clean this field's LaTeX in place; scan =
-   * re-read the whole question from the page and pull just this field out of the fresh extraction.
-   * The two are mutually exclusive per field so a re-read never races an in-place refine.
+   * The AI buttons a text field carries: sparkle = clean this field's LaTeX in place; scan = re-read
+   * the whole question from the page and pull just this field out of the fresh extraction; undo =
+   * restore the value the last AI action replaced (shown only once one has run). The first two are
+   * mutually exclusive per field so a re-read never races an in-place refine.
    */
   const fieldAi = (
     key: string,
@@ -169,10 +187,19 @@ export function EditableQuestionCard({
         onClick={() => {
           void reExtract(key, (fresh) => {
             const value = pick(fresh);
-            if (value !== null) applyText(value);
+            if (value !== null) applyAi(key, current, value, applyText);
           });
         }}
       />
+      {preAi[key] !== undefined ? (
+        <AiButton
+          busy={false}
+          disabled={fixing === key || reading === key}
+          title="Undo the last AI change to this field"
+          icon={<IconUndo />}
+          onClick={() => { undoAi(key, applyText); }}
+        />
+      ) : null}
     </>
   );
 

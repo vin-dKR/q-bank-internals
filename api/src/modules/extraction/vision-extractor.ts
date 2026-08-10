@@ -18,6 +18,13 @@ export type ExtractedQuestion = {
   sectionName: string | null;
   questionType: string | null;
   sourcePage: number;
+  /**
+   * The shared comprehension passage this draft belongs under, returned VERBATIM and identical across
+   * every sub-question of the same passage — null for ordinary questions. It is the grouping key that
+   * {@link mergeAnswers}'s caller uses to collapse a comprehension block into ONE combined question,
+   * so the passage is stored once (never repeated per sub-question).
+   */
+  passage: string | null;
 };
 
 /**
