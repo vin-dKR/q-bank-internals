@@ -14,6 +14,7 @@ import type {
   ExtractedQuestion,
   VisionExtractor,
 } from './vision-extractor.js';
+import { collapseComprehension } from './collapse-comprehension.js';
 import { mergeAnswers } from './merge-answers.js';
 import { topicBindingForPage } from './topic-lookup.js';
 
@@ -148,7 +149,10 @@ export class ExtractionWorker {
       const { questions: drafts, usage } = await this.extractor.extractQuestions({ pages, document });
       await this.recordUsage(document, usage);
       const answered = await this.applyAnswers(document, drafts);
-      const rows = answered.map((draft) => toNewQuestion(document, draft));
+      // Comprehension sub-questions are merged into one question per passage AFTER answers are folded
+      // in, so each sub-question's answer/explanation is already on it before they combine.
+      const collapsed = collapseComprehension(answered);
+      const rows = collapsed.map((draft) => toNewQuestion(document, draft));
       const count = await this.questions.replaceForDocument(documentId, rows);
 
       await this.documents.recordExtraction(documentId, { questionCount: count });

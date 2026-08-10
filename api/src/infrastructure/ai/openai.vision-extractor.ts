@@ -13,7 +13,13 @@ import { logger } from '../../shared/logger/logger.js';
 import { answerPrompt, questionPrompt, solutionPrompt } from './prompts/extraction-prompts.js';
 
 /** Shape the question prompt asks the model to return, before we enrich with section/page. */
-type RawQuestion = { question_number?: unknown; question_text?: unknown; options?: unknown };
+type RawQuestion = {
+  question_number?: unknown;
+  question_text?: unknown;
+  options?: unknown;
+  /** Only present for comprehension questions — the shared passage, repeated on each sub-question. */
+  passage?: unknown;
+};
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -127,6 +133,7 @@ export class OpenAiVisionExtractor implements VisionExtractor {
           sectionName: input.document.sectionName,
           questionType: input.document.questionType,
           sourcePage: page.pageNumber,
+          passage: asStringOrNull(raw.passage),
         });
       }
     }
