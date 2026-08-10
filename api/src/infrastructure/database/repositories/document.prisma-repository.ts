@@ -9,6 +9,12 @@ type TopicTypeRow = {
   answerPageRange?: PageRangeRow | null;
   solutionPageRange?: PageRangeRow | null;
 };
+type TopicRow = {
+  name: string;
+  types: TopicTypeRow[];
+  sectionName?: string | null;
+  topicName?: string | null;
+};
 
 // Prisma's row shape for a Document, narrowed to what we map. Kept local so the mapper is the one
 // place row → DTO conversion happens (§6.1: the boundary shape lives in @ingest/contracts).
@@ -23,7 +29,7 @@ type DocumentRow = {
   questionType: string | null;
   source: string | null;
   pageRange: PageRangeRow | null;
-  topics: { name: string; types: TopicTypeRow[] }[];
+  topics: TopicRow[];
   status: DocumentStatus;
   questionCount: number;
   extractedAt: Date | null;
@@ -31,8 +37,8 @@ type DocumentRow = {
   updatedAt: Date;
 };
 
-/** Row → contract topics: drop the null of an absent optional range back to an omitted key. */
-function toContractTopics(rows: { name: string; types: TopicTypeRow[] }[]): ChapterTopic[] {
+/** Row → contract topics: drop the null of an absent optional field back to an omitted key. */
+function toContractTopics(rows: TopicRow[]): ChapterTopic[] {
   return rows.map((topic) => ({
     name: topic.name,
     types: topic.types.map((block) => ({
@@ -41,11 +47,13 @@ function toContractTopics(rows: { name: string; types: TopicTypeRow[] }[]): Chap
       ...(block.answerPageRange ? { answerPageRange: block.answerPageRange } : {}),
       ...(block.solutionPageRange ? { solutionPageRange: block.solutionPageRange } : {}),
     })),
+    ...(topic.sectionName ? { sectionName: topic.sectionName } : {}),
+    ...(topic.topicName ? { topicName: topic.topicName } : {}),
   }));
 }
 
-/** Contract → Prisma topics: an absent optional range is written as null (Prisma wants null, not undefined). */
-function toPrismaTopics(topics: ChapterTopic[]): { name: string; types: TopicTypeRow[] }[] {
+/** Contract → Prisma topics: an absent optional field is written as null (Prisma wants null, not undefined). */
+function toPrismaTopics(topics: ChapterTopic[]): TopicRow[] {
   return topics.map((topic) => ({
     name: topic.name,
     types: topic.types.map((block) => ({
@@ -54,6 +62,8 @@ function toPrismaTopics(topics: ChapterTopic[]): { name: string; types: TopicTyp
       answerPageRange: block.answerPageRange ?? null,
       solutionPageRange: block.solutionPageRange ?? null,
     })),
+    sectionName: topic.sectionName ?? null,
+    topicName: topic.topicName ?? null,
   }));
 }
 

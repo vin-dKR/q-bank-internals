@@ -68,7 +68,7 @@ export function questionPrompt(document: Document, pageNumber: number): string {
   const questionType = binding?.questionType ?? document.questionType;
   const typeRule = questionType ? TYPE_RULES[questionType] : undefined;
   const bindingNote = binding
-    ? `This page belongs to the topic "${binding.topicName}" and its questions are of the fixed type "${binding.questionType}", chosen by the operator. Extract the questions exactly as printed for that type — do NOT re-classify them or invent a different type.`
+    ? `This page belongs to the topic "${binding.matchKey}" and its questions are of the fixed type "${binding.questionType}", chosen by the operator. Extract the questions exactly as printed for that type — do NOT re-classify them or invent a different type.`
     : '';
   return [
     `You are given an image of an exam question paper (${context(document)}).`,
