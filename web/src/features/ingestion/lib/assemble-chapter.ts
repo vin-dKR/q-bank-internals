@@ -1,6 +1,6 @@
 import { PDFDocument } from 'pdf-lib';
 import type { ChapterKind, ChapterTopic, ChapterUploadMetadata } from '@ingest/contracts';
-import type { StructureNode, StructureTree } from '../types/structure-node.js';
+import type { NodeLevel, StructureNode, StructureTree } from '../types/structure-node.js';
 import { leaves, resolveQuestionType } from './structure-tree.js';
 
 /** One unit per chapter, so its section name is a constant — the per-section detail lives in topics. */
@@ -27,12 +27,19 @@ export type AssembledUpload = {
 type Leaf = { node: StructureNode; ancestors: StructureNode[] };
 type Span = { leaf: Leaf; from: number; to: number };
 
-/** The leaf's section identity: its ancestor labels + own label, path-joined. */
+/** The leaf's unique matching key: its ancestor labels + own label, path-joined. */
 function pathLabel({ node, ancestors }: Leaf): string {
   return [...ancestors, node]
     .map((n) => n.label.trim())
     .filter((label) => label.length > 0)
     .join(' · ');
+}
+
+/** The trimmed label of the node at `level` in the leaf's chain, or undefined when absent/blank. */
+function labelAtLevel({ node, ancestors }: Leaf, level: NodeLevel): string | undefined {
+  const hit = [...ancestors, node].find((n) => n.level === level);
+  const label = hit?.label.trim();
+  return label ? label : undefined;
 }
 
 /** Concatenate the given leaves' artifacts of one kind into a single PDF, tracking each leaf's span. */
@@ -98,6 +105,10 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
     ? questionAsm.spans.map(({ leaf, from, to }) => {
         const a = answerByLeaf.get(leaf.node.id);
         const s = solutionByLeaf.get(leaf.node.id);
+        // The split display identity: the Section (top) label → bank section_name, the Topic (leaf)
+        // label → bank topic. Part contributes only the question type and is never published.
+        const sectionName = labelAtLevel(leaf, 'section');
+        const topicName = labelAtLevel(leaf, 'topic');
         return {
           name: pathLabel(leaf) || 'Section',
           types: [
@@ -108,6 +119,8 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
               ...(s ? { solutionPageRange: { from: s.from, to: s.to } } : {}),
             },
           ],
+          ...(sectionName ? { sectionName } : {}),
+          ...(topicName ? { topicName } : {}),
         };
       })
     : [];

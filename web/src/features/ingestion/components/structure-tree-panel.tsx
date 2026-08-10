@@ -15,7 +15,7 @@ type StructureTreePanelProps = {
   bindingSlot: string | null;
 };
 
-const LEVEL_OPTIONS = ['Exercise', 'Part', 'Section'] as const;
+const LEVEL_OPTIONS = ['Section', 'Part', 'Topic'] as const;
 const PART_KINDS: readonly ChapterKind[] = ['question', 'answer', 'solution'];
 const KIND_LABEL: Record<ChapterKind, string> = {
   question: 'Question',
@@ -31,7 +31,7 @@ const KIND_TONE: Record<ChapterKind, { empty: string; filled: string; chip: stri
 
 function toLevel(display: string): NodeLevel | null {
   const value = display.trim().toLowerCase();
-  return value === 'exercise' || value === 'part' || value === 'section' ? value : null;
+  return value === 'section' || value === 'part' || value === 'topic' ? value : null;
 }
 function levelDisplay(level: NodeLevel | null): string {
   return level ? level.charAt(0).toUpperCase() + level.slice(1) : '';
@@ -39,7 +39,7 @@ function levelDisplay(level: NodeLevel | null): string {
 
 /**
  * The right pane: the durable structure tree an operator builds by hand. Chapter metadata at the top,
- * then a flexible `Exercise → Part → Section` tree (every level optional). Question/answer/solution
+ * then a flexible `Section → Part → Topic` tree (every level optional). Question/answer/solution
  * slices are dropped onto a leaf's three slots; because the tree lives outside the working document,
  * editing the PDF on the left never disturbs anything here.
  */
@@ -94,7 +94,7 @@ export function StructureTreePanel({
           <EmptyState
             icon={<IconLayers />}
             title="No structure yet"
-            body="Add an exercise, part, or section — then drop the question, answer, and solution slices onto each leaf. A flat paper is just one node."
+            body="Add a section, part, or topic — then drop the question, answer, and solution slices onto each leaf. A flat paper is just one node."
             action={
               <button type="button" className="btn btn--primary" onClick={() => { controller.addNode(null, null); }}>
                 <IconPlus /> Add first node
@@ -168,7 +168,7 @@ function TreeNodeRow({ node, depth, controller, vocabulary, onBindPages, binding
             <Combobox
               value={node.questionType ?? ''}
               options={vocabulary.questionTypes}
-              placeholder={node.level === 'part' ? 'inherited by sections below' : 'e.g. single_correct'}
+              placeholder={node.level === 'part' ? 'inherited by topics below' : 'e.g. single_correct'}
               onChange={(value) => { controller.setQuestionType(node.id, value); }}
             />
           </div>

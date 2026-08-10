@@ -43,12 +43,22 @@ export const TopicTypeConfigSchema = z.object({
 export type TopicTypeConfig = z.infer<typeof TopicTypeConfigSchema>;
 
 /**
- * One topic inside a chapter PDF (Chapter → Topic → Question type → Questions): its name plus the
+ * One topic inside a chapter PDF (Chapter → Section → Part → Topic → Questions): its `name` plus the
  * ordered question-type blocks it contains.
+ *
+ * `name` is the UNIQUE per-leaf key used to match this topic's questions to their answer/solution
+ * sheet section (see `merge-answers`) — it carries the full joined tree path and must not be
+ * overloaded with display meaning. `sectionName` / `topicName` are the split display identity the
+ * operator built in the v2 tree: `sectionName` is the top (Section) node's label and flows to
+ * `question.sectionName` → the bank's `section_name`; `topicName` is the leaf (Topic) node's label
+ * and flows to `question.topic` → the bank's `topic`. Both are omitted for legacy uploads and for
+ * branches that lack that level, in which case extraction falls back to the document-level values.
  */
 export const ChapterTopicSchema = z.object({
   name: z.string().min(1),
   types: z.array(TopicTypeConfigSchema).min(1),
+  sectionName: z.string().optional(),
+  topicName: z.string().optional(),
 });
 export type ChapterTopic = z.infer<typeof ChapterTopicSchema>;
 

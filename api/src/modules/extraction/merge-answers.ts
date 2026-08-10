@@ -66,23 +66,24 @@ export function mergeAnswers(
   // Single-section fallback: any question can borrow the one key when its own section name differs.
   const soleSheet = bySection.size === 1 ? ([...bySection.values()][0] ?? null) : null;
 
-  // Bind each question to its topic and find the numbers shared across topics (numbering restarts).
-  const topicByQuestion = new Map<ExtractedQuestion, string | null>();
-  const topicsByNumber = new Map<number, Set<string | null>>();
+  // Bind each question to its topic's matching key and find the numbers shared across topics
+  // (numbering restarts). The key is `topic.name` — the sheet section headings are named after it.
+  const keyByQuestion = new Map<ExtractedQuestion, string | null>();
+  const keysByNumber = new Map<number, Set<string | null>>();
   for (const question of questions) {
     if (question.questionNumber === null) continue;
-    const topicName = topicBindingForPage(topics, question.sourcePage)?.topicName ?? null;
-    topicByQuestion.set(question, topicName);
-    const seen = topicsByNumber.get(question.questionNumber) ?? new Set<string | null>();
-    seen.add(topicName);
-    topicsByNumber.set(question.questionNumber, seen);
+    const matchKey = topicBindingForPage(topics, question.sourcePage)?.matchKey ?? null;
+    keyByQuestion.set(question, matchKey);
+    const seen = keysByNumber.get(question.questionNumber) ?? new Set<string | null>();
+    seen.add(matchKey);
+    keysByNumber.set(question.questionNumber, seen);
   }
 
   return questions.map((question) => {
     if (question.questionNumber === null) return question;
-    const topicName = topicByQuestion.get(question) ?? null;
-    const topicEntries = topicName === null ? null : bySection.get(normalizeSection(topicName));
-    const restartsAcrossTopics = (topicsByNumber.get(question.questionNumber)?.size ?? 0) > 1;
+    const matchKey = keyByQuestion.get(question) ?? null;
+    const topicEntries = matchKey === null ? null : bySection.get(normalizeSection(matchKey));
+    const restartsAcrossTopics = (keysByNumber.get(question.questionNumber)?.size ?? 0) > 1;
     const sectionEntries = restartsAcrossTopics
       ? topicEntries
       : (topicEntries ?? bySection.get(normalizeSection(question.sectionName)) ?? soleSheet);
