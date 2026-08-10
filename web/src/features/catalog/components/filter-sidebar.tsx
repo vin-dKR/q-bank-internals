@@ -22,15 +22,22 @@ function FilterField({
   value: string;
   onChange: (value: string) => void;
 }): JSX.Element {
-  const labels = useMemo(() => [anyLabel, ...options.map((o) => o.label)], [anyLabel, options]);
-  const current = value ? (options.find((o) => o.value === value)?.label ?? anyLabel) : anyLabel;
+  // Fall back to the raw value (not "any") so an active filter whose value dropped out of the
+  // re-narrowed option set stays visible instead of silently filtering behind an "All …" label.
+  const current = value ? (options.find((o) => o.value === value)?.label ?? value) : anyLabel;
+  const labels = useMemo(() => {
+    const base = [anyLabel, ...options.map((o) => o.label)];
+    if (value && !base.includes(current)) base.push(current);
+    return base;
+  }, [anyLabel, options, value, current]);
 
   const handle = (picked: string): void => {
     if (picked === anyLabel) {
       onChange('');
       return;
     }
-    onChange(options.find((o) => o.label === picked)?.value ?? '');
+    // Known label → its value; the injected raw value maps to itself (keeps the active filter).
+    onChange(options.find((o) => o.label === picked)?.value ?? picked);
   };
 
   return (

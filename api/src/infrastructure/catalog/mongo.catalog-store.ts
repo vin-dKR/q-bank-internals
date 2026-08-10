@@ -102,24 +102,25 @@ export class MongoCatalogStore implements CatalogStore {
   }
 
   async filterOptions(selection: CatalogFilterSelection): Promise<CatalogFilterOptionSets> {
-    const match: Record<string, unknown> = {};
-    if (selection.exam) match.exam_name = selection.exam;
-    if (selection.subject) match.subject = selection.subject;
-    if (selection.chapter) match.chapter = selection.chapter;
-    if (selection.questionType) match.question_type = selection.questionType;
+    // One distinct-values sub-pipeline per field via `$facet`, each matched on the OTHER selected
+    // fields but never on its own field. So a chosen Subject still lists every subject (you can
+    // switch it), while the Chapter list shrinks to that subject — cascading without self-collapsing.
+    const facet = (field: string): Prisma.InputJsonObject =>
+      [
+        { $match: this.optionsMatch(selection, field) },
+        { $group: { _id: null, values: { $addToSet: `$${field}` } } },
+      ] as unknown as Prisma.InputJsonObject;
 
     const command = {
       aggregate: this.collection,
       pipeline: [
-        ...(Object.keys(match).length > 0 ? [{ $match: match }] : []),
         {
-          $group: {
-            _id: null,
-            exams: { $addToSet: '$exam_name' },
-            subjects: { $addToSet: '$subject' },
-            chapters: { $addToSet: '$chapter' },
-            sections: { $addToSet: '$section_name' },
-            questionTypes: { $addToSet: '$question_type' },
+          $facet: {
+            exams: facet('exam_name'),
+            subjects: facet('subject'),
+            chapters: facet('chapter'),
+            sections: facet('section_name'),
+            questionTypes: facet('question_type'),
           },
         },
       ],
@@ -127,15 +128,30 @@ export class MongoCatalogStore implements CatalogStore {
     } as unknown as Prisma.InputJsonObject;
 
     const doc = firstBatch(await this.prisma.$runCommandRaw(command))[0] as
-      | Record<string, unknown>
+      | Record<string, Array<{ values?: unknown }> | undefined>
       | undefined;
+    const valuesOf = (facetName: string): unknown => doc?.[facetName]?.[0]?.values;
     return {
-      exams: cleanValues(doc?.exams),
-      subjects: cleanValues(doc?.subjects),
-      chapters: cleanValues(doc?.chapters),
-      sections: cleanValues(doc?.sections),
-      questionTypes: cleanValues(doc?.questionTypes),
+      exams: cleanValues(valuesOf('exams')),
+      subjects: cleanValues(valuesOf('subjects')),
+      chapters: cleanValues(valuesOf('chapters')),
+      sections: cleanValues(valuesOf('sections')),
+      questionTypes: cleanValues(valuesOf('questionTypes')),
     };
+  }
+
+  /**
+   * The `$match` for one facet: the selected taxonomy fields EXCEPT the one this facet distinct-ifies,
+   * so a facet is narrowed by its siblings but never by itself (which would collapse it to the single
+   * chosen value). `section_name` is never a selection input, so its facet just gets the full match.
+   */
+  private optionsMatch(selection: CatalogFilterSelection, excludeField: string): Record<string, unknown> {
+    const match: Record<string, unknown> = {};
+    if (selection.exam && excludeField !== 'exam_name') match.exam_name = selection.exam;
+    if (selection.subject && excludeField !== 'subject') match.subject = selection.subject;
+    if (selection.chapter && excludeField !== 'chapter') match.chapter = selection.chapter;
+    if (selection.questionType && excludeField !== 'question_type') match.question_type = selection.questionType;
+    return match;
   }
 
   /** Map the taxonomy filters + keyword to the collection's snake_case query shape. */
