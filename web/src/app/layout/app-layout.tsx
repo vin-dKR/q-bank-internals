@@ -1,8 +1,41 @@
 import type { JSX } from 'react';
+import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { IconEdit, IconFileText, IconImage, IconLayers, IconScan } from '../../shared/ui/index.js';
 
+/** localStorage key remembering whether the operator collapsed the sidebar. */
+const SIDEBAR_KEY = 'ingest:sidebarCollapsed';
+
+/** Read the persisted collapsed state; defaults to expanded and never throws if storage is blocked. */
+function readCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_KEY) === '1';
+  } catch {
+    // Storage unavailable (private mode / disabled) — fall back to the expanded default.
+    return false;
+  }
+}
+
+/** Persist the collapsed state; silently no-ops if storage is unavailable. */
+function writeCollapsed(collapsed: boolean): void {
+  try {
+    localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0');
+  } catch {
+    // Storage unavailable — the choice just won't survive this reload; nothing to recover.
+    return;
+  }
+}
+
 /** Minimal line icons (inline so there are no asset/CSP dependencies). */
+function IconPanelLeft(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="9" y1="3" x2="9" y2="21" />
+    </svg>
+  );
+}
+
 function IconScissors(): JSX.Element {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -73,9 +106,27 @@ function navClass({ isActive }: { isActive: boolean }): string {
 
 /** The shell every page renders inside: a persistent sidebar + the routed content canvas. */
 export function AppLayout(): JSX.Element {
+  const [collapsed, setCollapsed] = useState<boolean>(readCollapsed);
+
+  function toggleSidebar(): void {
+    setCollapsed((prev) => {
+      const next = !prev;
+      writeCollapsed(next);
+      return next;
+    });
+  }
+
   return (
-    <div className="grid min-h-screen grid-cols-[260px_minmax(0,1fr)] max-[820px]:grid-cols-1">
-      <aside className="sticky top-0 flex h-screen flex-col gap-1 border-r border-line bg-surface p-4 max-[820px]:static max-[820px]:h-auto max-[820px]:flex-row max-[820px]:flex-wrap max-[820px]:items-center max-[820px]:border-b max-[820px]:border-r-0">
+    <div
+      className={`grid min-h-screen max-[820px]:grid-cols-1 ${
+        collapsed ? 'grid-cols-1' : 'grid-cols-[260px_minmax(0,1fr)]'
+      }`}
+    >
+      <aside
+        className={`sticky top-0 flex h-screen flex-col gap-1 border-r border-line bg-surface p-4 max-[820px]:static max-[820px]:h-auto max-[820px]:flex-row max-[820px]:flex-wrap max-[820px]:items-center max-[820px]:border-b max-[820px]:border-r-0 ${
+          collapsed ? 'hidden max-[820px]:flex' : ''
+        }`}
+      >
         <div className="mb-2 flex items-center gap-2.5 px-2 py-1">
           <div className="grid size-8 flex-none place-items-center rounded-lg bg-[linear-gradient(140deg,var(--color-brand),#7c6cf0)] text-sm font-bold text-white">
             E
@@ -84,6 +135,15 @@ export function AppLayout(): JSX.Element {
             <div className="text-sm font-semibold leading-tight">Eduents Ingest</div>
             <div className="text-xs text-ink-3">PDF → question bank</div>
           </div>
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            aria-label="Collapse sidebar"
+            title="Collapse sidebar"
+            className="ml-auto grid size-8 flex-none place-items-center rounded-lg text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink max-[820px]:hidden [&>svg]:size-[18px]"
+          >
+            <IconPanelLeft />
+          </button>
         </div>
 
         <div className="px-2 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-ink-3 max-[820px]:hidden">
@@ -163,7 +223,20 @@ export function AppLayout(): JSX.Element {
       </aside>
 
       <div className="min-w-0">
-        <main className="w-full px-6 py-8 lg:px-10">
+        {collapsed && (
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            aria-label="Expand sidebar"
+            title="Expand sidebar"
+            className="fixed left-3 top-3 z-20 grid size-9 place-items-center rounded-lg border border-line bg-surface text-ink-2 shadow-sm transition-colors hover:bg-surface-2 hover:text-ink max-[820px]:hidden [&>svg]:size-[18px]"
+          >
+            <IconPanelLeft />
+          </button>
+        )}
+        <main
+          className={`w-full py-8 pr-6 lg:pr-10 ${collapsed ? 'pl-16' : 'pl-6 lg:pl-10'}`}
+        >
           <Outlet />
         </main>
       </div>
