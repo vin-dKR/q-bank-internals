@@ -43,6 +43,36 @@ export function removeNode(nodes: StructureNode[], id: string): StructureNode[] 
     );
 }
 
+/**
+ * A deep clone of a node's *structure* only — level, label, question type, and children — with fresh
+ * ids throughout and every binding dropped. Bindings are one-shot immutable page slices tied to the
+ * document they were cut from, so a duplicated node starts empty and the operator re-binds its slices.
+ */
+function cloneStructure(node: StructureNode): StructureNode {
+  return {
+    id: makeId(),
+    label: node.label,
+    level: node.level,
+    ...(node.questionType !== undefined ? { questionType: node.questionType } : {}),
+    children: node.children.map(cloneStructure),
+  };
+}
+
+/** Insert a structural clone of the matched node (fresh ids, no bindings) as its next sibling. */
+export function duplicateNode(nodes: StructureNode[], id: string): StructureNode[] {
+  const index = nodes.findIndex((node) => node.id === id);
+  if (index !== -1) {
+    const original = nodes[index];
+    if (!original) return nodes;
+    const next = [...nodes];
+    next.splice(index + 1, 0, cloneStructure(original));
+    return next;
+  }
+  return nodes.map((node) =>
+    node.children.length > 0 ? { ...node, children: duplicateNode(node.children, id) } : node,
+  );
+}
+
 /** Append a child under `parentId`; a node that gains a child stops being a leaf, so its bindings drop. */
 export function addChild(
   nodes: StructureNode[],

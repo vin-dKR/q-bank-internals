@@ -10,11 +10,13 @@ import type {
 import {
   addChild,
   bindArtifact as bindArtifactIn,
+  duplicateNode as duplicateNodeIn,
   newNode,
   removeNode as removeNodeIn,
   unbindArtifact as unbindArtifactIn,
   updateNode,
 } from '../lib/structure-tree.js';
+import { nodesFromConfig, type ParsedConfig } from '../lib/structure-config.js';
 
 export type StructureTreeController = {
   tree: StructureTree;
@@ -26,9 +28,13 @@ export type StructureTreeController = {
   renameNode: (id: string, label: string) => void;
   setNodeLevel: (id: string, level: NodeLevel | null) => void;
   setQuestionType: (id: string, questionType: string) => void;
+  /** Insert a structural clone of a node (fresh ids, no bindings) as its next sibling. */
+  duplicateNode: (id: string) => void;
   removeNode: (id: string) => void;
   bindArtifact: (leafId: string, kind: ChapterKind, artifact: MaterializedArtifact) => void;
   unbindArtifact: (leafId: string, kind: ChapterKind) => void;
+  /** Replace metadata and rebuild the forest from an imported config (fresh ids, no bindings). */
+  loadConfig: (config: ParsedConfig) => void;
   reset: () => void;
 };
 
@@ -66,6 +72,10 @@ export function useStructureTree(): StructureTreeController {
     setNodes((prev) => updateNode(prev, id, (node) => ({ ...node, questionType })));
   }, []);
 
+  const duplicateNode = useCallback((id: string): void => {
+    setNodes((prev) => duplicateNodeIn(prev, id));
+  }, []);
+
   const removeNode = useCallback((id: string): void => {
     setNodes((prev) => removeNodeIn(prev, id));
   }, []);
@@ -79,6 +89,11 @@ export function useStructureTree(): StructureTreeController {
 
   const unbindArtifact = useCallback((leafId: string, kind: ChapterKind): void => {
     setNodes((prev) => unbindArtifactIn(prev, leafId, kind));
+  }, []);
+
+  const loadConfig = useCallback((config: ParsedConfig): void => {
+    setMeta(config.metadata);
+    setNodes(nodesFromConfig(config.nodes));
   }, []);
 
   const reset = useCallback((): void => {
@@ -96,9 +111,11 @@ export function useStructureTree(): StructureTreeController {
     renameNode,
     setNodeLevel,
     setQuestionType,
+    duplicateNode,
     removeNode,
     bindArtifact,
     unbindArtifact,
+    loadConfig,
     reset,
   };
 }

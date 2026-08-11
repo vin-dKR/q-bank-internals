@@ -20,6 +20,7 @@ type ModeOption = {
 };
 
 const MODES: ModeOption[] = [
+  { mode: 'none', label: 'None', hint: 'Select & copy text — no cutting' },
   { mode: 'horizontal', label: 'Horizontal', hint: 'Cut a page into stacked bands' },
   { mode: 'vertical', label: 'Vertical', hint: 'Cut a page into side-by-side columns' },
   { mode: 'reflow', label: 'Reflow', hint: 'Box a question and its spilled options; stack them onto one page' },
@@ -65,6 +66,7 @@ export function PdfModeSelector({
   onRedo,
 }: PdfModeSelectorProps): JSX.Element {
   const isReflow = mode === 'reflow';
+  const isNone = mode === 'none';
   const applyLabel = isReflow ? 'Apply reflow' : `Apply ${mode} cut`;
   return (
     <Toolbar ariaLabel="Cut mode">
@@ -88,50 +90,56 @@ export function PdfModeSelector({
         </div>
       </ToolbarGroup>
 
-      <ToolbarDivider />
+      {/* None is a passive view mode — there is nothing to draw, apply, or reset, so its whole group
+          drops out (only the version history stays). */}
+      {isNone ? null : (
+        <>
+          <ToolbarDivider />
 
-      <ToolbarGroup>
-        {isReflow ? (
-          <button
-            type="button"
-            className="btn btn--ghost btn--xs"
-            disabled={applying}
-            onClick={onNewBlock}
-            title="Start a new block — crops you draw next join this question"
-          >
-            <IconPlus /> New block
-          </button>
-        ) : (
-          <label className="tbar__order" title="Order the split cells become pages">
-            Order
-            <select
-              value={order}
-              onChange={(event) => { onOrderChange(event.target.value as ReadingOrder); }}
+          <ToolbarGroup>
+            {isReflow ? (
+              <button
+                type="button"
+                className="btn btn--ghost btn--xs"
+                disabled={applying}
+                onClick={onNewBlock}
+                title="Start a new block — crops you draw next join this question"
+              >
+                <IconPlus /> New block
+              </button>
+            ) : (
+              <label className="tbar__order" title="Order the split cells become pages">
+                Order
+                <select
+                  value={order}
+                  onChange={(event) => { onOrderChange(event.target.value as ReadingOrder); }}
+                >
+                  <option value="column">Column-major</option>
+                  <option value="row">Row-major</option>
+                </select>
+              </label>
+            )}
+            <button
+              type="button"
+              className="btn btn--primary btn--xs"
+              disabled={lineCount === 0 || applying}
+              onClick={onApply}
+              title={isReflow ? `Stack each block onto one page (${combo(MOD_KEY, ENTER_KEY)})` : `Split the pages along the current lines into a new PDF (${combo(MOD_KEY, ENTER_KEY)})`}
             >
-              <option value="column">Column-major</option>
-              <option value="row">Row-major</option>
-            </select>
-          </label>
-        )}
-        <button
-          type="button"
-          className="btn btn--primary btn--xs"
-          disabled={lineCount === 0 || applying}
-          onClick={onApply}
-          title={isReflow ? `Stack each block onto one page (${combo(MOD_KEY, ENTER_KEY)})` : `Split the pages along the current lines into a new PDF (${combo(MOD_KEY, ENTER_KEY)})`}
-        >
-          {applying ? 'Applying…' : applyLabel}
-        </button>
-        <button
-          type="button"
-          className="btn btn--ghost btn--xs"
-          disabled={lineCount === 0 || applying}
-          onClick={onResetLines}
-          title={isReflow ? 'Clear the crops you have drawn' : 'Clear the lines you have drawn on the current PDF'}
-        >
-          {isReflow ? 'Reset crops' : 'Reset lines'}
-        </button>
-      </ToolbarGroup>
+              {applying ? 'Applying…' : applyLabel}
+            </button>
+            <button
+              type="button"
+              className="btn btn--ghost btn--xs"
+              disabled={lineCount === 0 || applying}
+              onClick={onResetLines}
+              title={isReflow ? 'Clear the crops you have drawn' : 'Clear the lines you have drawn on the current PDF'}
+            >
+              {isReflow ? 'Reset crops' : 'Reset lines'}
+            </button>
+          </ToolbarGroup>
+        </>
+      )}
 
       <ToolbarSpacer />
 
