@@ -195,12 +195,14 @@ export function PdfPreviewer({
                     pageNumber={pageNumber}
                     width={pageWidth}
                     renderAnnotationLayer={false}
-                    renderTextLayer={false}
+                    renderTextLayer={mode === 'none'}
                     loading={
                       <div className="page-wrap__placeholder">Loading page {pageNumber}…</div>
                     }
                   />
-                  {mode === 'reflow' ? (
+                  {/* None is a passive read mode: render the selectable text layer and no overlay so
+                      the operator can select and copy text from the page. */}
+                  {mode === 'none' ? null : mode === 'reflow' ? (
                     <PdfReflowOverlay pageNumber={pageNumber} controller={reflow} />
                   ) : (
                     <PdfPageOverlay

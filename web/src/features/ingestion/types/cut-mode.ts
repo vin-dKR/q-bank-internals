@@ -1,9 +1,9 @@
 /**
  * The active cutting tool. Only one mode is live at a time; it decides what a plain click on the
- * page overlay draws and which transform "Apply" runs. `reflow` (manual crop-and-stack) is wired
- * in a later phase.
+ * page overlay draws and which transform "Apply" runs. `none` is the passive default — it draws no
+ * overlay and has nothing to apply, so the rendered text stays selectable and copyable.
  */
-export type CutMode = 'horizontal' | 'vertical' | 'reflow';
+export type CutMode = 'none' | 'horizontal' | 'vertical' | 'reflow';
 
 /**
  * The order cells become pages when a page is cut on both axes. `column` reads the left column

@@ -26,7 +26,8 @@ import {
 } from '../../features/ingestion/index.js';
 import { SessionBar } from '../../features/sessions/index.js';
 import { useCurrentSession } from '../../shared/lib/current-session.js';
-import { PageHeader, Spinner, useToast } from '../../shared/ui/index.js';
+import { bytesToBlob, saveBlob } from '../../shared/lib/files.js';
+import { IconDownload, PageHeader, Spinner, useToast } from '../../shared/ui/index.js';
 
 const DEFAULT_WIDTH = 560;
 const MIN_WIDTH = 320;
@@ -51,7 +52,7 @@ export function TreeIngestPage(): JSX.Element {
   const [fileName, setFileName] = useState<string | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [pageWidth, setPageWidth] = useState(DEFAULT_WIDTH);
-  const [cutMode, setCutMode] = useState<CutMode>('horizontal');
+  const [cutMode, setCutMode] = useState<CutMode>('none');
   const [readingOrder, setReadingOrder] = useState<ReadingOrder>('column');
   const [applying, setApplying] = useState(false);
   const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
@@ -96,7 +97,8 @@ export function TreeIngestPage(): JSX.Element {
 
   /** Materialize the mode's edits into a fresh version so modes chain. The tree is untouched. */
   const applyMode = async (): Promise<void> => {
-    if (!activeBytes) return;
+    // None is a passive view mode — it never applies anything.
+    if (!activeBytes || cutMode === 'none') return;
     setApplying(true);
     try {
       const next = isReflow
@@ -159,6 +161,14 @@ export function TreeIngestPage(): JSX.Element {
     setSelectedPages(new Set(Array.from({ length: numPages }, (_, i) => i + 1)));
     setAnchorPage(numPages > 0 ? 1 : null);
   }, [numPages]);
+
+  /** Download the current working document (the latest applied version, else the loaded original). */
+  const downloadWorking = useCallback((): void => {
+    if (!activeBytes) return;
+    const bytes = activeBytes instanceof Uint8Array ? activeBytes : new Uint8Array(activeBytes);
+    const base = fileName?.trim() ? fileName.replace(/\.pdf$/i, '') : 'working';
+    saveBlob(bytesToBlob(bytes), `${base}.pdf`);
+  }, [activeBytes, fileName]);
 
   /** Scroll a page into view — the go-to-page jump and (later) any deep-link to a page. */
   const goToPage = useCallback((pageNumber: number): void => {
@@ -230,6 +240,7 @@ export function TreeIngestPage(): JSX.Element {
         return;
       }
       switch (key) {
+        case 'n': event.preventDefault(); a.setCutMode('none'); break;
         case 'h': event.preventDefault(); a.setCutMode('horizontal'); break;
         case 'v': event.preventDefault(); a.setCutMode('vertical'); break;
         case 'r': event.preventDefault(); a.setCutMode('reflow'); break;
@@ -384,6 +395,9 @@ export function TreeIngestPage(): JSX.Element {
               <span className="panel-file__name" title={fileName ?? undefined}>{fileName ?? 'Loaded PDF'}</span>
               <span className="panel-file__meta">
                 {numPages > 0 ? <span>{numPages} page{numPages === 1 ? '' : 's'}</span> : null}
+                <button type="button" className="btn btn--ghost btn--xs" onClick={downloadWorking} title="Download the current working PDF">
+                  <IconDownload /> Download PDF
+                </button>
                 <button type="button" className="btn btn--ghost btn--xs" onClick={resetDoc}>Change file</button>
               </span>
             </div>
@@ -396,6 +410,8 @@ export function TreeIngestPage(): JSX.Element {
             vocabulary={vocabulary}
             onBindPages={onBindPages}
             bindingSlot={bindingSlot}
+            maxPages={numPages}
+            onImportError={(message) => { toastError('Couldn’t import config', message); }}
           />
 
           {uploadError ? <p className="error">{uploadError}</p> : null}

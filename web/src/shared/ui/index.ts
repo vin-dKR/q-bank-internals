@@ -27,6 +27,8 @@ export {
   IconRedo,
   IconPlus,
   IconX,
+  IconCopy,
+  IconDownload,
   IconCheck,
   IconWarning,
   IconZoomIn,
