@@ -1,4 +1,4 @@
-import { type JSX, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type JSX, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { DetectedFigure, Question } from '@ingest/contracts';
 import { DETECT_FIGURES_MAX_PAGES } from '@ingest/contracts';
@@ -25,6 +25,7 @@ import {
   IconTrash,
   IconUndo,
   IconX,
+  IconZoomIn,
   LoadingState,
   Spinner,
   ToolbarHelp,
@@ -170,10 +171,33 @@ const THUMB_W = 108;
 const THUMB_H = 80;
 
 /**
- * A live preview of what a crop box currently covers: a fixed-size window into the page image,
- * scaled so the box region fills it. Derives everything from the box's display coords + the page's
- * natural↔display size, so it tracks the box as it is dragged/resized (no canvas work).
+ * The CSS that turns a plain element into a live window onto the page image showing exactly what a
+ * crop box covers: the box region is contain-fit into a `viewW`×`viewH` viewport via a scaled
+ * `background-image`. One place for the coordinate math so the small review thumbnail and the large
+ * magnifier stay pixel-consistent; it tracks the box as it is drawn/dragged/resized (no canvas work).
  */
+function cropWindowStyle(
+  imageSrc: string,
+  box: BoxRect,
+  size: CanvasSize,
+  viewW: number,
+  viewH: number,
+): CSSProperties {
+  const scaleX = size.naturalWidth / size.displayWidth;
+  const scaleY = size.naturalHeight / size.displayHeight;
+  const bw = Math.max(1, box.width * scaleX);
+  const bh = Math.max(1, box.height * scaleY);
+  const k = Math.min(viewW / bw, viewH / bh);
+  const offsetX = (viewW - bw * k) / 2 - box.x * scaleX * k;
+  const offsetY = (viewH - bh * k) / 2 - box.y * scaleY * k;
+  return {
+    backgroundImage: `url("${imageSrc}")`,
+    backgroundSize: `${String(size.naturalWidth * k)}px ${String(size.naturalHeight * k)}px`,
+    backgroundPosition: `${String(offsetX)}px ${String(offsetY)}px`,
+  };
+}
+
+/** A fixed-size preview of what a crop box covers, used in the AI-review list. */
 function CropThumb({
   imageSrc,
   box,
@@ -184,22 +208,49 @@ function CropThumb({
   size: CanvasSize | null;
 }): JSX.Element {
   if (!size || size.displayWidth === 0) return <div className="crop-thumb" />;
-  const scaleX = size.naturalWidth / size.displayWidth;
-  const scaleY = size.naturalHeight / size.displayHeight;
-  const bw = Math.max(1, box.width * scaleX);
-  const bh = Math.max(1, box.height * scaleY);
-  const k = Math.min(THUMB_W / bw, THUMB_H / bh);
-  const offsetX = (THUMB_W - bw * k) / 2 - box.x * scaleX * k;
-  const offsetY = (THUMB_H - bh * k) / 2 - box.y * scaleY * k;
+  return <div className="crop-thumb" style={cropWindowStyle(imageSrc, box, size, THUMB_W, THUMB_H)} />;
+}
+
+/**
+ * The magnifier panel: an Amazon-style live zoom of the crop currently being drawn or adjusted,
+ * pinned beside the page (never over it). It measures its own rendered box so the region is magnified
+ * as much as the panel allows — a far higher factor than {@link CropThumb}. Hidden-with-a-hint when
+ * no crop is active.
+ */
+function CropMagnifier({
+  imageSrc,
+  box,
+  size,
+}: {
+  imageSrc: string;
+  box: BoxRect | null;
+  size: CanvasSize | null;
+}): JSX.Element {
+  const viewRef = useRef<HTMLDivElement>(null);
+  const [view, setView] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+  useEffect(() => {
+    const el = viewRef.current;
+    if (!el) return undefined;
+    const update = (): void => { setView({ width: el.clientWidth, height: el.clientHeight }); };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => { observer.disconnect(); };
+  }, []);
+  const active = box !== null && size !== null && size.displayWidth > 0 && view.width > 0;
   return (
-    <div
-      className="crop-thumb"
-      style={{
-        backgroundImage: `url("${imageSrc}")`,
-        backgroundSize: `${String(size.naturalWidth * k)}px ${String(size.naturalHeight * k)}px`,
-        backgroundPosition: `${String(offsetX)}px ${String(offsetY)}px`,
-      }}
-    />
+    <div className="verify__magnifier">
+      <span className="verify__magnifier-head"><IconZoomIn /> Live crop preview</span>
+      <div
+        ref={viewRef}
+        className="verify__magnifier-view"
+        style={active ? cropWindowStyle(imageSrc, box, size, view.width, view.height) : undefined}
+      >
+        {active ? null : (
+          <span className="verify__magnifier-hint">Draw or adjust a crop to preview it magnified here.</span>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -252,6 +303,12 @@ export function VerifyWorkspace({
   const [savedUrls, setSavedUrls] = useState<ReadonlyMap<string, string>>(new Map());
   /** Boxes whose last auto-save failed — the card offers a manual Save retry for these. */
   const [failed, setFailed] = useState<ReadonlySet<string>>(new Set());
+  /** The live rubber-band rect while a new crop is being drawn — feeds the magnifier. */
+  const [drawPreview, setDrawPreview] = useState<BoxRect | null>(null);
+  /** The box currently being dragged/resized — feeds the magnifier while it is adjusted. */
+  const [activeBoxId, setActiveBoxId] = useState<string | null>(null);
+  /** A box briefly rung to draw the eye to it after "Edit crop" re-selected an already-drawn crop. */
+  const [flashId, setFlashId] = useState<string | null>(null);
 
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -397,6 +454,16 @@ export function VerifyWorkspace({
     highlightTimer.current = setTimeout(() => { setHighlightId(null); }, 1800);
   };
   useEffect(() => () => { if (highlightTimer.current) clearTimeout(highlightTimer.current); }, []);
+
+  // Briefly ring a canvas box so an "Edit crop" click that re-selected an already-present box is
+  // acknowledged (the box was invisible in a wall of similar regions otherwise).
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashBox = (id: string): void => {
+    setFlashId(id);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => { setFlashId(null); }, 1400);
+  };
+  useEffect(() => () => { if (flashTimer.current) clearTimeout(flashTimer.current); }, []);
 
   /** Snapshot the current page's saved boxes (natural pixels) so navigating back to it redraws them. */
   const cacheCurrentPage = (pageNumber: number): void => {
@@ -582,8 +649,53 @@ export function VerifyWorkspace({
     }
   };
 
+  // When set, the next drawn crop REPLACES this already-attached image url in place rather than
+  // appending a new one — the "Edit crop" fallback used when no box/spec survives to reopen.
+  const replaceUrl = useRef<string | null>(null);
+
+  /**
+   * Bring a saved crop back onto the canvas as an adjustable box so the operator can move/resize it
+   * (it re-saves on release). Three cases, best first:
+   *  1. Its box is still on the current page's canvas — just ring it; it is already adjustable.
+   *  2. A natural-pixel spec for it is remembered (this session) — restore the exact rect, navigating
+   *     to its page first if it lives on another one.
+   *  3. Nothing survives (e.g. after a reload) — arm a re-draw that REPLACES this exact image url.
+   */
+  const editCrop = (
+    questionId: string,
+    type: 'question' | 'option',
+    optionIndex: number,
+    url: string,
+  ): void => {
+    const onCanvas = boxesRef.current.find((b) => savedUrlsRef.current.get(b.id) === url);
+    if (onCanvas) {
+      flashBox(onCanvas.id);
+      return;
+    }
+    for (const [pageNumber, specs] of pageCache.current) {
+      const spec = specs.find((s) => s.url === url);
+      if (!spec) continue;
+      if (pageNumber === page) {
+        if (size && size.displayWidth > 0) {
+          const box = specToBox(spec, size);
+          applyBoxes((prev) => [...prev, box]);
+          applySavedUrls((prev) => new Map(prev).set(spec.id, spec.url));
+          flashBox(box.id);
+        }
+      } else {
+        // goToPage restores every cached spec for the target page (this one included) once it fits.
+        goToPage(pageNumber);
+      }
+      return;
+    }
+    // No box, no spec: arm a fresh draw whose crop replaces this url in place.
+    replaceUrl.current = url;
+    setDrawTarget({ questionId, type, optionIndex });
+  };
+
   // --- Draw-to-save (manual flow): arm a target from its card, rubber-band draw, auto-save. ---
   const toggleDrawTarget = (question: Question, type: 'question' | 'option', optionIndex = 0): void => {
+    replaceUrl.current = null;
     setDrawTarget((prev) =>
       prev && prev.questionId === question.id && prev.type === type && prev.optionIndex === optionIndex
         ? null
@@ -608,6 +720,11 @@ export function VerifyWorkspace({
         ...rect,
       },
     ]);
+    // Seed the box's saved-url so the save REPLACES the edited image in place (attachCrop keys the
+    // replacement off the box's previous url) instead of attaching a second figure.
+    const replacing = replaceUrl.current;
+    replaceUrl.current = null;
+    if (replacing !== null) applySavedUrls((prev) => new Map(prev).set(id, replacing));
     setDrawTarget(null);
     void requestSave(id);
   };
@@ -630,10 +747,12 @@ export function VerifyWorkspace({
 
   // --- Adjust-to-resave: one history entry per grab, one (coalesced) save per release. ---
   const grabbed = useRef<Box[] | null>(null);
-  const handleBoxGrab = (): void => {
+  const handleBoxGrab = (id: string): void => {
     grabbed.current = boxesRef.current;
+    setActiveBoxId(id);
   };
   const handleBoxRelease = (id: string, moved: boolean): void => {
+    setActiveBoxId(null);
     if (moved && grabbed.current) {
       past.current = [...past.current, grabbed.current];
       future.current = [];
@@ -943,7 +1062,11 @@ export function VerifyWorkspace({
     height: b.height,
     variant: savedUrls.has(b.id) ? 'saved' : b.source,
     busy: busy.has(b.id),
+    flash: flashId === b.id,
   }));
+  // What the magnifier zooms into: a crop being drawn takes priority, else the box being adjusted.
+  const magnifierBox: BoxRect | null =
+    drawPreview ?? (activeBoxId ? boxes.find((b) => b.id === activeBoxId) ?? null : null);
   // Cards list only the not-yet-saved manual regions (saving or needing a retry); a saved region's
   // presence in the card is its attached image, and adjustments happen on the canvas box itself.
   const cardBoxesFor = (questionId: string): CardBox[] =>
@@ -1054,6 +1177,7 @@ export function VerifyWorkspace({
             onSize={handleSize}
             draw={drawLabel !== null ? { label: drawLabel } : null}
             onDraw={handleDraw}
+            onDrawProgress={setDrawPreview}
             onDrawCancel={() => { setDrawTarget(null); }}
             onBoxGrab={handleBoxGrab}
             onBoxRelease={handleBoxRelease}
@@ -1062,25 +1186,28 @@ export function VerifyWorkspace({
       </div>
 
       <div className="verify__panel">
-        <div className="verify__session">
-          {sessionBar ? <div className="verify__session-row">{sessionBar}</div> : null}
-          <div className="verify__session-row">
-            <span className="text-sm text-ink-2">
-              {drafts.dirtyIds.size > 0
-                ? `${String(drafts.dirtyIds.size)} question(s) with unsaved edits`
-                : 'All edits saved'}
-            </span>
-            <Button
-              size="xs"
-              className="ml-auto flex-none"
-              disabled={drafts.dirtyIds.size === 0 || drafts.isSaving}
-              onClick={() => { void drafts.save([...drafts.dirtyIds]); }}
-            >
-              {drafts.isSaving
-                ? <><Spinner /> Saving…</>
-                : `Update all${drafts.dirtyIds.size > 0 ? ` (${String(drafts.dirtyIds.size)})` : ''}`}
-            </Button>
+        <div className="verify__pinned">
+          <div className="verify__session">
+            {sessionBar ? <div className="verify__session-row">{sessionBar}</div> : null}
+            <div className="verify__session-row">
+              <span className="text-sm text-ink-2">
+                {drafts.dirtyIds.size > 0
+                  ? `${String(drafts.dirtyIds.size)} question(s) with unsaved edits`
+                  : 'All edits saved'}
+              </span>
+              <Button
+                size="xs"
+                className="ml-auto flex-none"
+                disabled={drafts.dirtyIds.size === 0 || drafts.isSaving}
+                onClick={() => { void drafts.save([...drafts.dirtyIds]); }}
+              >
+                {drafts.isSaving
+                  ? <><Spinner /> Saving…</>
+                  : `Update all${drafts.dirtyIds.size > 0 ? ` (${String(drafts.dirtyIds.size)})` : ''}`}
+              </Button>
+            </div>
           </div>
+          <CropMagnifier imageSrc={imageSrc} box={magnifierBox} size={size} />
         </div>
 
         {aiError ? <p className="error">{aiError}</p> : null}
@@ -1190,6 +1317,7 @@ export function VerifyWorkspace({
                 onDrawRegion={toggleDrawTarget}
                 onSaveBox={(boxId) => { void requestSave(boxId); }}
                 onDeleteBox={deleteBox}
+                onEditCrop={(type, optionIndex, url) => { editCrop(question.id, type, optionIndex, url); }}
               />
             </div>
           ))

@@ -10,6 +10,8 @@ export type CanvasBox = BoxRect & {
   variant?: 'manual' | 'ai' | 'saved';
   /** Pulses the box while its crop is uploading. */
   busy?: boolean;
+  /** Briefly rings the box to draw the eye to it (e.g. after "Edit crop" re-selects it). */
+  flash?: boolean;
 };
 export type CanvasSize = {
   naturalWidth: number;
@@ -31,6 +33,8 @@ type CropCanvasProps = {
   draw?: { label: string } | null;
   /** A rubber-band drag finished — `rect` is the drawn region in display pixels. */
   onDraw?: (rect: BoxRect) => void;
+  /** Live rubber-band rect during a draw (display pixels), or `null` when no draw is in progress. */
+  onDrawProgress?: (rect: BoxRect | null) => void;
   /** The operator dismissed draw mode from the canvas hint. */
   onDrawCancel?: () => void;
   /** A drag/resize on an existing box started — lets the owner snapshot state for undo. */
@@ -57,6 +61,7 @@ export function CropCanvas({
   onSize,
   draw = null,
   onDraw,
+  onDrawProgress,
   onDrawCancel,
   onBoxGrab,
   onBoxRelease,
@@ -120,13 +125,16 @@ export function CropCanvas({
     event.preventDefault();
     const point = framePoint(event.clientX, event.clientY);
     drawStart.current = point;
-    setRubber({ x: point.x, y: point.y, width: 0, height: 0 });
+    const rect = { x: point.x, y: point.y, width: 0, height: 0 };
+    setRubber(rect);
+    onDrawProgress?.(rect);
   };
 
   useEffect(() => {
     if (!draw) {
       drawStart.current = null;
       setRubber(null);
+      onDrawProgress?.(null);
       return undefined;
     }
     const toRect = (from: { x: number; y: number }, to: { x: number; y: number }): BoxRect => ({
@@ -137,13 +145,16 @@ export function CropCanvas({
     });
     const onMove = (event: globalThis.MouseEvent): void => {
       if (!drawStart.current) return;
-      setRubber(toRect(drawStart.current, framePoint(event.clientX, event.clientY)));
+      const rect = toRect(drawStart.current, framePoint(event.clientX, event.clientY));
+      setRubber(rect);
+      onDrawProgress?.(rect);
     };
     const onUp = (event: globalThis.MouseEvent): void => {
       if (!drawStart.current) return;
       const rect = toRect(drawStart.current, framePoint(event.clientX, event.clientY));
       drawStart.current = null;
       setRubber(null);
+      onDrawProgress?.(null);
       // A stray click stays armed so the operator can simply try the drag again.
       if (rect.width >= MIN_DRAW_SIZE && rect.height >= MIN_DRAW_SIZE) onDraw?.(rect);
     };
@@ -153,7 +164,7 @@ export function CropCanvas({
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
-  }, [draw, onDraw, framePoint]);
+  }, [draw, onDraw, onDrawProgress, framePoint]);
 
   const frameStyle: CSSProperties =
     displayWidth > 0 && displayHeight > 0 ? { width: displayWidth, height: displayHeight } : {};
@@ -191,6 +202,7 @@ export function CropCanvas({
             label={box.label}
             variant={box.variant ?? 'manual'}
             busy={box.busy ?? false}
+            flash={box.flash ?? false}
             scale={1}
             onUpdate={onUpdateBox}
             onDelete={onDeleteBox}
