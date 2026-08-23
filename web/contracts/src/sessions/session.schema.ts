@@ -28,6 +28,7 @@ export const SessionSchema = z.object({
   module: ModuleSchema.nullable(),
   status: SessionStatusSchema,
   autoRun: z.boolean(), // enqueue extraction automatically as each file is uploaded
+  flagged: z.boolean(), // marked for later review/fix (e.g. a poorly-extracted session)
   documentCount: z.number().int().nonnegative(),
   extractedCount: z.number().int().nonnegative(),
   createdAt: z.string().datetime(),
@@ -57,6 +58,7 @@ export const UpdateSessionSchema = z
     subject: z.string().min(1),
     module: ModuleSchema,
     autoRun: z.boolean(),
+    flagged: z.boolean(),
   })
   .partial();
 export type UpdateSession = z.infer<typeof UpdateSessionSchema>;
