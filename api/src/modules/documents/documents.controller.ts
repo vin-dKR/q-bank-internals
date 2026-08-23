@@ -1,5 +1,5 @@
 import type { RequestHandler } from 'express';
-import { DocumentListQuerySchema, RegisterDocumentSchema } from '@ingest/contracts';
+import { DocumentListQuerySchema, RegisterDocumentSchema, UpdateDocumentSchema } from '@ingest/contracts';
 import { asyncHandler } from '../../shared/http/async-handler.js';
 import { ok } from '../../shared/http/api-response.js';
 import { parseOrThrow } from '../../shared/http/parse.js';
@@ -14,6 +14,7 @@ export function createDocumentsController(service: DocumentsService): {
   list: RequestHandler;
   getById: RequestHandler;
   register: RequestHandler;
+  update: RequestHandler;
   remove: RequestHandler;
 } {
   return {
@@ -29,6 +30,11 @@ export function createDocumentsController(service: DocumentsService): {
     register: asyncHandler(async (req, res) => {
       const body = parseOrThrow(RegisterDocumentSchema, req.body);
       ok(res, await service.register(body), 201);
+    }),
+
+    update: asyncHandler(async (req, res) => {
+      const patch = parseOrThrow(UpdateDocumentSchema, req.body);
+      ok(res, await service.update(requiredParam(req, 'id'), patch));
     }),
 
     remove: asyncHandler(async (req, res) => {

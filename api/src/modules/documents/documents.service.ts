@@ -1,4 +1,4 @@
-import type { Document, DocumentListQuery, RegisterDocument } from '@ingest/contracts';
+import type { Document, DocumentListQuery, RegisterDocument, UpdateDocument } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { QuestionRepository } from '../questions/index.js';
 import type { ExtractionJobStore } from '../extraction/index.js';
@@ -27,6 +27,13 @@ export class DocumentsService {
     const document = await this.documents.findById(id);
     if (!document) throw errors.documentNotFound(id);
     return document;
+  }
+
+  /** Edit a document (currently only the operator's manual-fix flag). */
+  async update(id: string, patch: UpdateDocument): Promise<Document> {
+    const document = await this.documents.findById(id);
+    if (!document) throw errors.documentNotFound(id);
+    return this.documents.update(id, patch);
   }
 
   /** Delete a document and everything tied to it — its questions and jobs — then the document. */

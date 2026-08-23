@@ -1,5 +1,11 @@
 import type { PrismaClient } from '@prisma/client';
-import type { ChapterTopic, Document, DocumentListQuery, DocumentStatus } from '@ingest/contracts';
+import type {
+  ChapterTopic,
+  Document,
+  DocumentListQuery,
+  DocumentStatus,
+  UpdateDocument,
+} from '@ingest/contracts';
 import type { CreateDocumentInput, DocumentRepository } from '../../../modules/documents/index.js';
 
 type PageRangeRow = { from: number; to: number };
@@ -31,6 +37,7 @@ type DocumentRow = {
   pageRange: PageRangeRow | null;
   topics: TopicRow[];
   status: DocumentStatus;
+  flagged: boolean;
   questionCount: number;
   extractedAt: Date | null;
   createdAt: Date;
@@ -81,6 +88,7 @@ function toDocument(row: DocumentRow): Document {
     pageRange: row.pageRange,
     topics: toContractTopics(row.topics),
     status: row.status,
+    flagged: row.flagged,
     questionCount: row.questionCount,
     extractedAt: row.extractedAt ? row.extractedAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
@@ -155,6 +163,16 @@ export class PrismaDocumentRepository implements DocumentRepository {
 
   async updateStatus(id: string, status: DocumentStatus): Promise<Document> {
     const row = await this.prisma.document.update({ where: { id }, data: { status } });
+    return toDocument(row);
+  }
+
+  async update(id: string, patch: UpdateDocument): Promise<Document> {
+    const row = await this.prisma.document.update({
+      where: { id },
+      data: {
+        ...(patch.flagged !== undefined ? { flagged: patch.flagged } : {}),
+      },
+    });
     return toDocument(row);
   }
 

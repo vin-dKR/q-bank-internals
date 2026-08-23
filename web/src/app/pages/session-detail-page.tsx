@@ -9,9 +9,9 @@ import {
   useSession,
   useUpdateSession,
 } from '../../features/sessions/index.js';
-import { DocumentUnitList, useDeleteDocument, useDocuments } from '../../features/documents/index.js';
+import { DocumentUnitList, useDeleteDocument, useDocuments, useUpdateDocument } from '../../features/documents/index.js';
 import { ConfigsModal, usePublishDocument } from '../../features/questions/index.js';
-import { Badge, IconTrash, LoadingState, PageHeader, Spinner, StatusBadge, useConfirm } from '../../shared/ui/index.js';
+import { Badge, IconTrash, IconWarning, LoadingState, PageHeader, Spinner, StatusBadge, useConfirm } from '../../shared/ui/index.js';
 
 type StatusFilter = DocumentStatus | 'all';
 const ACTIVE_STATUSES = new Set<DocumentStatus>(['queued', 'extracting']);
@@ -30,6 +30,7 @@ export function SessionDetailPage(): JSX.Element {
   const update = useUpdateSession();
   const deleteSession = useDeleteSession();
   const deleteDocument = useDeleteDocument();
+  const updateDocument = useUpdateDocument();
   const runSession = useRunSessionExtraction();
   const runDoc = useRunDocumentExtraction();
   const publishDoc = usePublishDocument();
@@ -83,9 +84,14 @@ export function SessionDetailPage(): JSX.Element {
     }).then((ok) => { if (ok) publishDoc.mutate(doc.id); });
   };
 
+  const toggleFlag = (doc: Document): void => {
+    updateDocument.mutate({ id: doc.id, patch: { flagged: !doc.flagged } });
+  };
+
   /** The per-document action buttons for the unit list — decided here from kind + status. */
   const renderActions = (doc: Document): JSX.Element => (
     <>
+      {doc.kind === 'question' && doc.flagged ? <Badge tone="danger">flagged</Badge> : null}
       {isExtracted(doc) ? (
         <>
           <Link className="btn btn--xs" to={`/verify?documentId=${doc.id}`}>View</Link>
@@ -113,6 +119,18 @@ export function SessionDetailPage(): JSX.Element {
           onClick={() => { runDoc.mutate(doc.id); }}
         >
           Run
+        </button>
+      ) : null}
+      {doc.kind === 'question' ? (
+        <button
+          type="button"
+          className={`btn btn--xs ${doc.flagged ? 'btn--danger' : 'btn--ghost'}`}
+          aria-pressed={doc.flagged}
+          aria-label={doc.flagged ? `Unflag ${doc.fileName}` : `Flag ${doc.fileName}`}
+          disabled={updateDocument.isPending}
+          onClick={() => { toggleFlag(doc); }}
+        >
+          <IconWarning /> {doc.flagged ? 'Flagged' : 'Flag'}
         </button>
       ) : null}
       <button
@@ -164,7 +182,6 @@ export function SessionDetailPage(): JSX.Element {
           ) : (
             <div className="row">
               <StatusBadge status={s.status} />
-              {s.flagged ? <Badge tone="danger">flagged</Badge> : null}
               <button type="button" className="btn btn--ghost btn--xs" onClick={() => { setLabel(s.label); setEditing(true); }}>
                 Rename
               </button>
@@ -180,16 +197,6 @@ export function SessionDetailPage(): JSX.Element {
               />
               <span className="switch__track" />
               <span>Auto-run</span>
-            </label>
-            <label className="switch">
-              <input
-                type="checkbox"
-                checked={s.flagged}
-                disabled={update.isPending}
-                onChange={(e) => { update.mutate({ id: s.id, patch: { flagged: e.target.checked } }); }}
-              />
-              <span className="switch__track" />
-              <span>Mark as flag</span>
             </label>
             <button type="button" className="btn btn--ghost btn--xs" onClick={onDeleteSession}>
               <IconTrash /> Delete session

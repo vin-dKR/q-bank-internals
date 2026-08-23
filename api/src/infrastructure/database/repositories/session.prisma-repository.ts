@@ -16,7 +16,6 @@ type SessionRow = {
   subject: string | null;
   module: string | null;
   autoRun: boolean;
-  flagged: boolean;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -29,7 +28,6 @@ function toRecord(row: SessionRow): SessionRecord {
     subject: row.subject,
     module: row.module,
     autoRun: row.autoRun,
-    flagged: row.flagged,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -39,7 +37,6 @@ function toRecord(row: SessionRow): SessionRecord {
 export class PrismaSessionRepository implements SessionRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
-  // A session is never created pre-flagged — `flagged` uses its schema default (false) here.
   async create(input: CreateSessionInput): Promise<SessionRecord> {
     const row = await this.prisma.session.create({
       data: {
@@ -76,7 +73,6 @@ export class PrismaSessionRepository implements SessionRepository {
         ...(patch.subject !== undefined ? { subject: patch.subject } : {}),
         ...(patch.module !== undefined ? { module: patch.module } : {}),
         ...(patch.autoRun !== undefined ? { autoRun: patch.autoRun } : {}),
-        ...(patch.flagged !== undefined ? { flagged: patch.flagged } : {}),
       },
     });
     return toRecord(row);
