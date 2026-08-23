@@ -98,6 +98,8 @@ model Document {
   // Missing on pre-topic documents; Prisma reads an absent composite list as [] (config absent).
   topics        ChapterTopic[]
   status        DocumentStatus  @default(uploaded)
+  // Operator flag: a file that didn't extract cleanly, marked to be fixed manually later.
+  flagged       Boolean         @default(false)
   questionCount Int             @default(0)
   extractedAt   DateTime?
   questions     Question[]

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { Document, DocumentStatus } from '@ingest/contracts';
+import type { Document, DocumentStatus, UpdateDocument } from '@ingest/contracts';
 import { DocumentSchema, paginated } from '@ingest/contracts';
 import { request } from '../../../shared/api/http-client.js';
 
@@ -28,6 +28,10 @@ export const documentsApi = {
 
   get: (id: string): Promise<Document> => {
     return request(`/documents/${id}`, { schema: DocumentSchema });
+  },
+
+  update: (id: string, patch: UpdateDocument): Promise<Document> => {
+    return request(`/documents/${id}`, { method: 'PATCH', body: patch, schema: DocumentSchema });
   },
 
   remove: (id: string): Promise<{ deleted: boolean }> => {

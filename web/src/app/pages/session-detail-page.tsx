@@ -9,9 +9,9 @@ import {
   useSession,
   useUpdateSession,
 } from '../../features/sessions/index.js';
-import { DocumentUnitList, useDeleteDocument, useDocuments } from '../../features/documents/index.js';
+import { DocumentUnitList, useDeleteDocument, useDocuments, useUpdateDocument } from '../../features/documents/index.js';
 import { ConfigsModal, usePublishDocument } from '../../features/questions/index.js';
-import { IconTrash, LoadingState, PageHeader, Spinner, StatusBadge, useConfirm } from '../../shared/ui/index.js';
+import { Badge, IconTrash, IconWarning, LoadingState, PageHeader, Spinner, StatusBadge, useConfirm } from '../../shared/ui/index.js';
 
 type StatusFilter = DocumentStatus | 'all';
 const ACTIVE_STATUSES = new Set<DocumentStatus>(['queued', 'extracting']);
@@ -30,6 +30,7 @@ export function SessionDetailPage(): JSX.Element {
   const update = useUpdateSession();
   const deleteSession = useDeleteSession();
   const deleteDocument = useDeleteDocument();
+  const updateDocument = useUpdateDocument();
   const runSession = useRunSessionExtraction();
   const runDoc = useRunDocumentExtraction();
   const publishDoc = usePublishDocument();
@@ -83,9 +84,14 @@ export function SessionDetailPage(): JSX.Element {
     }).then((ok) => { if (ok) publishDoc.mutate(doc.id); });
   };
 
+  const toggleFlag = (doc: Document): void => {
+    updateDocument.mutate({ id: doc.id, patch: { flagged: !doc.flagged } });
+  };
+
   /** The per-document action buttons for the unit list — decided here from kind + status. */
   const renderActions = (doc: Document): JSX.Element => (
     <>
+      {doc.flagged ? <Badge tone="danger">flagged</Badge> : null}
       {isExtracted(doc) ? (
         <>
           <Link className="btn btn--xs" to={`/verify?documentId=${doc.id}`}>View</Link>
@@ -115,6 +121,16 @@ export function SessionDetailPage(): JSX.Element {
           Run
         </button>
       ) : null}
+      <button
+        type="button"
+        className={`btn btn--xs ${doc.flagged ? 'btn--danger' : 'btn--ghost'}`}
+        aria-pressed={doc.flagged}
+        aria-label={doc.flagged ? `Unflag ${doc.fileName}` : `Flag ${doc.fileName}`}
+        disabled={updateDocument.isPending}
+        onClick={() => { toggleFlag(doc); }}
+      >
+        <IconWarning /> {doc.flagged ? 'Flagged' : 'Flag'}
+      </button>
       <button
         type="button"
         className="btn btn--ghost btn--icon-only btn--icon-only-sm btn--danger"
