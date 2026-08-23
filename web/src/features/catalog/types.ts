@@ -2,6 +2,11 @@
 export type CatalogFilterState = {
   exam: string;
   subject: string;
+  /**
+   * Ingest taxonomy level with no column on the published `Question` collection: it only narrows the
+   * cascading dropdown options (module → chapter), so it is not sent to the browse-list query.
+   */
+  module: string;
   chapter: string;
   section: string;
   questionType: string;
@@ -14,6 +19,7 @@ export type CatalogFilterState = {
 export const EMPTY_FILTERS: CatalogFilterState = {
   exam: '',
   subject: '',
+  module: '',
   chapter: '',
   section: '',
   questionType: '',
@@ -22,4 +28,4 @@ export const EMPTY_FILTERS: CatalogFilterState = {
 };
 
 /** The subset the cascading filter-options request narrows against. */
-export type CatalogSelection = Pick<CatalogFilterState, 'exam' | 'subject' | 'chapter' | 'questionType'>;
+export type CatalogSelection = Pick<CatalogFilterState, 'exam' | 'subject' | 'module' | 'chapter' | 'questionType'>;

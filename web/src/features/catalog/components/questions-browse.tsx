@@ -10,6 +10,7 @@ import { QuestionBrowseList } from './question-browse-list.js';
 const EMPTY_OPTIONS: CatalogFilterOptions = {
   exams: [],
   subjects: [],
+  modules: [],
   chapters: [],
   sections: [],
   questionTypes: [],
@@ -21,8 +22,9 @@ const EMPTY_OPTIONS: CatalogFilterOptions = {
  */
 function applyPatch(prev: CatalogFilterState, patch: Partial<CatalogFilterState>): CatalogFilterState {
   const next = { ...prev, ...patch };
-  if ('exam' in patch) { next.subject = ''; next.chapter = ''; next.section = ''; }
-  if ('subject' in patch) { next.chapter = ''; next.section = ''; }
+  if ('exam' in patch) { next.subject = ''; next.module = ''; next.chapter = ''; next.section = ''; }
+  if ('subject' in patch) { next.module = ''; next.chapter = ''; next.section = ''; }
+  if ('module' in patch) { next.chapter = ''; next.section = ''; }
   if ('chapter' in patch) { next.section = ''; }
   return next;
 }
@@ -39,10 +41,11 @@ export function QuestionsBrowse(): JSX.Element {
     () => ({
       exam: filters.exam,
       subject: filters.subject,
+      module: filters.module,
       chapter: filters.chapter,
       questionType: filters.questionType,
     }),
-    [filters.exam, filters.subject, filters.chapter, filters.questionType],
+    [filters.exam, filters.subject, filters.module, filters.chapter, filters.questionType],
   );
 
   const optionsQuery = useFilterOptions(selection);

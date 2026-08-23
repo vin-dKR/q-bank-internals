@@ -143,7 +143,6 @@ export function SessionsPage(): JSX.Element {
 
           <div className="grid gap-3.5 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
             {items.map((session) => {
-              const context = [session.exam, session.subject, session.module].filter(Boolean).join(' › ');
               const isSelected = selected.has(session.id);
               return (
                 <div
@@ -160,7 +159,7 @@ export function SessionsPage(): JSX.Element {
                         <StatusBadge status={session.status} />
                       </div>
                     </div>
-                    <div className="text-sm text-ink-2">{context || 'No context yet'}</div>
+                    <div className="text-sm text-ink-2">Created {new Date(session.createdAt).toLocaleDateString()}</div>
                     <div className="mt-0.5 flex items-center gap-2.5 text-[13px] text-ink-2">
                       <span>{session.extractedCount}/{session.documentCount} extracted</span>
                       {session.autoRun ? <Badge tone="info">auto-run</Badge> : null}

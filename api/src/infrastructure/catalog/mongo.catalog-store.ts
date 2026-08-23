@@ -77,6 +77,10 @@ export class MongoCatalogStore implements CatalogStore {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly collection = 'Question',
+    // The ingest taxonomy sources, unioned into the filter options so a value entered in Cut & Upload
+    // v2 shows in the dropdowns before any question of it is published. Their `@@map` collection names.
+    private readonly documentCollection = 'ingest_documents',
+    private readonly sessionCollection = 'ingest_sessions',
   ) {}
 
   async listQuestions(
@@ -102,55 +106,107 @@ export class MongoCatalogStore implements CatalogStore {
   }
 
   async filterOptions(selection: CatalogFilterSelection): Promise<CatalogFilterOptionSets> {
-    // One distinct-values sub-pipeline per field via `$facet`, each matched on the OTHER selected
-    // fields but never on its own field. So a chosen Subject still lists every subject (you can
-    // switch it), while the Chapter list shrinks to that subject — cascading without self-collapsing.
-    const facet = (field: string): Prisma.InputJsonObject =>
-      [
-        { $match: this.optionsMatch(selection, field) },
-        { $group: { _id: null, values: { $addToSet: `$${field}` } } },
-      ] as unknown as Prisma.InputJsonObject;
+    // Each dropdown is the UNION of the published `Question` collection and the ingest taxonomy, so a
+    // value typed in Cut & Upload v2 appears before any question of it is published. Exam/subject live
+    // only on the session (a document has no exam/subject column); module/chapter/section/type live on
+    // the document (module also on the session). Three collections → three `$facet` reads, unioned in
+    // JS. Each facet is narrowed by the OTHER selected fields it *has* (never its own), so the cascade
+    // holds where the field exists — module narrows chapter via the document's `path`.
+    const [published, docs, sessions] = await Promise.all([
+      this.runFacets(this.collection, [
+        { name: 'exams', field: 'exam_name', match: this.publishedMatch(selection, 'exam_name') },
+        { name: 'subjects', field: 'subject', match: this.publishedMatch(selection, 'subject') },
+        { name: 'chapters', field: 'chapter', match: this.publishedMatch(selection, 'chapter') },
+        { name: 'sections', field: 'section_name', match: this.publishedMatch(selection, 'section_name') },
+        { name: 'questionTypes', field: 'question_type', match: this.publishedMatch(selection, 'question_type') },
+      ]),
+      this.runFacets(this.documentCollection, [
+        { name: 'modules', field: 'path.module', match: this.documentMatch(selection, 'path.module') },
+        { name: 'chapters', field: 'path.chapter', match: this.documentMatch(selection, 'path.chapter') },
+        { name: 'sectionsPath', field: 'path.section', match: this.documentMatch(selection, 'path.section') },
+        { name: 'sectionsName', field: 'sectionName', match: this.documentMatch(selection, 'path.section') },
+        { name: 'questionTypes', field: 'questionType', match: this.documentMatch(selection, 'questionType') },
+      ]),
+      this.runFacets(this.sessionCollection, [
+        { name: 'exams', field: 'exam', match: this.sessionMatch(selection, 'exam') },
+        { name: 'subjects', field: 'subject', match: this.sessionMatch(selection, 'subject') },
+        { name: 'modules', field: 'module', match: this.sessionMatch(selection, 'module') },
+      ]),
+    ]);
 
+    const pick = (sets: Record<string, string[]>, name: string): string[] => sets[name] ?? [];
+    return {
+      exams: cleanValues([...pick(published, 'exams'), ...pick(sessions, 'exams')]),
+      subjects: cleanValues([...pick(published, 'subjects'), ...pick(sessions, 'subjects')]),
+      modules: cleanValues([...pick(sessions, 'modules'), ...pick(docs, 'modules')]),
+      chapters: cleanValues([...pick(published, 'chapters'), ...pick(docs, 'chapters')]),
+      sections: cleanValues([
+        ...pick(published, 'sections'),
+        ...pick(docs, 'sectionsPath'),
+        ...pick(docs, 'sectionsName'),
+      ]),
+      questionTypes: cleanValues([...pick(published, 'questionTypes'), ...pick(docs, 'questionTypes')]),
+    };
+  }
+
+  /**
+   * Run one `$facet` distinct-per-field aggregation over `collection` and return each facet's cleaned
+   * values keyed by its `name`. One `$addToSet` group per spec, matched by that spec's cascade filter.
+   */
+  private async runFacets(
+    collection: string,
+    specs: readonly { name: string; field: string; match: Record<string, unknown> }[],
+  ): Promise<Record<string, string[]>> {
+    const facets: Record<string, unknown> = {};
+    for (const spec of specs) {
+      facets[spec.name] = [
+        { $match: spec.match },
+        { $group: { _id: null, values: { $addToSet: `$${spec.field}` } } },
+      ];
+    }
     const command = {
-      aggregate: this.collection,
-      pipeline: [
-        {
-          $facet: {
-            exams: facet('exam_name'),
-            subjects: facet('subject'),
-            chapters: facet('chapter'),
-            sections: facet('section_name'),
-            questionTypes: facet('question_type'),
-          },
-        },
-      ],
+      aggregate: collection,
+      pipeline: [{ $facet: facets }],
       cursor: {},
     } as unknown as Prisma.InputJsonObject;
 
     const doc = firstBatch(await this.prisma.$runCommandRaw(command))[0] as
       | Record<string, Array<{ values?: unknown }> | undefined>
       | undefined;
-    const valuesOf = (facetName: string): unknown => doc?.[facetName]?.[0]?.values;
-    return {
-      exams: cleanValues(valuesOf('exams')),
-      subjects: cleanValues(valuesOf('subjects')),
-      chapters: cleanValues(valuesOf('chapters')),
-      sections: cleanValues(valuesOf('sections')),
-      questionTypes: cleanValues(valuesOf('questionTypes')),
-    };
+    const result: Record<string, string[]> = {};
+    for (const spec of specs) result[spec.name] = cleanValues(doc?.[spec.name]?.[0]?.values);
+    return result;
   }
 
   /**
-   * The `$match` for one facet: the selected taxonomy fields EXCEPT the one this facet distinct-ifies,
-   * so a facet is narrowed by its siblings but never by itself (which would collapse it to the single
-   * chosen value). `section_name` is never a selection input, so its facet just gets the full match.
+   * The `$match` for a published-`Question` facet: the selected taxonomy fields EXCEPT the one this
+   * facet distinct-ifies, so a facet is narrowed by its siblings but never by itself. `module` and
+   * `section_name` are not columns on this collection, so they never constrain it.
    */
-  private optionsMatch(selection: CatalogFilterSelection, excludeField: string): Record<string, unknown> {
+  private publishedMatch(selection: CatalogFilterSelection, excludeField: string): Record<string, unknown> {
     const match: Record<string, unknown> = {};
     if (selection.exam && excludeField !== 'exam_name') match.exam_name = selection.exam;
     if (selection.subject && excludeField !== 'subject') match.subject = selection.subject;
     if (selection.chapter && excludeField !== 'chapter') match.chapter = selection.chapter;
     if (selection.questionType && excludeField !== 'question_type') match.question_type = selection.questionType;
+    return match;
+  }
+
+  /** The `$match` for an `ingest_documents` facet — narrowed by the selection fields a document carries. */
+  private documentMatch(selection: CatalogFilterSelection, excludeField: string): Record<string, unknown> {
+    const match: Record<string, unknown> = {};
+    if (selection.module && excludeField !== 'path.module') match['path.module'] = selection.module;
+    if (selection.chapter && excludeField !== 'path.chapter') match['path.chapter'] = selection.chapter;
+    if (selection.questionType && excludeField !== 'questionType') match.questionType = selection.questionType;
+    return match;
+  }
+
+  /** The `$match` for an `ingest_sessions` facet — narrowed by the selection fields a session carries. */
+  private sessionMatch(selection: CatalogFilterSelection, excludeField: string): Record<string, unknown> {
+    const match: Record<string, unknown> = {};
+    if (selection.exam && excludeField !== 'exam') match.exam = selection.exam;
+    if (selection.subject && excludeField !== 'subject') match.subject = selection.subject;
+    if (selection.module && excludeField !== 'module') match.module = selection.module;
     return match;
   }
 

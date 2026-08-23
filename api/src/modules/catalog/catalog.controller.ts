@@ -29,7 +29,7 @@ export function createCatalogController(service: CatalogService): {
     }),
 
     filterOptions: asyncHandler(async (req, res) => {
-      const { exam, subject, chapter, questionType } = parseOrThrow(
+      const { exam, subject, module, chapter, questionType } = parseOrThrow(
         CatalogFilterOptionsQuerySchema,
         req.query,
       );
@@ -37,6 +37,7 @@ export function createCatalogController(service: CatalogService): {
       const selection: CatalogFilterSelection = {
         ...(exam !== undefined && { exam }),
         ...(subject !== undefined && { subject }),
+        ...(module !== undefined && { module }),
         ...(chapter !== undefined && { chapter }),
         ...(questionType !== undefined && { questionType }),
       };
