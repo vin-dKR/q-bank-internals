@@ -11,7 +11,7 @@ import {
 } from '../../features/sessions/index.js';
 import { DocumentUnitList, useDeleteDocument, useDocuments } from '../../features/documents/index.js';
 import { ConfigsModal, usePublishDocument } from '../../features/questions/index.js';
-import { IconTrash, LoadingState, PageHeader, Spinner, StatusBadge, useConfirm } from '../../shared/ui/index.js';
+import { Badge, IconTrash, LoadingState, PageHeader, Spinner, StatusBadge, useConfirm } from '../../shared/ui/index.js';
 
 type StatusFilter = DocumentStatus | 'all';
 const ACTIVE_STATUSES = new Set<DocumentStatus>(['queued', 'extracting']);
@@ -164,6 +164,7 @@ export function SessionDetailPage(): JSX.Element {
           ) : (
             <div className="row">
               <StatusBadge status={s.status} />
+              {s.flagged ? <Badge tone="danger">flagged</Badge> : null}
               <button type="button" className="btn btn--ghost btn--xs" onClick={() => { setLabel(s.label); setEditing(true); }}>
                 Rename
               </button>
@@ -179,6 +180,16 @@ export function SessionDetailPage(): JSX.Element {
               />
               <span className="switch__track" />
               <span>Auto-run</span>
+            </label>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={s.flagged}
+                disabled={update.isPending}
+                onChange={(e) => { update.mutate({ id: s.id, patch: { flagged: e.target.checked } }); }}
+              />
+              <span className="switch__track" />
+              <span>Mark as flag</span>
             </label>
             <button type="button" className="btn btn--ghost btn--xs" onClick={onDeleteSession}>
               <IconTrash /> Delete session

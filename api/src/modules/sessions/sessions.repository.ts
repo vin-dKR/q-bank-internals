@@ -13,6 +13,7 @@ export type SessionRecord = {
   subject: string | null;
   module: Module | null;
   autoRun: boolean;
+  flagged: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -33,6 +34,7 @@ export type UpdateSessionInput = {
   subject?: string | undefined;
   module?: Module | undefined;
   autoRun?: boolean | undefined;
+  flagged?: boolean | undefined;
 };
 
 /**

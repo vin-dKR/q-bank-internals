@@ -75,6 +75,7 @@ model Session {
   subject   String?
   module    String?
   autoRun   Boolean    @default(false)
+  flagged   Boolean    @default(false)
   documents Document[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt

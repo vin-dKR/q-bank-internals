@@ -155,7 +155,10 @@ export function SessionsPage(): JSX.Element {
                   <Link to={`/sessions/${session.id}`} className="flex flex-col gap-2 text-inherit no-underline">
                     <div className="flex items-center justify-between gap-2.5 text-[15px]">
                       <strong>{session.label}</strong>
-                      <StatusBadge status={session.status} />
+                      <div className="flex items-center gap-1.5">
+                        {session.flagged ? <Badge tone="danger">flagged</Badge> : null}
+                        <StatusBadge status={session.status} />
+                      </div>
                     </div>
                     <div className="text-sm text-ink-2">{context || 'No context yet'}</div>
                     <div className="mt-0.5 flex items-center gap-2.5 text-[13px] text-ink-2">
