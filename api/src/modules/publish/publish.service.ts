@@ -1,4 +1,9 @@
-import { type Document, matchKeyToAnswer, type Question } from '@ingest/contracts';
+import {
+  type Document,
+  matchKeyToAnswer,
+  type PublishSessionResult,
+  type Question,
+} from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { QuestionRepository } from '../questions/index.js';
@@ -22,6 +27,14 @@ export class PublishService {
     const document = await this.documents.findById(documentId);
     if (!document) throw errors.documentNotFound(documentId);
 
+    // Already in the bank: a no-op, not a re-insert. Guards the double-click / overlapping-session
+    // race — combined with the idempotent upsert below, a second publish can neither duplicate rows
+    // nor flip status twice. In-flight / pre-extraction states have nothing verified to publish.
+    if (document.status === 'published') return { published: 0 };
+    if (!PUBLISHABLE_STATUSES.has(document.status)) {
+      throw errors.documentNotPublishable(documentId, document.status);
+    }
+
     const questions = await this.questions.findByDocument(documentId);
     if (questions.length === 0) return { published: 0 };
 
@@ -29,25 +42,51 @@ export class PublishService {
     const rows = questions.map((question, index) =>
       toBankQuestion(question, index, document, session?.exam ?? null, session?.subject ?? null),
     );
-    const published = await this.bank.insertQuestions(rows);
+    // Ordered: the bank write must be confirmed complete (upsertQuestions throws on any partial or
+    // failed write) BEFORE status flips to `published`, so a failed write never marks a document done.
+    const published = await this.bank.upsertQuestions(rows);
     await this.documents.updateStatus(documentId, 'published');
     return { published };
   }
 
-  /** Publish every extracted-but-not-yet-published question document in a session. */
-  async publishSession(sessionId: string): Promise<{ published: number }> {
+  /**
+   * Publish every extracted-but-not-yet-published question document in a session. Each document is
+   * published independently: one failure is captured and reported, never aborting the others, so a
+   * single bad document can't strand the rest of the session unpublished.
+   */
+  async publishSession(sessionId: string): Promise<PublishSessionResult> {
     const documents = await this.documents.listBySession(sessionId);
     const targets = documents.filter(
       (document) => document.kind === 'question' && document.status === 'extracted',
     );
+    const results: PublishSessionResult['documents'] = [];
     let published = 0;
+    let failed = 0;
     for (const document of targets) {
-      const result = await this.publishDocument(document.id);
-      published += result.published;
+      try {
+        const result = await this.publishDocument(document.id);
+        published += result.published;
+        results.push({ documentId: document.id, published: result.published, error: null });
+      } catch (caught) {
+        failed += 1;
+        results.push({
+          documentId: document.id,
+          published: 0,
+          error: caught instanceof Error ? caught.message : String(caught),
+        });
+      }
     }
-    return { published };
+    return { published, failed, documents: results };
   }
 }
+
+/** Statuses from which a document may be published — everything past a completed extraction. */
+const PUBLISHABLE_STATUSES: ReadonlySet<Document['status']> = new Set([
+  'extracted',
+  'needs_review',
+  'approved',
+  'completed',
+]);
 
 /** Map one ingest question into the main bank's Question document shape. */
 function toBankQuestion(
