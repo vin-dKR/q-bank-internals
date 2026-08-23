@@ -212,10 +212,31 @@ function CropThumb({
 }
 
 /**
+ * CSS that fills an element of the crop's own aspect ratio with exactly the crop region (edge to
+ * edge, no letterbox) by scaling the page `background-image` so the box maps onto `innerW`×`innerH`.
+ */
+function cropCoverStyle(
+  imageSrc: string,
+  box: BoxRect,
+  size: CanvasSize,
+  innerW: number,
+): CSSProperties {
+  const scaleX = size.naturalWidth / size.displayWidth;
+  const scaleY = size.naturalHeight / size.displayHeight;
+  const k = innerW / Math.max(1, box.width * scaleX);
+  return {
+    backgroundImage: `url("${imageSrc}")`,
+    backgroundSize: `${String(size.naturalWidth * k)}px ${String(size.naturalHeight * k)}px`,
+    backgroundPosition: `${String(-box.x * scaleX * k)}px ${String(-box.y * scaleY * k)}px`,
+  };
+}
+
+/**
  * The magnifier panel: an Amazon-style live zoom of the crop currently being drawn or adjusted,
- * pinned beside the page (never over it). It measures its own rendered box so the region is magnified
- * as much as the panel allows — a far higher factor than {@link CropThumb}. Hidden-with-a-hint when
- * no crop is active.
+ * pinned beside the page (never over it). Rendered ONLY while a crop is active (the parent mounts it
+ * on demand). The preview element takes the crop's own aspect ratio and is filled edge-to-edge with
+ * the crop region, framed with an accent ring over a checkerboard backdrop so the cropped content is
+ * clearly distinct from the border and the surrounding background. A caption shows the pixel size.
  */
 function CropMagnifier({
   imageSrc,
@@ -223,8 +244,8 @@ function CropMagnifier({
   size,
 }: {
   imageSrc: string;
-  box: BoxRect | null;
-  size: CanvasSize | null;
+  box: BoxRect;
+  size: CanvasSize;
 }): JSX.Element {
   const viewRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
@@ -237,18 +258,34 @@ function CropMagnifier({
     observer.observe(el);
     return () => { observer.disconnect(); };
   }, []);
-  const active = box !== null && size !== null && size.displayWidth > 0 && view.width > 0;
+
+  const scaleX = size.naturalWidth / size.displayWidth;
+  const scaleY = size.naturalHeight / size.displayHeight;
+  const naturalW = Math.max(1, box.width * scaleX);
+  const naturalH = Math.max(1, box.height * scaleY);
+  const aspect = naturalW / naturalH;
+
+  // Fit a box of the crop's aspect ratio inside the measured view (leave a little breathing room).
+  const availW = Math.max(0, view.width - 16);
+  const availH = Math.max(0, view.height - 16);
+  let innerW = availW;
+  let innerH = availW / aspect;
+  if (innerH > availH) { innerH = availH; innerW = availH * aspect; }
+
+  const ready = view.width > 0 && innerW > 0.5 && innerH > 0.5;
   return (
     <div className="verify__magnifier">
-      <span className="verify__magnifier-head"><IconZoomIn /> Live crop preview</span>
-      <div
-        ref={viewRef}
-        className="verify__magnifier-view"
-        style={active ? cropWindowStyle(imageSrc, box, size, view.width, view.height) : undefined}
-      >
-        {active ? null : (
-          <span className="verify__magnifier-hint">Draw or adjust a crop to preview it magnified here.</span>
-        )}
+      <div className="verify__magnifier-head">
+        <span className="flex items-center gap-1.5"><IconZoomIn /> Live crop preview</span>
+        <span className="verify__magnifier-dims">{String(Math.round(naturalW))} × {String(Math.round(naturalH))} px</span>
+      </div>
+      <div ref={viewRef} className="verify__magnifier-view">
+        {ready ? (
+          <div
+            className="verify__magnifier-crop"
+            style={{ width: innerW, height: innerH, ...cropCoverStyle(imageSrc, box, size, innerW) }}
+          />
+        ) : null}
       </div>
     </div>
   );
@@ -1207,7 +1244,9 @@ export function VerifyWorkspace({
               </Button>
             </div>
           </div>
-          <CropMagnifier imageSrc={imageSrc} box={magnifierBox} size={size} />
+          {magnifierBox && size && size.displayWidth > 0 ? (
+            <CropMagnifier imageSrc={imageSrc} box={magnifierBox} size={size} />
+          ) : null}
         </div>
 
         {aiError ? <p className="error">{aiError}</p> : null}
