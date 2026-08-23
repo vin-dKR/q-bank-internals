@@ -1,5 +1,13 @@
 import type { PrismaClient } from '@prisma/client';
-import { type MatchData, MatchDataSchema, type Question, type UpdateQuestion } from '@ingest/contracts';
+import {
+  type ImageCrop,
+  ImageCropSchema,
+  type MatchData,
+  MatchDataSchema,
+  type Question,
+  type UpdateQuestion,
+} from '@ingest/contracts';
+import { z } from 'zod';
 import { type NewQuestion, type QuestionRepository, sortByPdfOrder } from '../../../modules/questions/index.js';
 
 // Prisma's row shape for a Question, narrowed to what we map back to the contract shape.
@@ -19,6 +27,8 @@ type QuestionRow = {
   questionImage: string | null;
   isOptionImage: boolean;
   optionImages: string[];
+  // Prisma `Json?`: the persisted crop rects, validated back into shape by `toImageCrops`.
+  imageCrops: unknown;
   questionType: string | null;
   sectionName: string | null;
   topic: string | null;
@@ -32,6 +42,13 @@ function toMatch(value: unknown): MatchData | null {
   if (value === null || value === undefined) return null;
   const parsed = MatchDataSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
+}
+
+/** Validate a Prisma `Json?` crop list into the contract shape; malformed/absent data → empty. */
+function toImageCrops(value: unknown): ImageCrop[] {
+  if (value === null || value === undefined) return [];
+  const parsed = z.array(ImageCropSchema).safeParse(value);
+  return parsed.success ? parsed.data : [];
 }
 
 function toQuestion(row: QuestionRow): Question {
@@ -51,6 +68,7 @@ function toQuestion(row: QuestionRow): Question {
     questionImage: row.questionImage,
     isOptionImage: row.isOptionImage,
     optionImages: row.optionImages,
+    imageCrops: toImageCrops(row.imageCrops),
     questionType: row.questionType,
     sectionName: row.sectionName,
     topic: row.topic,
@@ -117,6 +135,7 @@ export class PrismaQuestionRepository implements QuestionRepository {
         ...(patch.questionImage !== undefined ? { questionImage: patch.questionImage } : {}),
         ...(patch.isOptionImage !== undefined ? { isOptionImage: patch.isOptionImage } : {}),
         ...(patch.optionImages !== undefined ? { optionImages: patch.optionImages } : {}),
+        ...(patch.imageCrops !== undefined ? { imageCrops: patch.imageCrops } : {}),
         ...(patch.questionType !== undefined ? { questionType: patch.questionType } : {}),
         ...(patch.sectionName !== undefined ? { sectionName: patch.sectionName } : {}),
         ...(patch.topic !== undefined ? { topic: patch.topic } : {}),

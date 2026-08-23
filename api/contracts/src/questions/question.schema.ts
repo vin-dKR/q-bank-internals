@@ -73,6 +73,23 @@ export function parseMatchKey(answer: string): Record<string, string[]> {
 }
 
 /**
+ * One persisted crop rectangle, in the source page image's NATURAL pixels (the same numbers the
+ * verify canvas records). Stored on the question so a saved crop re-materialises as an adjustable box
+ * on any device/reload — not just a flat thumbnail. `url` ties it to the attached image; `type` +
+ * `optionIndex` say which destination it filled. The page is the question's `sourceRegion.page`.
+ */
+export const ImageCropSchema = z.object({
+  url: z.string(),
+  type: z.enum(['question', 'option']),
+  optionIndex: z.number().int().nonnegative(),
+  nx: z.number(),
+  ny: z.number(),
+  nw: z.number(),
+  nh: z.number(),
+});
+export type ImageCrop = z.infer<typeof ImageCropSchema>;
+
+/**
  * The verified question record — the thing published to the bank.
  * `sourceRegion` keeps the page + bounding box it was read from, so a bad extraction stays fixable.
  */
@@ -99,6 +116,9 @@ export const QuestionSchema = z.object({
   questionImage: z.string().nullable(),
   isOptionImage: z.boolean(),
   optionImages: z.array(z.string()),
+  // Persisted crop rectangles (natural image pixels) for the attached figures — ingest-only, empty by
+  // default. Lets every saved crop reappear as an editable box on the verify canvas on any device.
+  imageCrops: z.array(ImageCropSchema).default([]),
   // Editable metadata on the verify screen (mirrors the bank fields).
   questionType: z.string().nullable(),
   sectionName: z.string().nullable(),
@@ -130,6 +150,7 @@ export const UpdateQuestionSchema = QuestionSchema.pick({
   questionImage: true,
   isOptionImage: true,
   optionImages: true,
+  imageCrops: true,
   questionType: true,
   sectionName: true,
   topic: true,
