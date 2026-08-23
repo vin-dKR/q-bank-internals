@@ -67,6 +67,16 @@ export const errors = {
   extractionFailed: (reason: string): AppError =>
     new AppError('EXTRACTION_FAILED', 502, `The vision model failed: ${reason}`),
 
+  publishWriteFailed: (reason: string): AppError =>
+    new AppError('PUBLISH_WRITE_FAILED', 502, `Publishing to the question bank failed: ${reason}`),
+
+  documentNotPublishable: (id: string, status: string): AppError =>
+    new AppError(
+      'DOCUMENT_NOT_PUBLISHABLE',
+      409,
+      `Document "${id}" is "${status}"; only extracted documents can be published.`,
+    ),
+
   detectionFailed: (reason: string): AppError =>
     new AppError('DETECTION_FAILED', 502, `Figure detection failed: ${reason}`),
 

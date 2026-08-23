@@ -195,9 +195,29 @@ export const ReExtractedQuestionSchema = z.object({
 });
 export type ReExtractedQuestion = z.infer<typeof ReExtractedQuestionSchema>;
 
-/** Result of publishing extracted questions into the main bank: how many rows were inserted. */
+/** Result of publishing extracted questions into the main bank: how many rows were written. */
 export const PublishResultSchema = z.object({ published: z.number().int().nonnegative() });
 export type PublishResult = z.infer<typeof PublishResultSchema>;
+
+/** One document's outcome inside a session publish: rows written, or the error that stopped it. */
+export const PublishDocumentResultSchema = z.object({
+  documentId: z.string(),
+  published: z.number().int().nonnegative(),
+  error: z.string().nullable(),
+});
+export type PublishDocumentResult = z.infer<typeof PublishDocumentResultSchema>;
+
+/**
+ * Result of publishing a whole session. One document failing no longer aborts the run — its error is
+ * captured per-document and the rest still publish. `published` is the rolled-up total across
+ * documents (kept as a top-level field so a caller that only reads the count still works).
+ */
+export const PublishSessionResultSchema = z.object({
+  published: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  documents: z.array(PublishDocumentResultSchema),
+});
+export type PublishSessionResult = z.infer<typeof PublishSessionResultSchema>;
 
 /** Ask the AI to locate the figures on one rendered page of a document (the Verify auto-crop). */
 export const DetectFiguresRequestSchema = z.object({
