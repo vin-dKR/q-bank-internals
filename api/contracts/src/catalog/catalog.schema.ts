@@ -60,6 +60,7 @@ export type CatalogPage = z.infer<typeof CatalogPageSchema>;
 export const CatalogFilterOptionsSchema = z.object({
   exams: z.array(z.string()),
   subjects: z.array(z.string()),
+  modules: z.array(z.string()),
   chapters: z.array(z.string()),
   sections: z.array(z.string()),
   questionTypes: z.array(z.string()),
@@ -70,6 +71,7 @@ export type CatalogFilterOptions = z.infer<typeof CatalogFilterOptionsSchema>;
 export const CatalogFilterOptionsQuerySchema = z.object({
   exam: z.string().optional(),
   subject: z.string().optional(),
+  module: z.string().optional(),
   chapter: z.string().optional(),
   questionType: z.string().optional(),
 });

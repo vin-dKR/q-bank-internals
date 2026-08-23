@@ -11,6 +11,6 @@ export class UnconfiguredCatalogStore implements CatalogStore {
   }
 
   filterOptions(): Promise<CatalogFilterOptionSets> {
-    return Promise.resolve({ exams: [], subjects: [], chapters: [], sections: [], questionTypes: [] });
+    return Promise.resolve({ exams: [], subjects: [], modules: [], chapters: [], sections: [], questionTypes: [] });
   }
 }

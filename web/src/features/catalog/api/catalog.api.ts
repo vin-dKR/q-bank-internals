@@ -23,6 +23,7 @@ function toOptionsQuery(selection: CatalogSelection): string {
   const params = new URLSearchParams();
   if (selection.exam) params.set('exam', selection.exam);
   if (selection.subject) params.set('subject', selection.subject);
+  if (selection.module) params.set('module', selection.module);
   if (selection.chapter) params.set('chapter', selection.chapter);
   if (selection.questionType) params.set('questionType', selection.questionType);
   return params.toString();

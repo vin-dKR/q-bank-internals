@@ -59,10 +59,10 @@ const FLAGGED_OPTIONS: readonly Option[] = [
 ];
 
 /**
- * The left-rail filter panel for the Questions browse. Six dropdowns (Exam · Subject · Chapter ·
- * Section · Question type · Flagged) plus Clear. Selecting a value applies immediately — there is no
- * separate "Apply" step — and the option sets cascade: they arrive already narrowed by the current
- * exam/subject/chapter/type. `disabled` greys the controls while the first option set loads.
+ * The left-rail filter panel for the Questions browse. Seven dropdowns (Exam · Subject · Module ·
+ * Chapter · Section · Question type · Flagged) plus Clear. Selecting a value applies immediately —
+ * there is no separate "Apply" step — and the option sets cascade: they arrive already narrowed by
+ * the current exam/subject/module/chapter/type. `disabled` greys the controls while options load.
  */
 export function FilterSidebar({
   filters,
@@ -80,6 +80,7 @@ export function FilterSidebar({
   const hasAny =
     filters.exam !== '' ||
     filters.subject !== '' ||
+    filters.module !== '' ||
     filters.chapter !== '' ||
     filters.section !== '' ||
     filters.questionType !== '' ||
@@ -108,6 +109,13 @@ export function FilterSidebar({
         options={toOptions(options.subjects)}
         value={filters.subject}
         onChange={(subject) => { onChange({ subject }); }}
+      />
+      <FilterField
+        label="Module"
+        anyLabel="All modules"
+        options={toOptions(options.modules)}
+        value={filters.module}
+        onChange={(module) => { onChange({ module }); }}
       />
       <FilterField
         label="Chapter"

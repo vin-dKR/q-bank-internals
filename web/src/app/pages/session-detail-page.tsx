@@ -130,7 +130,7 @@ export function SessionDetailPage(): JSX.Element {
     <section className="page">
       <PageHeader
         title={s.label}
-        subtitle={[s.exam, s.subject, s.module].filter(Boolean).join(' › ') || 'No context yet'}
+        subtitle={`${String(s.documentCount)} document${s.documentCount === 1 ? '' : 's'} · created ${new Date(s.createdAt).toLocaleDateString()}`}
         actions={
           <>
             <Link className="btn" to="/">← Cut &amp; upload</Link>

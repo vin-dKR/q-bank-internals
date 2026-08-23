@@ -21,6 +21,7 @@ export type CatalogQuestionPage = {
 export type CatalogFilterSelection = {
   exam?: string;
   subject?: string;
+  module?: string;
   chapter?: string;
   questionType?: string;
 };
@@ -29,6 +30,7 @@ export type CatalogFilterSelection = {
 export type CatalogFilterOptionSets = {
   exams: string[];
   subjects: string[];
+  modules: string[];
   chapters: string[];
   sections: string[];
   questionTypes: string[];
@@ -47,6 +49,6 @@ export interface CatalogStore {
     cursor: string | null,
     limit: number,
   ): Promise<CatalogQuestionPage>;
-  /** Distinct exam/subject/chapter/section/type values, narrowed by the current `selection`. */
+  /** Distinct exam/subject/module/chapter/section/type values, narrowed by the current `selection`. */
   filterOptions(selection: CatalogFilterSelection): Promise<CatalogFilterOptionSets>;
 }
