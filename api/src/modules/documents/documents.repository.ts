@@ -7,6 +7,7 @@ import type {
   PageRange,
   QuestionType,
   SourcePath,
+  UpdateDocument,
 } from '@ingest/contracts';
 
 /** Everything needed to persist a freshly-uploaded (or registered) section PDF. */
@@ -40,6 +41,8 @@ export interface DocumentRepository {
   listBySession(sessionId: string): Promise<Document[]>;
   create(input: CreateDocumentInput): Promise<Document>;
   updateStatus(id: string, status: DocumentStatus): Promise<Document>;
+  /** Apply an operator edit to a document (currently just the manual-fix flag). */
+  update(id: string, patch: UpdateDocument): Promise<Document>;
   /** Mark extraction done: sets `extracted`, stamps `extractedAt`, records how many questions landed. */
   recordExtraction(id: string, input: { questionCount: number }): Promise<Document>;
   delete(id: string): Promise<void>;

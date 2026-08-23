@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Document, DocumentListQuery, DocumentStatus } from '@ingest/contracts';
+import type { Document, DocumentListQuery, DocumentStatus, UpdateDocument } from '@ingest/contracts';
 import type { CreateDocumentInput, DocumentRepository } from '../../../modules/documents/index.js';
 
 /**
@@ -59,6 +59,7 @@ export class InMemoryDocumentRepository implements DocumentRepository {
       pageRange: input.pageRange,
       topics: input.topics,
       status: 'uploaded',
+      flagged: false,
       questionCount: 0,
       extractedAt: null,
       createdAt: now,
@@ -72,6 +73,18 @@ export class InMemoryDocumentRepository implements DocumentRepository {
     const existing = this.store.get(id);
     if (!existing) throw new Error(`Document ${id} vanished from the in-memory store.`);
     const updated: Document = { ...existing, status, updatedAt: new Date().toISOString() };
+    this.store.set(id, updated);
+    return Promise.resolve(updated);
+  }
+
+  update(id: string, patch: UpdateDocument): Promise<Document> {
+    const existing = this.store.get(id);
+    if (!existing) throw new Error(`Document ${id} vanished from the in-memory store.`);
+    const updated: Document = {
+      ...existing,
+      ...(patch.flagged !== undefined ? { flagged: patch.flagged } : {}),
+      updatedAt: new Date().toISOString(),
+    };
     this.store.set(id, updated);
     return Promise.resolve(updated);
   }

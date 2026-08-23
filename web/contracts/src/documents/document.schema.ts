@@ -81,6 +81,8 @@ export const DocumentSchema = z.object({
   /** Operator-defined topic → question-type map of the question PDF; empty for chapter-only documents. */
   topics: z.array(ChapterTopicSchema),
   status: DocumentStatusSchema,
+  /** Operator flag: this file didn't extract cleanly and is marked to be fixed manually later. */
+  flagged: z.boolean(),
   questionCount: z.number().int().nonnegative(),
   extractedAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
@@ -102,6 +104,14 @@ export const RegisterDocumentSchema = z.object({
   topics: z.array(ChapterTopicSchema).optional(),
 });
 export type RegisterDocument = z.infer<typeof RegisterDocumentSchema>;
+
+/** Patch accepted when editing a document — currently just the operator's manual-fix flag. */
+export const UpdateDocumentSchema = z
+  .object({
+    flagged: z.boolean(),
+  })
+  .partial();
+export type UpdateDocument = z.infer<typeof UpdateDocumentSchema>;
 
 /**
  * Query for listing documents. Narrows by session and/or one-or-more statuses — this is what powers
