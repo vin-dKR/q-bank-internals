@@ -34,7 +34,8 @@ EXTRACTION RULES:
 5. Normalize option labels printed as (1)(2)(3)(4) to (A)(B)(C)(D).
 6. Do NOT repeat a shared comprehension passage inside every question_text — a comprehension paper is handled by the TYPE-SPECIFIC RULE below.
 7. For subjective questions with no options, use an empty array [].
-8. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.
+8. If — and ONLY if — the page itself prints the correct answer or a worked solution for a question, add optional "answer" (the correct option letter(s) or numeric/text value) and/or "explanation" (the printed working) fields to that question. Question papers usually do NOT show these; when the page does not, OMIT both fields and never guess.
+9. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.
 `;
 
 const TYPE_RULES: Record<string, string> = {
@@ -56,6 +57,43 @@ const TYPE_RULES: Record<string, string> = {
   subjective:
     'This is a SUBJECTIVE/DESCRIPTIVE type: there are no options — use an empty array []; capture the complete question text.',
 };
+
+/**
+ * Per-type rules for the ANSWER-KEY and SOLUTION prompts. Answer formats differ sharply per question
+ * type (a single letter vs. joined letters vs. a number vs. a label→labels map), so each type gets a
+ * precise instruction for what the answer VALUE must look like. These are appended to
+ * {@link answerPrompt} / {@link solutionPrompt}; where a rule mentions the explanation it applies to
+ * the solution prompt (the answer sheet stores only the value).
+ */
+const ANSWER_TYPE_RULES: Record<string, string> = {
+  single_correct:
+    'SINGLE CORRECT: each answer is exactly ONE uppercase option letter "A"–"D" (normalize (1)(2)(3)(4) to A/B/C/D).',
+  multi_correct:
+    'MULTIPLE CORRECT: each answer is EVERY correct option letter, uppercase, sorted alphabetically and JOINED with NO separator — e.g. "AC" or "ABD".',
+  integer:
+    'INTEGER / NUMERICAL: each answer is the exact numeric value as printed (integer or decimal), with no surrounding text and no units unless the printed answer itself carries them.',
+  matrix:
+    'MATRIX MATCH: each answer is the first-column label → matched labels mapping, written one first-column label per group and joining that group\'s labels with commas — e.g. "A→P,Q; B→R; C→S,T; D→P". Mirror the printed matching exactly (same shape as the question\'s "match" field).',
+  assertion_reason:
+    'ASSERTION-REASON: each answer is the single chosen option letter for the standard evaluation of the Assertion and the Reason. In the explanation, state which of the Assertion and the Reason are true and whether the Reason correctly explains the Assertion.',
+  comprehension:
+    'COMPREHENSION: give ONE answer PER SUB-QUESTION, keyed by that sub-question\'s own printed number (each sub-question is a separate entry); each value is the option letter(s) or value for that sub-question.',
+  true_false:
+    'TRUE/FALSE: each answer is "True" or "False" — or the printed option letter (e.g. "A" for True, "B" for False) when the paper labels the choices.',
+  fill_blank:
+    'FILL IN THE BLANK: each answer is the exact word/phrase/value that fills the blank, verbatim, with math as LaTeX.',
+  subjective:
+    'SUBJECTIVE/DESCRIPTIVE: there is no single letter — give the key final answer/result concisely as the answer; the full working belongs in the explanation.',
+};
+
+/**
+ * Resolve the question type for a page exactly as the persisted questions are stamped: the operator's
+ * topic binding when the page is covered by a block (fixed, so the model cannot re-classify), else the
+ * document-level type. Shared by the question, answer, and solution prompts so all three agree.
+ */
+function resolveQuestionType(document: Document, pageNumber: number): string | null {
+  return topicBindingForPage(document.topics, pageNumber)?.questionType ?? document.questionType;
+}
 
 /**
  * The question-extraction prompt for one page of a document. The question type comes from the
@@ -119,9 +157,16 @@ export function reExtractQuestionPrompt(target: {
     .join('\n\n');
 }
 
-/** The answer-key extraction prompt, returning one entry per section found on the sheet. */
-export function answerPrompt(document: Document): string {
-  return `You are given an image of an exam answer sheet (${context(document)}).
+/**
+ * The answer-key extraction prompt, returning one entry per section found on the sheet. The page's
+ * resolved question type (topic binding, else document type — the same resolution the question prompt
+ * uses) selects a type-specific rule so the answer VALUE is formatted correctly for that type.
+ */
+export function answerPrompt(document: Document, pageNumber: number): string {
+  const questionType = resolveQuestionType(document, pageNumber);
+  const typeRule = questionType ? ANSWER_TYPE_RULES[questionType] : undefined;
+  return [
+    `You are given an image of an exam answer sheet (${context(document)}).
 Extract the answer key for EVERY section visible in the image into this exact JSON shape:
 
 {
@@ -133,9 +178,13 @@ Extract the answer key for EVERY section visible in the image into this exact JS
 ANSWER RULES:
 1. Include ALL sections in the image; question numbers may restart per section.
 2. answers keys are the question numbers as strings ("1", "2", …).
-3. Single-correct answers are a letter ("A"–"D"); multiple-correct join letters ("AC"); numeric/text answers verbatim.
+3. Format each answer value exactly as the ANSWER TYPE-SPECIFIC RULE below requires.
 4. If no section name is printed, use "General".
-5. Use LaTeX for math; return valid, complete JSON only — no prose, no trailing commas.`;
+5. Use LaTeX for math; return valid, complete JSON only — no prose, no trailing commas.`,
+    typeRule ? `ANSWER TYPE-SPECIFIC RULE:\n${typeRule}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 /**
@@ -143,8 +192,11 @@ ANSWER RULES:
  * and usually restates the final answer. We capture BOTH so the solution can back-fill an answer the
  * answer sheet was missing, while also giving the verifier the full explanation text.
  */
-export function solutionPrompt(document: Document): string {
-  return `You are given an image from an exam SOLUTIONS booklet (${context(document)}).
+export function solutionPrompt(document: Document, pageNumber: number): string {
+  const questionType = resolveQuestionType(document, pageNumber);
+  const typeRule = questionType ? ANSWER_TYPE_RULES[questionType] : undefined;
+  return [
+    `You are given an image from an exam SOLUTIONS booklet (${context(document)}).
 Extract the worked solution for EVERY question visible in the image into this exact JSON shape:
 
 {
@@ -162,7 +214,11 @@ SOLUTION RULES:
 1. Include ALL sections in the image; question numbers may restart per section.
 2. solutions keys are the question numbers as strings ("1", "2", …).
 3. explanation: the complete worked solution / reasoning as printed, preserving math as LaTeX (e.g. \\( \\sqrt{3} \\)). Do NOT summarise or omit steps.
-4. answer: the final answer if the solution states one (letter "A"–"D", joined letters like "AC", or a numeric/text value); use null if no final answer is given.
+4. answer: the final answer if the solution states one, formatted exactly as the ANSWER TYPE-SPECIFIC RULE below requires; use null if no final answer is given.
 5. If no section name is printed, use "General".
-6. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`;
+6. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`,
+    typeRule ? `ANSWER TYPE-SPECIFIC RULE:\n${typeRule}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 }

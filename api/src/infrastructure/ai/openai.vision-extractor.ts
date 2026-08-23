@@ -22,6 +22,9 @@ type RawQuestion = {
   /** Only present for matrix-match questions — the ordered columns and (optionally) the answer key. */
   columns?: unknown;
   match?: unknown;
+  /** Present only when the question page itself prints the answer / worked solution. */
+  answer?: unknown;
+  explanation?: unknown;
 };
 
 function asString(value: unknown): string {
@@ -165,8 +168,8 @@ export class OpenAiVisionExtractor implements VisionExtractor {
           questionNumber: toQuestionNumber(raw.question_number),
           questionText: asString(raw.question_text),
           options: Array.isArray(raw.options) ? raw.options.map(asString).filter(Boolean) : [],
-          answer: null,
-          explanation: null,
+          answer: asStringOrNull(raw.answer),
+          explanation: asStringOrNull(raw.explanation),
           sectionName: input.document.sectionName,
           questionType: input.document.questionType,
           sourcePage: page.pageNumber,
@@ -183,10 +186,12 @@ export class OpenAiVisionExtractor implements VisionExtractor {
   }
 
   async extractAnswers(input: { pages: PageImage[]; document: Document }): Promise<AnswerExtraction> {
-    const prompt = answerPrompt(input.document);
     const sheets: AnswerExtraction['sheets'] = [];
     const usage = this.emptyUsage();
     for (const page of input.pages) {
+      // Per page: the topic config can bind different pages to different fixed question types, so the
+      // answer-value format is resolved per page (mirrors extractQuestions).
+      const prompt = answerPrompt(input.document, page.pageNumber);
       const { content } = await this.call(prompt, page.png, usage);
       sheets.push(...parseAnswerSheets(content, input.document.sectionName));
     }
@@ -197,10 +202,10 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     pages: PageImage[];
     document: Document;
   }): Promise<AnswerExtraction> {
-    const prompt = solutionPrompt(input.document);
     const sheets: AnswerExtraction['sheets'] = [];
     const usage = this.emptyUsage();
     for (const page of input.pages) {
+      const prompt = solutionPrompt(input.document, page.pageNumber);
       const { content } = await this.call(prompt, page.png, usage);
       sheets.push(...parseSolutionSheets(content, input.document.sectionName));
     }
