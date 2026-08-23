@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
 import { KNOWN_QUESTION_TYPES, matchKeyToAnswer, type MatchData, type Question, type ReExtractedQuestion } from '@ingest/contracts';
-import { Badge, Button, Combobox, IconButton, IconPlus, IconScan, IconSparkle, IconUndo, IconX, Spinner } from '../../../shared/ui/index.js';
+import { Badge, Button, Combobox, IconButton, IconEdit, IconPlus, IconScan, IconSparkle, IconUndo, IconX, Spinner } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { MatchTableEditor } from './match-table-editor.js';
 import { questionsApi } from '../api/questions.api.js';
@@ -45,6 +45,8 @@ type Props = {
   /** Retry the auto-save of a region whose upload failed. */
   onSaveBox: (boxId: string) => void;
   onDeleteBox: (boxId: string) => void;
+  /** Reopen a saved crop as an adjustable box on the page so it can be moved/resized and re-saved. */
+  onEditCrop?: (type: 'question' | 'option', optionIndex: number, url: string) => void;
 };
 
 function splitUrls(value: string | null): string[] {
@@ -103,6 +105,7 @@ export function EditableQuestionCard({
   onDrawRegion,
   onSaveBox,
   onDeleteBox,
+  onEditCrop,
 }: Props): JSX.Element {
   const update = useUpdateQuestion();
   const [fixing, setFixing] = useState<string | null>(null);
@@ -307,7 +310,14 @@ export function EditableQuestionCard({
             {savedQ.map((url) => (
               <div key={url} className="flex flex-col items-start gap-1">
                 <img src={url} alt="question figure" className="max-h-36 max-w-full rounded-lg border border-line bg-white" />
-                <Button variant="ghost" size="xs" disabled={cropDisabled} onClick={() => { removeQuestionImage(url); }}>Remove</Button>
+                <div className="flex items-center gap-1">
+                  {onEditCrop ? (
+                    <Button variant="ghost" size="xs" disabled={cropDisabled} onClick={() => { onEditCrop('question', 0, url); }}>
+                      <IconEdit /> Edit crop
+                    </Button>
+                  ) : null}
+                  <Button variant="ghost" size="xs" disabled={cropDisabled} onClick={() => { removeQuestionImage(url); }}>Remove</Button>
+                </div>
               </div>
             ))}
           </div>
@@ -462,7 +472,14 @@ export function EditableQuestionCard({
                 {savedO ? (
                   <div className="flex flex-col items-start gap-1">
                     <img src={savedO} alt={`option ${option.label}`} className="max-h-36 max-w-full rounded-lg border border-line bg-white" />
-                    <Button variant="ghost" size="xs" onClick={() => { removeOptionImage(optIdx); }}>Remove</Button>
+                    <div className="flex items-center gap-1">
+                      {onEditCrop ? (
+                        <Button variant="ghost" size="xs" disabled={cropDisabled} onClick={() => { onEditCrop('option', optIdx, savedO); }}>
+                          <IconEdit /> Edit crop
+                        </Button>
+                      ) : null}
+                      <Button variant="ghost" size="xs" disabled={cropDisabled} onClick={() => { removeOptionImage(optIdx); }}>Remove</Button>
+                    </div>
                   </div>
                 ) : null}
               </div>

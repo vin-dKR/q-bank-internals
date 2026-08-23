@@ -985,12 +985,31 @@
   .verify__rail-spacer {
     @apply min-h-2 flex-1;
   }
-  /* The session picker + publish, pinned to the top of the right panel (was the top bar). */
+  /* Session picker + publish and the live crop magnifier, pinned together to the top of the panel
+     so both stay beside the page while the question cards scroll beneath. The canvas backdrop masks
+     the scrolling cards behind the pinned block. */
+  .verify__pinned {
+    @apply sticky top-0 z-10 flex flex-col gap-3.5 bg-canvas pb-0.5;
+  }
   .verify__session {
-    @apply sticky top-0 z-10 flex flex-none flex-col gap-2 rounded-xl border border-line bg-surface px-3 py-2 shadow-sm;
+    @apply flex flex-none flex-col gap-2 rounded-xl border border-line bg-surface px-3 py-2 shadow-sm;
   }
   .verify__session-row {
     @apply flex items-center gap-2;
+  }
+  /* Live magnifier: an Amazon-style zoom of the crop being drawn or adjusted, never over the page. */
+  .verify__magnifier {
+    @apply flex flex-none flex-col gap-1.5 rounded-xl border border-line bg-surface p-2.5 shadow-sm;
+  }
+  .verify__magnifier-head {
+    @apply flex items-center gap-1.5 text-[13px] font-medium text-ink-2;
+  }
+  .verify__magnifier-view {
+    @apply relative flex items-center justify-center overflow-hidden rounded-lg border border-line bg-surface-2 bg-no-repeat;
+    height: 172px;
+  }
+  .verify__magnifier-hint {
+    @apply px-4 text-center text-[13px] text-ink-3;
   }
   .verify__panel {
     @apply flex min-w-0 flex-col gap-3.5;
@@ -1504,8 +1523,24 @@
   }
 }
 
+/* "Edit crop" re-selected an already-drawn box — ring it briefly so the eye finds it. */
+.cropbox--flash {
+  animation: cropbox-flash 1.4s ease;
+}
+
+@keyframes cropbox-flash {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  20% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-brand) 45%, transparent);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .cropbox--busy {
+  .cropbox--busy,
+  .cropbox--flash {
     animation: none;
   }
 }

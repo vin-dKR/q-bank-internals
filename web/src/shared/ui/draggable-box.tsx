@@ -20,6 +20,8 @@ type DraggableBoxProps = BoxRect & {
   variant?: 'manual' | 'ai' | 'saved';
   /** Pulses the box while its crop is uploading. */
   busy?: boolean;
+  /** Briefly rings the box to draw the eye to it (e.g. after "Edit crop" re-selects it). */
+  flash?: boolean;
 };
 
 const HANDLES: { dir: Dir; cursor: string; style: React.CSSProperties }[] = [
@@ -48,6 +50,7 @@ export function DraggableBox({
   scale = 1,
   variant = 'manual',
   busy = false,
+  flash = false,
 }: DraggableBoxProps): JSX.Element {
   const dragging = useRef(false);
   const resizing = useRef<Dir | null>(null);
@@ -140,6 +143,7 @@ export function DraggableBox({
         variant === 'ai' && 'cropbox--ai',
         variant === 'saved' && 'cropbox--saved',
         busy && 'cropbox--busy',
+        flash && 'cropbox--flash',
       )}
       onMouseDown={beginDrag}
       onContextMenu={(event) => {
