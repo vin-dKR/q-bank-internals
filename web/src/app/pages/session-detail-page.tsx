@@ -91,7 +91,7 @@ export function SessionDetailPage(): JSX.Element {
   /** The per-document action buttons for the unit list — decided here from kind + status. */
   const renderActions = (doc: Document): JSX.Element => (
     <>
-      {doc.flagged ? <Badge tone="danger">flagged</Badge> : null}
+      {doc.kind === 'question' && doc.flagged ? <Badge tone="danger">flagged</Badge> : null}
       {isExtracted(doc) ? (
         <>
           <Link className="btn btn--xs" to={`/verify?documentId=${doc.id}`}>View</Link>
@@ -121,16 +121,18 @@ export function SessionDetailPage(): JSX.Element {
           Run
         </button>
       ) : null}
-      <button
-        type="button"
-        className={`btn btn--xs ${doc.flagged ? 'btn--danger' : 'btn--ghost'}`}
-        aria-pressed={doc.flagged}
-        aria-label={doc.flagged ? `Unflag ${doc.fileName}` : `Flag ${doc.fileName}`}
-        disabled={updateDocument.isPending}
-        onClick={() => { toggleFlag(doc); }}
-      >
-        <IconWarning /> {doc.flagged ? 'Flagged' : 'Flag'}
-      </button>
+      {doc.kind === 'question' ? (
+        <button
+          type="button"
+          className={`btn btn--xs ${doc.flagged ? 'btn--danger' : 'btn--ghost'}`}
+          aria-pressed={doc.flagged}
+          aria-label={doc.flagged ? `Unflag ${doc.fileName}` : `Flag ${doc.fileName}`}
+          disabled={updateDocument.isPending}
+          onClick={() => { toggleFlag(doc); }}
+        >
+          <IconWarning /> {doc.flagged ? 'Flagged' : 'Flag'}
+        </button>
+      ) : null}
       <button
         type="button"
         className="btn btn--ghost btn--icon-only btn--icon-only-sm btn--danger"
