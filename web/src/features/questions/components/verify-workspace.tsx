@@ -1,6 +1,6 @@
 import { type CSSProperties, type JSX, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { DetectedFigure, Question } from '@ingest/contracts';
+import type { DetectedFigure, ImageCrop, Question } from '@ingest/contracts';
 import { DETECT_FIGURES_MAX_PAGES } from '@ingest/contracts';
 import { getCroppedBlob } from '../../../shared/lib/crop-image.js';
 import { useDocument } from '../../documents/index.js';
@@ -111,6 +111,54 @@ function boxToSpec(box: Box, url: string, size: CanvasSize): SavedBoxSpec {
   };
 }
 
+/** Stable identity of a persisted crop for de-duping: its destination plus the image it attached. */
+function cropKey(crop: { url: string; type: 'question' | 'option'; optionIndex: number }): string {
+  return `${crop.type}:${String(crop.optionIndex)}:${crop.url}`;
+}
+
+/** The durable {@link ImageCrop} projection of a saved box spec — the rect stored on the question. */
+function specToCrop(spec: SavedBoxSpec): ImageCrop {
+  return {
+    url: spec.url,
+    type: spec.type,
+    optionIndex: spec.optionIndex,
+    nx: spec.nx,
+    ny: spec.ny,
+    nw: spec.nw,
+    nh: spec.nh,
+  };
+}
+
+/** Rebuild the session's natural-pixel specs for a question from the crops persisted on it. */
+function cropsToSpecs(question: Question, number: number): SavedBoxSpec[] {
+  return question.imageCrops.map((crop, index) => ({
+    id: `persist_${question.id}_${crop.type}_${String(crop.optionIndex)}_${String(index)}`,
+    questionId: question.id,
+    type: crop.type,
+    optionIndex: crop.optionIndex,
+    label: `Q${String(number)}${crop.type === 'option' ? ` · option ${String(crop.optionIndex + 1)}` : ''}`,
+    source: 'manual',
+    nx: crop.nx,
+    ny: crop.ny,
+    nw: crop.nw,
+    nh: crop.nh,
+    url: crop.url,
+  }));
+}
+
+/**
+ * Add a crop to a question's persisted list keyed by its url, dropping any prior entry for the same
+ * url and the one for a rect being replaced in place (a re-crop uploads a fresh url each time).
+ */
+function upsertCrop(
+  existing: readonly ImageCrop[],
+  crop: ImageCrop,
+  replacedUrl: string | undefined,
+): ImageCrop[] {
+  const kept = existing.filter((c) => c.url !== crop.url && c.url !== replacedUrl);
+  return [...kept, crop];
+}
+
 function splitUrls(value: string | null): string[] {
   return value ? value.split(',').map((u) => u.trim()).filter(Boolean) : [];
 }
@@ -212,10 +260,31 @@ function CropThumb({
 }
 
 /**
+ * CSS that fills an element of the crop's own aspect ratio with exactly the crop region (edge to
+ * edge, no letterbox) by scaling the page `background-image` so the box maps onto `innerW`×`innerH`.
+ */
+function cropCoverStyle(
+  imageSrc: string,
+  box: BoxRect,
+  size: CanvasSize,
+  innerW: number,
+): CSSProperties {
+  const scaleX = size.naturalWidth / size.displayWidth;
+  const scaleY = size.naturalHeight / size.displayHeight;
+  const k = innerW / Math.max(1, box.width * scaleX);
+  return {
+    backgroundImage: `url("${imageSrc}")`,
+    backgroundSize: `${String(size.naturalWidth * k)}px ${String(size.naturalHeight * k)}px`,
+    backgroundPosition: `${String(-box.x * scaleX * k)}px ${String(-box.y * scaleY * k)}px`,
+  };
+}
+
+/**
  * The magnifier panel: an Amazon-style live zoom of the crop currently being drawn or adjusted,
- * pinned beside the page (never over it). It measures its own rendered box so the region is magnified
- * as much as the panel allows — a far higher factor than {@link CropThumb}. Hidden-with-a-hint when
- * no crop is active.
+ * pinned beside the page (never over it). Rendered ONLY while a crop is active (the parent mounts it
+ * on demand). The preview element takes the crop's own aspect ratio and is filled edge-to-edge with
+ * the crop region, framed with an accent ring over a checkerboard backdrop so the cropped content is
+ * clearly distinct from the border and the surrounding background. A caption shows the pixel size.
  */
 function CropMagnifier({
   imageSrc,
@@ -223,8 +292,8 @@ function CropMagnifier({
   size,
 }: {
   imageSrc: string;
-  box: BoxRect | null;
-  size: CanvasSize | null;
+  box: BoxRect;
+  size: CanvasSize;
 }): JSX.Element {
   const viewRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
@@ -237,18 +306,34 @@ function CropMagnifier({
     observer.observe(el);
     return () => { observer.disconnect(); };
   }, []);
-  const active = box !== null && size !== null && size.displayWidth > 0 && view.width > 0;
+
+  const scaleX = size.naturalWidth / size.displayWidth;
+  const scaleY = size.naturalHeight / size.displayHeight;
+  const naturalW = Math.max(1, box.width * scaleX);
+  const naturalH = Math.max(1, box.height * scaleY);
+  const aspect = naturalW / naturalH;
+
+  // Fit a box of the crop's aspect ratio inside the measured view (leave a little breathing room).
+  const availW = Math.max(0, view.width - 16);
+  const availH = Math.max(0, view.height - 16);
+  let innerW = availW;
+  let innerH = availW / aspect;
+  if (innerH > availH) { innerH = availH; innerW = availH * aspect; }
+
+  const ready = view.width > 0 && innerW > 0.5 && innerH > 0.5;
   return (
     <div className="verify__magnifier">
-      <span className="verify__magnifier-head"><IconZoomIn /> Live crop preview</span>
-      <div
-        ref={viewRef}
-        className="verify__magnifier-view"
-        style={active ? cropWindowStyle(imageSrc, box, size, view.width, view.height) : undefined}
-      >
-        {active ? null : (
-          <span className="verify__magnifier-hint">Draw or adjust a crop to preview it magnified here.</span>
-        )}
+      <div className="verify__magnifier-head">
+        <span className="flex items-center gap-1.5"><IconZoomIn /> Live crop preview</span>
+        <span className="verify__magnifier-dims">{String(Math.round(naturalW))} × {String(Math.round(naturalH))} px</span>
+      </div>
+      <div ref={viewRef} className="verify__magnifier-view">
+        {ready ? (
+          <div
+            className="verify__magnifier-crop"
+            style={{ width: innerW, height: innerH, ...cropCoverStyle(imageSrc, box, size, innerW) }}
+          />
+        ) : null}
       </div>
     </div>
   );
@@ -502,15 +587,19 @@ export function VerifyWorkspace({
   const detachUrl = async (box: Box, url: string): Promise<void> => {
     const question = readQuestion(box.questionId);
     if (!question) return;
+    const imageCrops = question.imageCrops.filter((c) => c.url !== url);
     if (box.type === 'question') {
       const urls = splitUrls(question.questionImage);
       if (!urls.includes(url)) return;
       const kept = urls.filter((u) => u !== url);
-      await patchQuestion({ id: question.id, patch: { questionImage: kept.length > 0 ? kept.join(',') : null } });
+      await patchQuestion({
+        id: question.id,
+        patch: { questionImage: kept.length > 0 ? kept.join(',') : null, imageCrops },
+      });
     } else if ((question.optionImages[box.optionIndex] ?? '') === url) {
       const optionImages = [...question.optionImages];
       optionImages[box.optionIndex] = '';
-      await patchQuestion({ id: question.id, patch: { optionImages } });
+      await patchQuestion({ id: question.id, patch: { optionImages, imageCrops } });
     }
   };
 
@@ -520,22 +609,31 @@ export function VerifyWorkspace({
    * itself is in flight): a deleted box's crop is never attached, and one deleted mid-PATCH is
    * detached straight back off.
    */
-  const attachCrop = async (box: Box, url: string): Promise<void> => {
+  const attachCrop = async (box: Box, url: string, natural: BoxRect): Promise<void> => {
     if (!boxesRef.current.some((b) => b.id === box.id)) return;
     const question = readQuestion(box.questionId);
     if (!question) return;
     const previousUrl = savedUrlsRef.current.get(box.id);
+    // Persist the crop rect (natural pixels) alongside its url so the box reappears on any device.
+    const imageCrops = upsertCrop(
+      question.imageCrops,
+      { url, type: box.type, optionIndex: box.optionIndex, nx: natural.x, ny: natural.y, nw: natural.width, nh: natural.height },
+      previousUrl,
+    );
     if (box.type === 'question') {
       const urls = splitUrls(question.questionImage);
       const at = previousUrl ? urls.indexOf(previousUrl) : -1;
       if (at >= 0) urls[at] = url;
       else urls.push(url);
-      await patchQuestion({ id: question.id, patch: { isQuestionImage: true, questionImage: urls.join(',') } });
+      await patchQuestion({
+        id: question.id,
+        patch: { isQuestionImage: true, questionImage: urls.join(','), imageCrops },
+      });
     } else {
       const optionImages = [...question.optionImages];
       while (optionImages.length <= box.optionIndex) optionImages.push('');
       optionImages[box.optionIndex] = url;
-      await patchQuestion({ id: question.id, patch: { isOptionImage: true, optionImages } });
+      await patchQuestion({ id: question.id, patch: { isOptionImage: true, optionImages, imageCrops } });
     }
     if (!boxesRef.current.some((b) => b.id === box.id)) {
       await detachUrl(box, url);
@@ -561,16 +659,17 @@ export function VerifyWorkspace({
     try {
       const scaleX = pageSize.naturalWidth / pageSize.displayWidth;
       const scaleY = pageSize.naturalHeight / pageSize.displayHeight;
-      const blob = await getCroppedBlob(imageSrcRef.current, {
+      const natural: BoxRect = {
         x: box.x * scaleX,
         y: box.y * scaleY,
         width: box.width * scaleX,
         height: box.height * scaleY,
-      });
+      };
+      const blob = await getCroppedBlob(imageSrcRef.current, natural);
       // Fresh storage key per save: the store upserts by key and serves cached URLs, so re-using a
       // key on re-crop would keep the stale image visible everywhere. A new key = a new URL.
       const { url } = await questionsApi.uploadImage(box.questionId, `${boxId}_${String(Date.now())}`, blob);
-      await enqueueQuestionWrite(box.questionId, () => attachCrop(box, url));
+      await enqueueQuestionWrite(box.questionId, () => attachCrop(box, url, natural));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
       setFailed((prev) => new Set(prev).add(boxId));
@@ -787,9 +886,33 @@ export function VerifyWorkspace({
     }
   }, [questions.data, applyBoxes]);
 
-  // Redraw a page's cached saved boxes when navigation lands on it — once the fitted size is known so
-  // the natural-pixel specs map to the right display region. Only fires for the page a navigation
-  // asked to restore, so it never clobbers live work on a page the operator is already editing.
+  // Seed each page's saved-box cache from the crops persisted on its questions, so every saved crop
+  // returns as an adjustable box on first load / a fresh device — not just a flat thumbnail. Runs once
+  // the questions arrive; dedupes against specs already cached this session (url + type + option), then
+  // asks the restore effect below to redraw the page currently on screen (nothing else is drawn yet on
+  // first load). Other pages redraw when navigation lands on them via `goToPage`.
+  const seededPersisted = useRef(false);
+  const [restoreTick, setRestoreTick] = useState(0);
+  useEffect(() => {
+    const data = questions.data;
+    if (seededPersisted.current || !data || data.length === 0) return;
+    seededPersisted.current = true;
+    data.forEach((question, index) => {
+      const specs = cropsToSpecs(question, question.questionNumber ?? index + 1);
+      if (specs.length === 0) return;
+      const pageNumber = question.sourceRegion.page;
+      const existing = pageCache.current.get(pageNumber) ?? [];
+      const seen = new Set(existing.map(cropKey));
+      const added = specs.filter((spec) => !seen.has(cropKey(spec)));
+      if (added.length > 0) pageCache.current.set(pageNumber, [...existing, ...added]);
+    });
+    pendingRestore.current = pageRef.current;
+    setRestoreTick((n) => n + 1);
+  }, [questions.data]);
+
+  // Redraw a page's cached saved boxes when navigation (or the seed above) lands on it — once the
+  // fitted size is known so the natural-pixel specs map to the right display region. Only fires for the
+  // page a navigation asked to restore, so it never clobbers live work on a page already being edited.
   useEffect(() => {
     if (pendingRestore.current !== page) return;
     if (!size || size.displayWidth === 0 || size.naturalWidth === 0) return;
@@ -798,7 +921,7 @@ export function VerifyWorkspace({
     if (specs.length === 0) return;
     applyBoxes(() => specs.map((spec) => specToBox(spec, size)));
     applySavedUrls(() => new Map(specs.map((spec) => [spec.id, spec.url])));
-  }, [page, size, applyBoxes, applySavedUrls]);
+  }, [page, size, restoreTick, applyBoxes, applySavedUrls]);
 
   // --- AI detection: mark the current page's figures for review, never auto-save. ---
   const detectCurrentPage = useCallback(async (): Promise<void> => {
@@ -986,6 +1109,7 @@ export function VerifyWorkspace({
               patch: {
                 ...(touchedStem ? { isQuestionImage: true, questionImage: stemUrls.join(',') } : {}),
                 ...(touchedOption ? { isOptionImage: true, optionImages } : {}),
+                imageCrops: [...question.imageCrops, ...specsHere.map(({ spec }) => specToCrop(spec))],
               },
             });
           });
@@ -1207,7 +1331,9 @@ export function VerifyWorkspace({
               </Button>
             </div>
           </div>
-          <CropMagnifier imageSrc={imageSrc} box={magnifierBox} size={size} />
+          {magnifierBox && size && size.displayWidth > 0 ? (
+            <CropMagnifier imageSrc={imageSrc} box={magnifierBox} size={size} />
+          ) : null}
         </div>
 
         {aiError ? <p className="error">{aiError}</p> : null}
