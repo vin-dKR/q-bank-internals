@@ -5,4 +5,5 @@ export { groupByUnit, type DocumentUnit } from './lib/group-by-unit.js';
 export { useDocuments } from './hooks/use-documents.js';
 export { useDocument } from './hooks/use-document.js';
 export { useDeleteDocument } from './hooks/use-delete-document.js';
+export { useRestoreDocument } from './hooks/use-restore-document.js';
 export { useUpdateDocument } from './hooks/use-update-document.js';

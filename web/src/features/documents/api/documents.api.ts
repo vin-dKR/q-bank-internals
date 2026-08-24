@@ -40,4 +40,10 @@ export const documentsApi = {
       schema: z.object({ deleted: z.boolean() }),
     });
   },
+
+  /** Restore a soft-deleted document (and its session) so it reappears — used when editing a
+   *  published question whose source session was deleted. Idempotent for live documents. */
+  restore: (id: string): Promise<Document> => {
+    return request(`/documents/${id}/restore`, { method: 'POST', schema: DocumentSchema });
+  },
 };

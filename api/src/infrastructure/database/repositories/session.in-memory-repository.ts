@@ -13,6 +13,8 @@ import type {
  */
 export class InMemorySessionRepository implements SessionRepository {
   private readonly store = new Map<string, SessionRecord>();
+  /** Soft-delete tombstones — the record stays in `store` (fetchable by id) but hides from `list`. */
+  private readonly deleted = new Set<string>();
 
   create(input: CreateSessionInput): Promise<SessionRecord> {
     const now = new Date().toISOString();
@@ -35,13 +37,23 @@ export class InMemorySessionRepository implements SessionRepository {
   }
 
   list(_query: SessionListQuery): Promise<SessionRecord[]> {
-    const all = [...this.store.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const all = [...this.store.values()]
+      .filter((record) => !this.deleted.has(record.id))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return Promise.resolve(all);
   }
 
   delete(id: string): Promise<void> {
-    this.store.delete(id);
+    // Soft delete: keep the record (findById still resolves it) but tombstone it out of `list`.
+    if (this.store.has(id)) this.deleted.add(id);
     return Promise.resolve();
+  }
+
+  restore(id: string): Promise<SessionRecord> {
+    this.deleted.delete(id);
+    const record = this.store.get(id);
+    if (!record) throw new Error(`Session ${id} vanished from the in-memory store.`);
+    return Promise.resolve(record);
   }
 
   update(id: string, patch: UpdateSessionInput): Promise<SessionRecord> {

@@ -223,8 +223,8 @@ export function createContainer(): Container {
   const driveService = buildDrive();
 
   const usageService = new UsageService(usage, limits, sessions, documents);
-  const documentsService = new DocumentsService(documents, questions, jobs);
-  const sessionsService = new SessionsService(sessions, documents, questions, jobs);
+  const documentsService = new DocumentsService(documents, sessions);
+  const sessionsService = new SessionsService(sessions, documents);
   const pagesService = new PagesService(documents, driveService, rasterizer);
   const questionsService = new QuestionsService(
     questions,

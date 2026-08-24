@@ -45,8 +45,12 @@ export interface DocumentRepository {
   update(id: string, patch: UpdateDocument): Promise<Document>;
   /** Mark extraction done: sets `extracted`, stamps `extractedAt`, records how many questions landed. */
   recordExtraction(id: string, input: { questionCount: number }): Promise<Document>;
+  /** Soft-delete: tombstone the document so it hides from listings but stays fetchable by id. */
   delete(id: string): Promise<void>;
+  /** Soft-delete every document under a session (used when the session itself is removed). */
   deleteBySession(sessionId: string): Promise<void>;
+  /** Clear a document's soft-delete tombstone so it reappears; returns the restored row. */
+  restore(id: string): Promise<Document>;
   /** Reset documents left `queued`/`extracting` (e.g. a dead in-process worker) back to `failed`. */
   resetInFlight(): Promise<number>;
 }

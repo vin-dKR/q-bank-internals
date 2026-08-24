@@ -23,6 +23,7 @@ export class InMemoryDocumentRepository implements DocumentRepository {
 
   list(query: DocumentListQuery): Promise<{ items: Document[]; total: number }> {
     const filtered = [...this.store.values()]
+      .filter((doc) => doc.deletedAt === null)
       .filter((doc) => (query.sessionId ? doc.sessionId === query.sessionId : true))
       .filter((doc) => (query.status ? query.status.includes(doc.status) : true))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -35,13 +36,15 @@ export class InMemoryDocumentRepository implements DocumentRepository {
 
   listStatusesBySession(sessionId: string): Promise<DocumentStatus[]> {
     const statuses = [...this.store.values()]
-      .filter((doc) => doc.sessionId === sessionId)
+      .filter((doc) => doc.sessionId === sessionId && doc.deletedAt === null)
       .map((doc) => doc.status);
     return Promise.resolve(statuses);
   }
 
   listBySession(sessionId: string): Promise<Document[]> {
-    return Promise.resolve([...this.store.values()].filter((doc) => doc.sessionId === sessionId));
+    return Promise.resolve(
+      [...this.store.values()].filter((doc) => doc.sessionId === sessionId && doc.deletedAt === null),
+    );
   }
 
   create(input: CreateDocumentInput): Promise<Document> {
@@ -62,6 +65,7 @@ export class InMemoryDocumentRepository implements DocumentRepository {
       flagged: false,
       questionCount: 0,
       extractedAt: null,
+      deletedAt: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -90,15 +94,28 @@ export class InMemoryDocumentRepository implements DocumentRepository {
   }
 
   delete(id: string): Promise<void> {
-    this.store.delete(id);
+    // Soft delete: tombstone rather than remove, so the document + its questions survive for reopen.
+    const existing = this.store.get(id);
+    if (existing) this.store.set(id, { ...existing, deletedAt: new Date().toISOString() });
     return Promise.resolve();
   }
 
   deleteBySession(sessionId: string): Promise<void> {
+    const now = new Date().toISOString();
     for (const [id, doc] of this.store) {
-      if (doc.sessionId === sessionId) this.store.delete(id);
+      if (doc.sessionId === sessionId && doc.deletedAt === null) {
+        this.store.set(id, { ...doc, deletedAt: now });
+      }
     }
     return Promise.resolve();
+  }
+
+  restore(id: string): Promise<Document> {
+    const existing = this.store.get(id);
+    if (!existing) throw new Error(`Document ${id} vanished from the in-memory store.`);
+    const restored: Document = { ...existing, deletedAt: null };
+    this.store.set(id, restored);
+    return Promise.resolve(restored);
   }
 
   resetInFlight(): Promise<number> {
