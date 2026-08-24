@@ -30,6 +30,12 @@ const EnvSchema = z.object({
   // Vision model + key for the extraction worker (ported from the Python PDF Extractor).
   OPENAI_API_KEY: z.string().optional(),
   EXTRACTION_MODEL: z.string().default('gpt-4o'),
+  // Text model for the interactive "Fix LaTeX with AI" per-field refiner. gpt-4o-mini mangled backslash
+  // commands (it emitted `\text` unescaped in JSON, so `\t` parsed to a TAB — `6 \text{m}` came back
+  // `6 <TAB>ext{m}`). gpt-5.4-mini escapes reliably AND, with the units-as-\text prompt, wraps physical
+  // quantities correctly (`-3 m/sec` -> `\(-3\ \text{m/sec}\)`); gpt-4o wrapped inconsistently. Override
+  // to trade cost for quality.
+  LATEX_MODEL: z.string().default('gpt-5.4-mini'),
   // Vision model for the Verify auto-crop figure detector (bounding-box localisation, not OCR). Uses a
   // strong spatial model — gpt-4o gives loose, mis-placed boxes here; gpt-5.4 (the model the upstream
   // image-auto-cropper uses) produces tight boxes. Override only if you have a better spatial model.

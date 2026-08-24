@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
 import { KNOWN_QUESTION_TYPES, matchKeyToAnswer, type MatchData, type Question, type ReExtractedQuestion } from '@ingest/contracts';
-import { Badge, Button, Combobox, IconButton, IconEdit, IconFlag, IconPlus, IconScan, IconSparkle, IconUndo, IconX, Spinner } from '../../../shared/ui/index.js';
+import { Badge, Button, Combobox, IconButton, IconEdit, IconFlag, IconPlus, IconScan, IconSparkle, IconUndo, IconX, Spinner, useToast } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { MatchTableEditor } from './match-table-editor.js';
 import { questionsApi } from '../api/questions.api.js';
@@ -108,6 +108,7 @@ export function EditableQuestionCard({
   onEditCrop,
 }: Props): JSX.Element {
   const update = useUpdateQuestion();
+  const toast = useToast();
   const [fixing, setFixing] = useState<string | null>(null);
   const [reading, setReading] = useState<string | null>(null);
   // The value each field held just before its last AI action replaced it — a one-deep, per-field undo.
@@ -169,6 +170,13 @@ export function EditableQuestionCard({
     setReading(field);
     try {
       apply(await questionsApi.reExtract(question.documentId, question.id));
+    } catch (error) {
+      // The page read failed (empty/truncated model reply, network, etc.). Surface it instead of
+      // silently doing nothing — and critically, never touch the field, so the current value survives.
+      toast.error(
+        'Could not re-read the page',
+        error instanceof Error ? error.message : 'Please try again.',
+      );
     } finally {
       setReading(null);
     }
@@ -202,7 +210,11 @@ export function EditableQuestionCard({
         onClick={() => {
           void reExtract(key, (fresh) => {
             const value = pick(fresh);
-            if (value !== null) applyAi(key, current, value, applyText);
+            // Only overwrite when the fresh read actually has a value for THIS field. `pick` returns a
+            // string for stem/answer (never null), so an empty read would otherwise wipe the field —
+            // the reported "everything resets to nothing" bug. Empty/whitespace ⇒ leave as-is.
+            if (value !== null && value.trim() !== '') applyAi(key, current, value, applyText);
+            else toast.toast({ tone: 'info', title: 'No update for this field', description: 'The page read did not return text for it — your current value is kept.' });
           });
         }}
       />
@@ -252,7 +264,6 @@ export function EditableQuestionCard({
       <div className="flex items-center gap-2.5">
         <span className="rounded-full bg-brand-soft px-2.5 py-0.5 text-[13px] font-bold text-brand">Q{number}</span>
         {dirty ? <Badge tone="progress">Unsaved</Badge> : null}
-        {question.flagged ? <Badge tone="danger">Flagged</Badge> : null}
         <div className="ml-auto flex items-center gap-2">
           <Button
             size="xs"

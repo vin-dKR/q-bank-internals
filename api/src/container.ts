@@ -191,7 +191,7 @@ function buildImageStore(): ImageStore {
 
 /** OpenAI-backed "Fix LaTeX" refiner when a key is present; otherwise a null-object. */
 function buildLatexRefiner(): LatexRefiner {
-  if (env.OPENAI_API_KEY) return new OpenAiLatexRefiner(env.OPENAI_API_KEY);
+  if (env.OPENAI_API_KEY) return new OpenAiLatexRefiner(env.OPENAI_API_KEY, env.LATEX_MODEL);
   return new UnconfiguredLatexRefiner();
 }
 
