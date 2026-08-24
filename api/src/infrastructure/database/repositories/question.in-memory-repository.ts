@@ -27,6 +27,7 @@ export class InMemoryQuestionRepository implements QuestionRepository {
       questionType: question.questionType,
       sectionName: question.sectionName,
       topic: question.topic,
+      flagged: false,
       sourceRegion: question.sourceRegion,
       createdAt: now,
       updatedAt: now,
@@ -65,6 +66,7 @@ export class InMemoryQuestionRepository implements QuestionRepository {
         ...(patch.questionType !== undefined ? { questionType: patch.questionType } : {}),
         ...(patch.sectionName !== undefined ? { sectionName: patch.sectionName } : {}),
         ...(patch.topic !== undefined ? { topic: patch.topic } : {}),
+        ...(patch.flagged !== undefined ? { flagged: patch.flagged } : {}),
         updatedAt: new Date().toISOString(),
       };
       const next = [...rows];

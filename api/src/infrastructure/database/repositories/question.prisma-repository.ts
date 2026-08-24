@@ -32,6 +32,7 @@ type QuestionRow = {
   questionType: string | null;
   sectionName: string | null;
   topic: string | null;
+  flagged: boolean;
   sourceRegion: { page: number; bbox: number[] };
   createdAt: Date;
   updatedAt: Date;
@@ -72,6 +73,7 @@ function toQuestion(row: QuestionRow): Question {
     questionType: row.questionType,
     sectionName: row.sectionName,
     topic: row.topic,
+    flagged: row.flagged,
     sourceRegion: { page: row.sourceRegion.page, bbox: [x0 ?? 0, y0 ?? 0, x1 ?? 0, y1 ?? 0] },
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -139,6 +141,7 @@ export class PrismaQuestionRepository implements QuestionRepository {
         ...(patch.questionType !== undefined ? { questionType: patch.questionType } : {}),
         ...(patch.sectionName !== undefined ? { sectionName: patch.sectionName } : {}),
         ...(patch.topic !== undefined ? { topic: patch.topic } : {}),
+        ...(patch.flagged !== undefined ? { flagged: patch.flagged } : {}),
       },
     });
     return toQuestion(row);

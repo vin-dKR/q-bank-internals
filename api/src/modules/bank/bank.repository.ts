@@ -21,4 +21,10 @@ export interface BankQuestionStore {
   findByQuestionId(questionId: string): Promise<BankQuestion | null>;
   /** Re-point image columns on the question stamped with `questionId`; returns the updated row. */
   patchImages(questionId: string, patch: BankImagePatch): Promise<BankQuestion>;
+  /**
+   * Set/clear the `flagged` mark on a published question, keyed by its bank Mongo `_id` (what the
+   * browse card carries), so it works for legacy rows that never got an `ingest_ref`. Returns the
+   * persisted flag state.
+   */
+  setFlag(id: string, flagged: boolean): Promise<boolean>;
 }

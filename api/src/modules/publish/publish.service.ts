@@ -124,7 +124,9 @@ function toBankQuestion(
     // Worked explanation merged from the sibling solution/explanation PDF (null when none was given).
     // New field on the bank — no prior explanation/solution column existed in the `Question` collection.
     explanation: question.explanation,
-    flagged: false,
+    // Carry the verify-screen flag onto the published row, so a question marked for later attention
+    // stays flagged (and findable via the Flagged filter) in the Questions browse.
+    flagged: question.flagged,
     // Provenance back to the ingest pipeline (session + document + question + Drive file + source
     // region). New field on the bank — lets the "fix a published image" flow reopen the exact page
     // and box to re-crop from. Snake-cased to match the bank's column style.

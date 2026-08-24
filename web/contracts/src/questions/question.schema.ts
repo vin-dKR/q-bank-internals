@@ -123,6 +123,9 @@ export const QuestionSchema = z.object({
   questionType: z.string().nullable(),
   sectionName: z.string().nullable(),
   topic: z.string().nullable(),
+  // Marked on the Verify screen to distinguish a question needing later attention. Carried through to
+  // the published bank row so a flagged question stays findable in the Questions browse.
+  flagged: z.boolean(),
   sourceRegion: z.object({
     page: z.number().int().positive(),
     bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]),
@@ -154,6 +157,7 @@ export const UpdateQuestionSchema = QuestionSchema.pick({
   questionType: true,
   sectionName: true,
   topic: true,
+  flagged: true,
 }).partial();
 export type UpdateQuestion = z.infer<typeof UpdateQuestionSchema>;
 

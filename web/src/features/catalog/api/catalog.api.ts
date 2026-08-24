@@ -1,5 +1,5 @@
-import type { CatalogFilterOptions, CatalogPage } from '@ingest/contracts';
-import { CatalogFilterOptionsSchema, CatalogPageSchema } from '@ingest/contracts';
+import type { BankFlagResult, CatalogFilterOptions, CatalogPage } from '@ingest/contracts';
+import { BankFlagResultSchema, CatalogFilterOptionsSchema, CatalogPageSchema } from '@ingest/contracts';
 import { request } from '../../../shared/api/http-client.js';
 import type { CatalogFilterState, CatalogSelection } from '../types.js';
 
@@ -37,5 +37,17 @@ export const catalogApi = {
   filterOptions: (selection: CatalogSelection): Promise<CatalogFilterOptions> =>
     request(`/catalog/filter-options?${toOptionsQuery(selection)}`, {
       schema: CatalogFilterOptionsSchema,
+    }),
+
+  /**
+   * Set/clear the flag on a published question, so it stays findable via the Flagged filter. `id` is
+   * the bank Mongo id the browse card carries; this hits the bank module's flag endpoint (the write
+   * surface for published questions — the catalog read path itself never writes).
+   */
+  setFlag: (id: string, flagged: boolean): Promise<BankFlagResult> =>
+    request(`/bank/questions/${id}/flag`, {
+      method: 'PATCH',
+      body: { flagged },
+      schema: BankFlagResultSchema,
     }),
 };

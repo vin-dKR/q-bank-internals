@@ -13,6 +13,11 @@ export class BankService {
     return this.bank.search(text, limit);
   }
 
+  /** Set/clear the flag on a published question (browse "Flag" toggle), keyed by its bank `_id`. */
+  async setFlag(id: string, flagged: boolean): Promise<{ id: string; flagged: boolean }> {
+    return { id, flagged: await this.bank.setFlag(id, flagged) };
+  }
+
   /** Re-point the question figure or one option image (identified by ingest `questionId`). */
   async updateImage(questionId: string, patch: UpdateBankImage): Promise<BankQuestion> {
     if (patch.target === 'question') {

@@ -117,6 +117,18 @@ export class MongoBankQuestionStore implements BankQuestionStore {
     return updated;
   }
 
+  async setFlag(id: string, flagged: boolean): Promise<boolean> {
+    const command = {
+      update: this.collection,
+      updates: [{ q: { _id: { $oid: id } }, u: { $set: { flagged } } }],
+    } as unknown as Prisma.InputJsonObject;
+    const reply = await this.prisma.$runCommandRaw(command);
+    // `$runCommandRaw` returns Extended JSON; the matched count `n` may be a plain or wrapped number.
+    const matched = ejsonNumber.catch(0).parse((reply as Record<string, unknown>).n ?? 0);
+    if (matched === 0) throw errors.bankQuestionNotFound(id);
+    return flagged;
+  }
+
   /** Pull the `cursor.firstBatch` out of a raw `find` reply and parse each document, dropping junk. */
   private readBatch(result: unknown): BankQuestion[] {
     const questions: BankQuestion[] = [];

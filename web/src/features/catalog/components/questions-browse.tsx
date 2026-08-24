@@ -1,7 +1,7 @@
 import { type JSX, useMemo, useState } from 'react';
 import type { CatalogFilterOptions } from '@ingest/contracts';
 import { Card } from '../../../shared/ui/index.js';
-import { useCatalogQuestions, useFilterOptions } from '../hooks/use-catalog.js';
+import { useCatalogQuestions, useFilterOptions, useSetCatalogFlag } from '../hooks/use-catalog.js';
 import { type CatalogFilterState, type CatalogSelection, EMPTY_FILTERS } from '../types.js';
 import { FilterSidebar } from './filter-sidebar.js';
 import { SearchBar } from './search-bar.js';
@@ -50,13 +50,14 @@ export function QuestionsBrowse(): JSX.Element {
 
   const optionsQuery = useFilterOptions(selection);
   const listQuery = useCatalogQuestions(filters);
+  const flagMutation = useSetCatalogFlag();
 
   const loaded = listQuery.data?.pages.flatMap((page) => page.questions).length ?? 0;
 
   return (
     <div className="grid grid-cols-[280px_minmax(0,1fr)] items-start gap-6 max-[900px]:grid-cols-1">
-      <aside className="max-[900px]:static">
-        <Card className="sticky top-4">
+      <aside className="sticky top-4 self-start max-[900px]:static">
+        <Card>
           <FilterSidebar
             filters={filters}
             options={optionsQuery.data ?? EMPTY_OPTIONS}
@@ -76,7 +77,11 @@ export function QuestionsBrowse(): JSX.Element {
               : `Showing ${String(loaded)}${listQuery.hasNextPage ? '+' : ''} question${loaded === 1 ? '' : 's'}`}
           </p>
         ) : null}
-        <QuestionBrowseList query={listQuery} />
+        <QuestionBrowseList
+          query={listQuery}
+          onToggleFlag={(id, flagged) => { flagMutation.mutate({ id, flagged }); }}
+          flagPendingId={flagMutation.isPending ? flagMutation.variables.id : null}
+        />
       </div>
     </div>
   );

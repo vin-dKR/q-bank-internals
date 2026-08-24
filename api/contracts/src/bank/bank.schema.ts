@@ -63,3 +63,16 @@ export const UpdateBankImageSchema = z
     path: ['optionIndex'],
   });
 export type UpdateBankImage = z.infer<typeof UpdateBankImageSchema>;
+
+/**
+ * Set or clear the `flagged` mark on a published bank question (the Questions-browse "Flag" toggle),
+ * so a question needing later attention stays findable via the Flagged filter. Keyed in the route by
+ * the bank Mongo `_id` (which the browse card carries as `id`), so it works even for legacy rows with
+ * no `ingest_ref`.
+ */
+export const UpdateBankFlagSchema = z.object({ flagged: z.boolean() });
+export type UpdateBankFlag = z.infer<typeof UpdateBankFlagSchema>;
+
+/** The echoed result of a flag toggle: the row's id and its new flag state. */
+export const BankFlagResultSchema = z.object({ id: z.string(), flagged: z.boolean() });
+export type BankFlagResult = z.infer<typeof BankFlagResultSchema>;
