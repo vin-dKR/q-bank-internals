@@ -3,24 +3,37 @@ import { errors } from '../../shared/errors/error-catalog.js';
 import type { LatexRefinement, LatexRefiner } from '../../modules/questions/index.js';
 
 const SYSTEM_PROMPT =
-  'You are a LaTeX formatting expert. Your job is to find and correctly wrap all LaTeX/math ' +
-  'expressions using inline LaTeX delimiters.';
+  'You are a LaTeX formatting expert. You wrap math and physical quantities in a passage using ' +
+  'inline LaTeX delimiters \\(...\\). You never change, add, or remove any words — you only add ' +
+  'delimiters and normalise math notation.';
 
-/** The user prompt, ported from question-editor's aiService. Returns `{ "refined_text": "…" }`. */
+/**
+ * The user prompt. Wraps math AND physical quantities (number + unit) in `\(...\)`, with units inside
+ * `\text{...}`, and forbids adding/removing words. Returns `{ "refined_text": "…" }`.
+ */
 function userPrompt(text: string): string {
-  return `Format LaTeX expressions in the provided text. Use inline math delimiters only: \\(...\\)
+  return `Wrap every mathematical expression and physical quantity in the text below using ONLY inline delimiters \\(...\\).
 
-Rules:
-1. Detect all LaTeX or math expressions (fractions, roots, Greek letters, sub/superscripts, equations, symbols, etc.).
-2. Wrap ONLY the math expressions using inline delimiters: \\(...\\)
-3. Do NOT wrap full sentences — only the math parts.
-4. Replace any other math delimiters ($...$, \\[...\\], [...], etc.) with \\(...\\)
-5. Do NOT add or remove any text — only wrap the math where necessary.
-6. Preserve spacing, punctuation, and formatting outside math.
+RULES
+1. Wrap math: fractions, roots, powers/subscripts, Greek letters, equations, comparisons, symbols.
+2. A physical quantity (a number followed by a unit, e.g. "m/sec", "kg", "m/s^2", "N", "°C") is math. Wrap the WHOLE thing — number AND unit — in one \\(...\\) group, and put the unit inside \\text{...}. Example: -3 m/sec  ->  \\(-3\\ \\text{m/sec}\\)
+3. Units ALWAYS go inside \\text{...}, and every \\text{...} MUST sit inside \\(...\\). Never output a bare \\text{...} outside \\(...\\).
+4. If the text already contains delimiters ($...$, \\[...\\], [...]) or a bare \\text{...}, convert them to correct \\(...\\) form.
+5. Do NOT add, remove, reword, explain, or translate any text. Only wrap. Plain prose stays exactly as written, only its math/quantities get wrapped.
+6. Preserve all spacing and punctuation outside the wrapped math.
+7. If a value already sits inside correct \\(...\\), leave it; just fix the unit to \\text{...} if needed.
+
+EXAMPLES
+Input:  "6 \\text{ m/sec}"          Output: "\\(6\\ \\text{m/sec}\\)"
+Input:  "-3 m/sec"                  Output: "\\(-3\\ \\text{m/sec}\\)"
+Input:  "5 kg"                      Output: "\\(5\\ \\text{kg}\\)"
+Input:  "x^2 + 5x - 6 = 0"          Output: "\\(x^2 + 5x - 6 = 0\\)"
+Input:  "v = 20 m/s"                Output: "\\(v = 20\\ \\text{m/s}\\)"
+Input:  "The ball moves at 9.8 m/s^2 downward"   Output: "The ball moves at \\(9.8\\ \\text{m/s}^2\\) downward"
 
 Input text: "${text}"
 
-Return valid JSON: { "refined_text": "..." }`;
+Return valid JSON only: { "refined_text": "..." }`;
 }
 
 /**

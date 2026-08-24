@@ -6,8 +6,15 @@ import type {
   ReExtractInput,
 } from '../../modules/questions/index.js';
 import type { AiTokenUsage } from '../../modules/usage/index.js';
+import { errors } from '../../shared/errors/error-catalog.js';
 import { logger } from '../../shared/logger/logger.js';
 import { reExtractQuestionPrompt } from './prompts/extraction-prompts.js';
+
+/**
+ * Output-token budget for the first re-extract attempt. Covers a reasoning model's hidden reasoning
+ * AND the JSON reply for one question; the retry doubles it once if the model still truncates.
+ */
+const MAX_TOKENS = 16000;
 
 /** Shape the re-extract prompt asks the model to return, before we normalise each field. */
 type RawOption = { label?: unknown; body?: unknown; is_correct?: unknown };
@@ -66,51 +73,79 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
   }
 
   async reExtract(input: ReExtractInput): Promise<QuestionReExtraction> {
-    const response = await this.client.chat.completions.create({
-      model: this.model,
-      max_completion_tokens: 16000,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: reExtractQuestionPrompt({
-                questionNumber: input.questionNumber,
-                stemHint: input.stemHint,
-                questionType: input.questionType,
-              }),
-            },
-            {
-              type: 'image_url',
-              image_url: { url: `data:image/png;base64,${input.png.toString('base64')}`, detail: 'high' },
-            },
-          ],
-        },
-      ],
+    const prompt = reExtractQuestionPrompt({
+      questionNumber: input.questionNumber,
+      stemHint: input.stemHint,
+      questionType: input.questionType,
     });
+    const imageUrl = `data:image/png;base64,${input.png.toString('base64')}`;
 
-    const content = response.choices[0]?.message.content ?? '{}';
+    // Accumulate usage across attempts so a retry is billed honestly, not just the last call.
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let totalTokens = 0;
+    let callCount = 0;
+
+    // A reasoning model can spend its whole output budget on hidden reasoning and return an empty (or
+    // truncated) reply — the intermittent "re-read returned nothing and wiped the field" bug. A bigger
+    // budget is the only thing that helps, so mirror the detector: attempt once at MAX_TOKENS, retry
+    // once at double if the reply came back truncated/empty, then fail loudly rather than wipe.
+    let content = '';
+    let maxCompletionTokens = MAX_TOKENS;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const response = await this.client.chat.completions.create({
+        model: this.model,
+        max_completion_tokens: maxCompletionTokens,
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              { type: 'image_url', image_url: { url: imageUrl, detail: 'high' } },
+            ],
+          },
+        ],
+      });
+      callCount += 1;
+      promptTokens += response.usage?.prompt_tokens ?? 0;
+      completionTokens += response.usage?.completion_tokens ?? 0;
+      totalTokens += response.usage?.total_tokens ?? 0;
+
+      const choice = response.choices[0];
+      content = choice?.message.content?.trim() ?? '';
+      const truncated = choice?.finish_reason === 'length';
+      if (!truncated && content) break;
+
+      logger.warn(
+        { attempt, maxCompletionTokens, finishReason: choice?.finish_reason, empty: !content },
+        'question re-extract reply truncated or empty — retrying at a larger token budget',
+      );
+      if (attempt === 2) {
+        throw errors.extractionFailed(
+          `The model returned ${truncated ? 'a truncated' : 'an empty'} reply while re-reading the question, even at ${String(maxCompletionTokens)} tokens. Please try again.`,
+        );
+      }
+      maxCompletionTokens *= 2;
+    }
+
     const parsed = parseReply(content);
     const options = toOptions(parsed.options);
-    const usage: AiTokenUsage = {
-      model: this.model,
-      promptTokens: response.usage?.prompt_tokens ?? 0,
-      completionTokens: response.usage?.completion_tokens ?? 0,
-      totalTokens: response.usage?.total_tokens ?? 0,
-      callCount: 1,
-    };
+    const stem = asString(parsed.stem).trim();
+    const answer = asString(parsed.answer).trim();
+    const explanation = asStringOrNull(parsed.explanation);
+    // A genuine question always has a stem and/or options; a reply with neither means the read failed
+    // (bad JSON, wrong page, refusal) rather than a truly blank question — don't hand back an empty wipe.
+    if (!stem && options.length === 0 && !answer && !explanation) {
+      throw errors.extractionFailed(
+        'The model could not read this question from the page. Please try again or edit the field manually.',
+      );
+    }
+    const usage: AiTokenUsage = { model: this.model, promptTokens, completionTokens, totalTokens, callCount };
     logger.info(
       { questionNumber: input.questionNumber, options: options.length },
       'question re-extract done',
     );
-    return {
-      stem: asString(parsed.stem).trim(),
-      options,
-      answer: asString(parsed.answer).trim(),
-      explanation: asStringOrNull(parsed.explanation),
-      usage,
-    };
+    return { stem, options, answer, explanation, usage };
   }
 }
