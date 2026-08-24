@@ -40,6 +40,7 @@ type DocumentRow = {
   flagged: boolean;
   questionCount: number;
   extractedAt: Date | null;
+  deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -91,6 +92,7 @@ function toDocument(row: DocumentRow): Document {
     flagged: row.flagged,
     questionCount: row.questionCount,
     extractedAt: row.extractedAt ? row.extractedAt.toISOString() : null,
+    deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -112,6 +114,7 @@ export class PrismaDocumentRepository implements DocumentRepository {
 
   async list(query: DocumentListQuery): Promise<{ items: Document[]; total: number }> {
     const where = {
+      deletedAt: null,
       ...(query.sessionId ? { sessionId: query.sessionId } : {}),
       ...(query.status ? { status: { in: query.status } } : {}),
     };
@@ -129,7 +132,7 @@ export class PrismaDocumentRepository implements DocumentRepository {
 
   async listStatusesBySession(sessionId: string): Promise<DocumentStatus[]> {
     const rows = await this.prisma.document.findMany({
-      where: { sessionId },
+      where: { sessionId, deletedAt: null },
       select: { status: true },
     });
     return rows.map((row) => row.status);
@@ -137,7 +140,7 @@ export class PrismaDocumentRepository implements DocumentRepository {
 
   async listBySession(sessionId: string): Promise<Document[]> {
     const rows = await this.prisma.document.findMany({
-      where: { sessionId },
+      where: { sessionId, deletedAt: null },
       orderBy: { createdAt: 'asc' },
     });
     return rows.map(toDocument);
@@ -177,16 +180,22 @@ export class PrismaDocumentRepository implements DocumentRepository {
   }
 
   async delete(id: string): Promise<void> {
-    await this.prisma.document.delete({ where: { id } });
+    // Soft delete: tombstone rather than remove, so the document + its questions survive for reopen.
+    await this.prisma.document.update({ where: { id }, data: { deletedAt: new Date() } });
   }
 
   async deleteBySession(sessionId: string): Promise<void> {
-    await this.prisma.document.deleteMany({ where: { sessionId } });
+    await this.prisma.document.updateMany({ where: { sessionId }, data: { deletedAt: new Date() } });
+  }
+
+  async restore(id: string): Promise<Document> {
+    const row = await this.prisma.document.update({ where: { id }, data: { deletedAt: null } });
+    return toDocument(row);
   }
 
   async resetInFlight(): Promise<number> {
     const result = await this.prisma.document.updateMany({
-      where: { status: { in: ['queued', 'extracting'] } },
+      where: { status: { in: ['queued', 'extracting'] }, deletedAt: null },
       data: { status: 'failed' },
     });
     return result.count;

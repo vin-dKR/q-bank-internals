@@ -85,6 +85,8 @@ export const DocumentSchema = z.object({
   flagged: z.boolean(),
   questionCount: z.number().int().nonnegative(),
   extractedAt: z.string().datetime().nullable(),
+  /** Soft-delete tombstone: non-null once removed (hidden from listings, still fetchable by id). */
+  deletedAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

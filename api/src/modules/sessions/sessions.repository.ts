@@ -45,5 +45,8 @@ export interface SessionRepository {
   findById(id: string): Promise<SessionRecord | null>;
   list(query: SessionListQuery): Promise<SessionRecord[]>;
   update(id: string, patch: UpdateSessionInput): Promise<SessionRecord>;
+  /** Soft-delete: tombstone the session so it hides from listings but stays fetchable by id. */
   delete(id: string): Promise<void>;
+  /** Clear a session's soft-delete tombstone so it reappears in listings; returns the restored row. */
+  restore(id: string): Promise<SessionRecord>;
 }

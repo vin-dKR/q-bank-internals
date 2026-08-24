@@ -61,11 +61,18 @@ export function QuestionCard({
             size="xs"
             variant="ghost"
             title="Open this question's source in Verify to edit it"
-            onClick={() => { void navigate(`/verify?documentId=${encodeURIComponent(question.documentId as string)}`); }}
+            onClick={() => { void navigate(`/verify?documentId=${encodeURIComponent(question.documentId as string)}&restore=1`); }}
           >
             <IconEdit /> Edit
           </Button>
-        ) : null}
+        ) : (
+          <span
+            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-ink-3"
+            title="This question isn't linked to an ingest session (published before source tracking, or created outside ingest), so it can't be reopened in Verify."
+          >
+            <IconEdit /> Not from a session
+          </span>
+        )}
         <Button
           size="xs"
           variant={question.flagged ? 'primary' : 'ghost'}

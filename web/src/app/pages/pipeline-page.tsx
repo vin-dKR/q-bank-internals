@@ -1,6 +1,6 @@
-import { type JSX, useState } from 'react';
+import { type JSX, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { DocumentPicker } from '../../features/documents/index.js';
+import { DocumentPicker, useRestoreDocument } from '../../features/documents/index.js';
 import { VerifyWorkspace, usePublishDocument } from '../../features/questions/index.js';
 import { Button, Card, PageHeader, Spinner, useConfirm } from '../../shared/ui/index.js';
 
@@ -14,7 +14,20 @@ export function PipelinePage(): JSX.Element {
   const [documentId, setDocumentId] = useState<string | null>(searchParams.get('documentId'));
   const autoRun = searchParams.get('auto') === '1' && documentId === searchParams.get('documentId');
   const publish = usePublishDocument();
+  const restore = useRestoreDocument();
   const [confirm, confirmDialog] = useConfirm();
+
+  // Arriving from a published question's "Edit" (?restore=1): un-hide its source document + session
+  // if they were soft-deleted, so editing "gets the session back". Fires once per target document.
+  const restoreMutate = restore.mutate;
+  const restoredFor = useRef<string | null>(null);
+  const restoreTarget = searchParams.get('restore') === '1' ? searchParams.get('documentId') : null;
+  useEffect(() => {
+    if (restoreTarget && restoredFor.current !== restoreTarget) {
+      restoredFor.current = restoreTarget;
+      restoreMutate(restoreTarget);
+    }
+  }, [restoreTarget, restoreMutate]);
 
   const onPublish = (): void => {
     if (!documentId) return;

@@ -16,6 +16,7 @@ export function createDocumentsController(service: DocumentsService): {
   register: RequestHandler;
   update: RequestHandler;
   remove: RequestHandler;
+  restore: RequestHandler;
 } {
   return {
     list: asyncHandler(async (req, res) => {
@@ -40,6 +41,10 @@ export function createDocumentsController(service: DocumentsService): {
     remove: asyncHandler(async (req, res) => {
       await service.delete(requiredParam(req, 'id'));
       ok(res, { deleted: true });
+    }),
+
+    restore: asyncHandler(async (req, res) => {
+      ok(res, await service.restore(requiredParam(req, 'id')));
     }),
   };
 }

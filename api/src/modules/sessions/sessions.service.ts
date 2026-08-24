@@ -10,8 +10,6 @@ import type {
 } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
-import type { QuestionRepository } from '../questions/index.js';
-import type { ExtractionJobStore } from '../extraction/index.js';
 import type { SessionRecord, SessionRepository } from './sessions.repository.js';
 
 type Paginated<T> = { items: T[]; page: number; pageSize: number; total: number };
@@ -68,8 +66,6 @@ export class SessionsService {
   constructor(
     private readonly sessions: SessionRepository,
     private readonly documents: DocumentRepository,
-    private readonly questions: QuestionRepository,
-    private readonly jobs: ExtractionJobStore,
   ) {}
 
   /** Open a session. All inputs are optional — a missing label is auto-generated (Phase-1 auto-create). */
@@ -136,13 +132,12 @@ export class SessionsService {
     return { deleted };
   }
 
-  /** Cascade-delete one session's documents, their questions, and their extraction jobs, then itself. */
+  /**
+   * Soft-delete a session and its documents. Their extracted questions and jobs are deliberately KEPT
+   * so a published question can reopen (and restore) its source later — deleting a session hides it,
+   * it does not destroy the pipeline data behind it.
+   */
   private async purge(id: string): Promise<void> {
-    const documents = await this.documents.listBySession(id);
-    for (const document of documents) {
-      await this.questions.deleteByDocument(document.id);
-      await this.jobs.deleteByDocument(document.id);
-    }
     await this.documents.deleteBySession(id);
     await this.sessions.delete(id);
   }

@@ -1,20 +1,18 @@
 import type { Document, DocumentListQuery, RegisterDocument, UpdateDocument } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
-import type { QuestionRepository } from '../questions/index.js';
-import type { ExtractionJobStore } from '../extraction/index.js';
+import type { SessionRepository } from '../sessions/index.js';
 import type { DocumentRepository } from './documents.repository.js';
 
 type Paginated<T> = { items: T[]; page: number; pageSize: number; total: number };
 
 /**
- * All business rules for pipeline documents. Depends only on the repository PORT (§3) —
+ * All business rules for pipeline documents. Depends only on the repository PORTs (§3) —
  * it has no idea whether the store is Mongo or in-memory, and it never sees an HTTP request.
  */
 export class DocumentsService {
   constructor(
     private readonly documents: DocumentRepository,
-    private readonly questions: QuestionRepository,
-    private readonly jobs: ExtractionJobStore,
+    private readonly sessions: SessionRepository,
   ) {}
 
   /** List documents, optionally narrowed by session and/or status — powers the operator filter. */
@@ -36,18 +34,37 @@ export class DocumentsService {
     return this.documents.update(id, patch);
   }
 
-  /** Delete a document and everything tied to it — its questions and jobs — then the document. */
+  /**
+   * Soft-delete a document: it hides from listings but its extracted questions survive, so a
+   * published question can reopen (and restore) its source later. Not a destructive delete.
+   */
   async delete(id: string): Promise<void> {
     const document = await this.documents.findById(id);
     if (!document) throw errors.documentNotFound(id);
-    await this.questions.deleteByDocument(id);
-    await this.jobs.deleteByDocument(id);
     await this.documents.delete(id);
+  }
+
+  /**
+   * Restore a soft-deleted document (and its parent session) so it reappears in the pipeline — the
+   * "get the session back" path taken when a published question is edited. Idempotent: restoring a
+   * document that was never deleted is a harmless no-op.
+   */
+  async restore(id: string): Promise<Document> {
+    const document = await this.documents.findById(id);
+    if (!document) throw errors.documentNotFound(id);
+    const restored = await this.documents.restore(id);
+    if (restored.sessionId) await this.sessions.restore(restored.sessionId);
+    return restored;
   }
 
   async register(input: RegisterDocument): Promise<Document> {
     const existing = await this.documents.findByDriveFileId(input.driveFileId);
-    if (existing) throw errors.documentAlreadyRegistered(input.driveFileId);
+    if (existing) {
+      // A live registration of this Drive file already exists — reject as before. But if the prior
+      // document was soft-deleted, re-registering the same file brings it back instead of failing.
+      if (existing.deletedAt === null) throw errors.documentAlreadyRegistered(input.driveFileId);
+      return this.restore(existing.id);
+    }
     return this.documents.create({
       sessionId: input.sessionId ?? null,
       driveFileId: input.driveFileId,

@@ -76,6 +76,9 @@ model Session {
   module    String?
   autoRun   Boolean    @default(false)
   documents Document[]
+  // Soft-delete tombstone: set when the operator removes the session so it hides from listings but
+  // its documents + published questions survive and can be restored by editing a published question.
+  deletedAt DateTime?
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
@@ -102,6 +105,9 @@ model Document {
   flagged       Boolean         @default(false)
   questionCount Int             @default(0)
   extractedAt   DateTime?
+  // Soft-delete tombstone: set when the document (or its session) is removed, so it hides from
+  // listings while its extracted questions survive and it can be restored by editing a published one.
+  deletedAt     DateTime?
   questions     Question[]
   jobs          ExtractionJob[]
   createdAt     DateTime        @default(now())

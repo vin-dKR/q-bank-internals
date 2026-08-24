@@ -56,12 +56,22 @@ export class PrismaSessionRepository implements SessionRepository {
   }
 
   async list(_query: SessionListQuery): Promise<SessionRecord[]> {
-    const rows = await this.prisma.session.findMany({ orderBy: { createdAt: 'desc' } });
+    // Hide soft-deleted sessions from the listing; they remain fetchable by id (findById) for restore.
+    const rows = await this.prisma.session.findMany({
+      where: { deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
     return rows.map(toRecord);
   }
 
   async delete(id: string): Promise<void> {
-    await this.prisma.session.delete({ where: { id } });
+    // Soft delete: tombstone rather than remove, so the session (and its documents/questions) survive.
+    await this.prisma.session.update({ where: { id }, data: { deletedAt: new Date() } });
+  }
+
+  async restore(id: string): Promise<SessionRecord> {
+    const row = await this.prisma.session.update({ where: { id }, data: { deletedAt: null } });
+    return toRecord(row);
   }
 
   async update(id: string, patch: UpdateSessionInput): Promise<SessionRecord> {
