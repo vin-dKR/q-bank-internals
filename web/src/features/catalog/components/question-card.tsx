@@ -1,7 +1,8 @@
 import type { JSX } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { CatalogQuestion } from '@ingest/contracts';
 import { RenderLatex } from '../../../shared/lib/latex.js';
-import { Badge } from '../../../shared/ui/index.js';
+import { Badge, Button, IconEdit, IconFlag } from '../../../shared/ui/index.js';
 
 /** A/B/C… label for the option at `index`. */
 function optionLabel(index: number): string {
@@ -25,8 +26,22 @@ function imageUrl(url: string): string | null {
   return url.replaceAll('%2520', '%20');
 }
 
-/** One published-question preview card: taxonomy badges, stem, options (correct highlighted), answer. */
-export function QuestionCard({ question }: { question: CatalogQuestion }): JSX.Element {
+/**
+ * One published-question preview card: taxonomy badges, stem, options (correct highlighted), answer,
+ * plus the two operator actions — Edit (reopen the source in Verify) and Flag (mark for later).
+ */
+export function QuestionCard({
+  question,
+  onToggleFlag,
+  flagPending = false,
+}: {
+  question: CatalogQuestion;
+  /** Toggle this question's flag; receives the desired next state. */
+  onToggleFlag: (flagged: boolean) => void;
+  /** True while this question's flag write is in flight (disables the button). */
+  flagPending?: boolean;
+}): JSX.Element {
+  const navigate = useNavigate();
   const correct = correctTokens(question.answer);
   const questionImage = question.isQuestionImage && question.questionImage
     ? imageUrl(question.questionImage)
@@ -39,8 +54,27 @@ export function QuestionCard({ question }: { question: CatalogQuestion }): JSX.E
         {question.subject ? <Badge tone="review" dot={false}>{question.subject}</Badge> : null}
         {question.chapter ? <Badge tone="neutral" dot={false}>{question.chapter}</Badge> : null}
         {question.section ? <Badge tone="neutral" dot={false}>{question.section}</Badge> : null}
-        <span className="flex-1" />
         {question.flagged ? <Badge tone="danger">Flagged</Badge> : null}
+        <span className="flex-1" />
+        {question.documentId ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            title="Open this question's source in Verify to edit it"
+            onClick={() => { void navigate(`/verify?documentId=${encodeURIComponent(question.documentId as string)}`); }}
+          >
+            <IconEdit /> Edit
+          </Button>
+        ) : null}
+        <Button
+          size="xs"
+          variant={question.flagged ? 'primary' : 'ghost'}
+          disabled={flagPending}
+          title={question.flagged ? 'Remove the flag' : 'Flag this question to edit later'}
+          onClick={() => { onToggleFlag(!question.flagged); }}
+        >
+          <IconFlag /> {question.flagged ? 'Flagged' : 'Flag'}
+        </Button>
       </div>
 
       <div className="text-sm leading-relaxed text-ink">

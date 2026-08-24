@@ -29,8 +29,14 @@ function LoadingSkeletons(): JSX.Element {
  */
 export function QuestionBrowseList({
   query,
+  onToggleFlag,
+  flagPendingId,
 }: {
   query: UseInfiniteQueryResult<{ pages: CatalogPage[] }>;
+  /** Toggle one question's flag by its bank id. */
+  onToggleFlag: (id: string, flagged: boolean) => void;
+  /** The id whose flag write is currently in flight (disables just that card's button). */
+  flagPendingId: string | null;
 }): JSX.Element {
   if (query.isPending) return <LoadingSkeletons />;
 
@@ -57,7 +63,12 @@ export function QuestionBrowseList({
   return (
     <div className="flex flex-col gap-4">
       {questions.map((question) => (
-        <QuestionCard key={question.id} question={question} />
+        <QuestionCard
+          key={question.id}
+          question={question}
+          onToggleFlag={(flagged) => { onToggleFlag(question.id, flagged); }}
+          flagPending={flagPendingId === question.id}
+        />
       ))}
 
       {query.hasNextPage ? (

@@ -20,6 +20,10 @@ export const CatalogQuestionSchema = z.object({
   questionType: z.string().nullable(),
   topic: z.string().nullable(),
   flagged: z.boolean(),
+  // The ingest document this question was published from (read off `ingest_ref.document_id`), so the
+  // browse card's "Edit" can reopen it in Verify at `/verify?documentId=…`. Null on legacy rows
+  // published before provenance was stamped — those cannot be reopened, so Edit is hidden.
+  documentId: z.string().nullable(),
   options: z.array(z.string()),
   isQuestionImage: z.boolean(),
   questionImage: z.string().nullable(),

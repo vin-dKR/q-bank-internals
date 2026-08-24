@@ -22,6 +22,7 @@ export {
   IconScissors,
   IconImage,
   IconEdit,
+  IconFlag,
   IconSparkle,
   IconUndo,
   IconRedo,

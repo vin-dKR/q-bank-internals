@@ -32,6 +32,9 @@ const RawCatalogQuestionSchema = z
     question_type: z.string().nullable().catch(null),
     topic: z.string().nullable().catch(null),
     flagged: ejsonBool.catch(false),
+    // Provenance stamped at publish (null on legacy rows) — only `document_id` is needed here, to let
+    // the browse card reopen the source in Verify. Tolerant so a malformed ref degrades to null.
+    ingest_ref: z.object({ document_id: z.string() }).nullable().catch(null),
     options: z.array(z.string()).catch([]),
     isQuestionImage: ejsonBool.catch(false),
     question_image: z.string().nullable().catch(null),
@@ -52,6 +55,7 @@ const RawCatalogQuestionSchema = z
       questionType: doc.question_type,
       topic: doc.topic,
       flagged: doc.flagged,
+      documentId: doc.ingest_ref?.document_id ?? null,
       options: doc.options,
       isQuestionImage: doc.isQuestionImage,
       questionImage: doc.question_image,

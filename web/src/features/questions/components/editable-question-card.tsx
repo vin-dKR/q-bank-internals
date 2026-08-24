@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
 import { KNOWN_QUESTION_TYPES, matchKeyToAnswer, type MatchData, type Question, type ReExtractedQuestion } from '@ingest/contracts';
-import { Badge, Button, Combobox, IconButton, IconEdit, IconPlus, IconScan, IconSparkle, IconUndo, IconX, Spinner } from '../../../shared/ui/index.js';
+import { Badge, Button, Combobox, IconButton, IconEdit, IconFlag, IconPlus, IconScan, IconSparkle, IconUndo, IconX, Spinner } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { MatchTableEditor } from './match-table-editor.js';
 import { questionsApi } from '../api/questions.api.js';
@@ -221,6 +221,11 @@ export function EditableQuestionCard({
   const toggle = (key: 'isQuestionImage' | 'isOptionImage', value: boolean): void => {
     void update.mutateAsync({ id: question.id, patch: { [key]: value } });
   };
+  // Flag a specific question for later attention. Saved immediately (like the image flags), separate
+  // from the local-first text drafts, and carried onto the bank row when the document is published.
+  const toggleFlag = (): void => {
+    void update.mutateAsync({ id: question.id, patch: { flagged: !question.flagged } });
+  };
 
   const removeQuestionImage = (url: string): void => {
     const urls = splitUrls(question.questionImage).filter((u) => u !== url);
@@ -247,7 +252,17 @@ export function EditableQuestionCard({
       <div className="flex items-center gap-2.5">
         <span className="rounded-full bg-brand-soft px-2.5 py-0.5 text-[13px] font-bold text-brand">Q{number}</span>
         {dirty ? <Badge tone="progress">Unsaved</Badge> : null}
+        {question.flagged ? <Badge tone="danger">Flagged</Badge> : null}
         <div className="ml-auto flex items-center gap-2">
+          <Button
+            size="xs"
+            variant={question.flagged ? 'primary' : 'ghost'}
+            disabled={update.isPending}
+            title={question.flagged ? 'Remove the flag' : 'Flag this question to edit later'}
+            onClick={toggleFlag}
+          >
+            <IconFlag /> {question.flagged ? 'Flagged' : 'Flag'}
+          </Button>
           <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-ink-2">
             <input type="checkbox" className="w-auto" checked={question.isQuestionImage} onChange={(e) => { toggle('isQuestionImage', e.target.checked); }} />
             Q image
