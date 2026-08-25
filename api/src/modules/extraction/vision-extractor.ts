@@ -49,9 +49,10 @@ export type AnswerExtraction = { sheets: AnswerSheet[]; usage: AiTokenUsage };
 
 /**
  * The vision-extraction PORT (§3), owned by the extraction module. Implemented in
- * `infrastructure/ai` with OpenAI `gpt-4o` (ported from the Python PDF Extractor), plus a
- * null-object adapter used when no API key is configured. Runs in the worker, never the API.
- * Each method returns the model's token {@link AiTokenUsage} so the worker can record spend.
+ * `infrastructure/ai` with an OpenAI vision model (`EXTRACTION_MODEL`, ported from the Python PDF
+ * Extractor), plus a null-object adapter used when no API key is configured. Runs in the worker,
+ * never the API. Each method returns the model's token {@link AiTokenUsage} so the worker can
+ * record spend.
  */
 export interface VisionExtractor {
   /** Extract question drafts from a document's rasterized question pages. */

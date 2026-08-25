@@ -9,8 +9,15 @@ import type {
   VisionExtractor,
 } from '../../modules/extraction/index.js';
 import type { AiTokenUsage } from '../../modules/usage/index.js';
+import { errors } from '../../shared/errors/error-catalog.js';
 import { logger } from '../../shared/logger/logger.js';
 import { answerPrompt, questionPrompt, solutionPrompt } from './prompts/extraction-prompts.js';
+
+/**
+ * Output-token budget for the first attempt at one page. Covers a reasoning model's hidden reasoning
+ * AND the page's question JSON; the retry doubles it once if the model still truncates.
+ */
+const MAX_TOKENS = 16000;
 
 /** Shape the question prompt asks the model to return, before we enrich with section/page. */
 type RawQuestion = {
@@ -222,33 +229,67 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     };
   }
 
-  /** One vision call. Folds the response's token usage into `usage` (mutated across the page loop). */
+  /**
+   * One vision call for one page. Folds every attempt's token usage into `usage` (mutated across the
+   * page loop) so a retry is billed honestly.
+   *
+   * Guards truncation the way the sibling re-extractor and detector do. A reasoning model can spend
+   * its whole output budget on hidden reasoning and return a truncated (or empty) reply, and the
+   * parsers here turn unparseable JSON into an empty array — so without this guard a truncated page
+   * persisted as "no questions on this page", silently, with the job still green. Retry once at
+   * double the budget, then throw: a failed job names the document, an empty one hides it.
+   */
   private async call(prompt: string, png: Buffer, usage: AiTokenUsage): Promise<{ content: string }> {
-    const response = await this.client.chat.completions.create({
-      model: this.model,
-      // `max_completion_tokens` (not `max_tokens`) and default temperature so the same code runs on
-      // gpt-4o and on the newer reasoning models (e.g. gpt-5.4-mini), which reject `max_tokens` and any
-      // non-default temperature — see the sibling diagram detector. Kept generous because a reasoning
-      // model spends part of this budget on hidden reasoning before the question JSON.
-      max_completion_tokens: 16000,
-      response_format: { type: 'json_object' },
-      messages: [
+    const imageUrl = `data:image/png;base64,${png.toString('base64')}`;
+    let content = '';
+    let maxCompletionTokens = MAX_TOKENS;
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const response = await this.client.chat.completions.create({
+        model: this.model,
+        // `max_completion_tokens` (not `max_tokens`) and default temperature so the same code runs on
+        // gpt-4o and on the newer reasoning models (e.g. gpt-5.4-mini), which reject `max_tokens` and
+        // any non-default temperature — see the sibling diagram detector.
+        max_completion_tokens: maxCompletionTokens,
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              { type: 'image_url', image_url: { url: imageUrl, detail: 'high' } },
+            ],
+          },
+        ],
+      });
+      usage.promptTokens += response.usage?.prompt_tokens ?? 0;
+      usage.completionTokens += response.usage?.completion_tokens ?? 0;
+      usage.totalTokens += response.usage?.total_tokens ?? 0;
+      usage.callCount += 1;
+
+      const choice = response.choices[0];
+      content = choice?.message.content?.trim() ?? '';
+      const truncated = choice?.finish_reason === 'length';
+      if (!truncated && content) break;
+
+      logger.warn(
         {
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            {
-              type: 'image_url',
-              image_url: { url: `data:image/png;base64,${png.toString('base64')}`, detail: 'high' },
-            },
-          ],
+          model: this.model,
+          attempt,
+          maxCompletionTokens,
+          finishReason: choice?.finish_reason,
+          empty: content.length === 0,
         },
-      ],
-    });
-    usage.promptTokens += response.usage?.prompt_tokens ?? 0;
-    usage.completionTokens += response.usage?.completion_tokens ?? 0;
-    usage.totalTokens += response.usage?.total_tokens ?? 0;
-    usage.callCount += 1;
-    return { content: response.choices[0]?.message.content ?? '{}' };
+        'Extraction reply truncated or empty — retrying at a larger token budget',
+      );
+      if (attempt === 2) {
+        throw errors.extractionFailed(
+          `The model returned ${truncated ? 'a truncated' : 'an empty'} reply for a page, even at ${String(maxCompletionTokens)} tokens. The page is likely too dense — split it, or raise the extractor's token budget.`,
+        );
+      }
+      maxCompletionTokens *= 2;
+    }
+
+    return { content };
   }
 }
