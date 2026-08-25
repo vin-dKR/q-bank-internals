@@ -361,11 +361,17 @@ export function VerifyWorkspace({
   documentId,
   autoRun = false,
   sessionBar = null,
+  initialPage,
+  focusQuestionId,
 }: {
   documentId: string;
   autoRun?: boolean;
   /** The unit picker + publish controls, rendered pinned to the top of the right panel. */
   sessionBar?: ReactNode;
+  /** Page to open on (a searched question's source page); defaults to the first page. */
+  initialPage?: number;
+  /** A question to scroll to and briefly ring once loaded — the one a bank search opened. */
+  focusQuestionId?: string;
 }): JSX.Element {
   const questions = useQuestions(documentId);
   const pageCount = usePageCount(documentId);
@@ -378,7 +384,7 @@ export function VerifyWorkspace({
     sectionName: document.data?.sectionName ?? null,
   });
 
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(initialPage ?? 1);
   const [boxes, setBoxes] = useState<Box[]>([]);
   const [size, setSize] = useState<CanvasSize | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
@@ -573,6 +579,22 @@ export function VerifyWorkspace({
     pendingRestore.current = next;
     setPage(next);
   };
+
+  // A bank search opens the workspace on the focused question's source page; once its card renders,
+  // scroll to and briefly ring it so the operator sees exactly which question they came to fix. If
+  // its page somehow differs from where we opened, navigate there first. Runs once.
+  const focusedOnce = useRef(false);
+  useEffect(() => {
+    if (!focusQuestionId || focusedOnce.current) return;
+    const target = (questions.data ?? []).find((q) => q.id === focusQuestionId);
+    if (!target) return;
+    if (target.sourceRegion.page !== pageRef.current) {
+      goToPage(target.sourceRegion.page);
+      return;
+    }
+    focusedOnce.current = true;
+    focusQuestion(focusQuestionId);
+  }, [focusQuestionId, questions.data, page]);
 
   const markBusy = (id: string, on: boolean): void => {
     setBusy((prev) => {

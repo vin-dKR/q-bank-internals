@@ -57,14 +57,6 @@ function IconCheck(): JSX.Element {
   );
 }
 
-function IconWrench(): JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8 6.2 21l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.7-.5-.5-2.7 2.6-2.6Z" />
-    </svg>
-  );
-}
-
 function IconMasters(): JSX.Element {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -156,23 +148,21 @@ export function AppLayout(): JSX.Element {
           </NavLink>
           <NavLink to="/sessions" className={navClass}>
             <IconLayers />
-            Sessions
+            Sessions &amp; extraction
           </NavLink>
           <NavLink to="/verify" className={navClass}>
             <IconCheck />
-            Verify
+            Fix, verify &amp; publish
           </NavLink>
+        </nav>
+
+        <div className="px-2 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-ink-3 max-[820px]:hidden">
+          Question bank
+        </div>
+        <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
           <NavLink to="/questions" className={navClass}>
             <IconQuestions />
             Questions
-          </NavLink>
-          <NavLink to="/bank" className={navClass}>
-            <IconWrench />
-            Fix bank images
-          </NavLink>
-          <NavLink to="/usage" className={navClass}>
-            <IconGauge />
-            Token usage
           </NavLink>
         </nav>
 
@@ -213,7 +203,18 @@ export function AppLayout(): JSX.Element {
         </nav>
 
         <div className="flex-1 max-[820px]:hidden" />
-        <div className="border-t border-line px-2 py-3 text-xs text-ink-3 max-[820px]:hidden">
+
+        <div className="px-2 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-ink-3 max-[820px]:hidden">
+          System
+        </div>
+        <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
+          <NavLink to="/usage" className={navClass}>
+            <IconGauge />
+            Token usage
+          </NavLink>
+        </nav>
+
+        <div className="mt-3 border-t border-line px-2 py-3 text-xs text-ink-3 max-[820px]:hidden">
           Phase 1 fills sessions · Phase 2 extracts them.
         </div>
       </aside>

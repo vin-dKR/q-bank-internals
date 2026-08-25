@@ -11,9 +11,11 @@ import {
   PdfUploader,
   ReflowBlocksPanel,
   StructureTreePanel,
+  type ParsedConfig,
   applyGridSplit,
   applyReflow,
   assembleChapterUpload,
+  configPageBindings,
   deletePage,
   deletePages,
   materializePages,
@@ -70,7 +72,7 @@ export function TreeIngestPage(): JSX.Element {
   const upload = useUploadChapter();
   const tree = useStructureTree();
   const vocabulary = useChapterVocabulary();
-  const { success, error: toastError } = useToast();
+  const { toast, success, error: toastError } = useToast();
   const { undo, redo } = splitPoints;
 
   const isReflow = cutMode === 'reflow';
@@ -194,6 +196,28 @@ export function TreeIngestPage(): JSX.Element {
       })();
     },
     [activeBytes, tree, clearSelection],
+  );
+
+  /**
+   * Load an imported config: rebuild the tree, then re-bind its exported page assignments against
+   * the current working document. Assignments that point past this PDF's last page are left empty
+   * (the config came from a different or longer document) and reported, never bound wrong.
+   */
+  const onImportConfig = useCallback(
+    (parsed: ParsedConfig): void => {
+      const fresh = tree.loadConfig(parsed);
+      const bindings = configPageBindings(parsed.nodes, fresh);
+      const inRange = bindings.filter((binding) => binding.pages.every((page) => page <= numPages));
+      for (const binding of inRange) onBindPages(binding.leafId, binding.kind, binding.pages);
+      const skipped = bindings.length - inRange.length;
+      if (skipped > 0) {
+        toast({
+          title: 'Structure imported, some pages skipped',
+          description: `${String(skipped)} page binding${skipped === 1 ? '' : 's'} point past this ${String(numPages)}-page PDF and were left empty.`,
+        });
+      }
+    },
+    [tree, numPages, onBindPages, toast],
   );
 
   // The keyboard handler reads the latest state/handlers through a ref, so it never re-subscribes and
@@ -411,6 +435,7 @@ export function TreeIngestPage(): JSX.Element {
             onBindPages={onBindPages}
             bindingSlot={bindingSlot}
             maxPages={numPages}
+            onImport={onImportConfig}
             onImportError={(message) => { toastError('Couldn’t import config', message); }}
           />
 

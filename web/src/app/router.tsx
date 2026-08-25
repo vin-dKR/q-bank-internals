@@ -7,7 +7,6 @@ import { SessionsPage } from './pages/sessions-page.js';
 import { SessionDetailPage } from './pages/session-detail-page.js';
 import { MastersPage } from './pages/masters-page.js';
 import { UsagePage } from './pages/usage-page.js';
-import { BankPage } from './pages/bank-page.js';
 import { QuestionsPage } from './pages/questions-page.js';
 import { ChapterSplitterPage } from './pages/chapter-splitter-page.js';
 import { PdfCutterPage } from './pages/pdf-cutter-page.js';
@@ -32,7 +31,8 @@ export const router = createBrowserRouter([
       { path: 'sessions', element: <SessionsPage />, errorElement },
       { path: 'sessions/:sessionId', element: <SessionDetailPage />, errorElement },
       { path: 'verify', element: <PipelinePage />, errorElement },
-      { path: 'bank', element: <BankPage />, errorElement },
+      // "Fix bank images" folded into Verify — search a published question there. Keep the old link.
+      { path: 'bank', element: <Navigate to="/verify" replace />, errorElement },
       { path: 'questions', element: <QuestionsPage />, errorElement },
       { path: 'masters', element: <MastersPage />, errorElement },
       { path: 'usage', element: <UsagePage />, errorElement },

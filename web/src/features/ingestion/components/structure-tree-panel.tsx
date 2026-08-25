@@ -19,8 +19,8 @@ import type { ChapterVocabulary } from '../hooks/use-chapter-vocabulary.js';
 import type { StructureTreeController } from '../hooks/use-structure-tree.js';
 import { cascadeMetadata } from '../lib/metadata-cascade.js';
 import { isPageDrag, readDraggedPages } from '../lib/page-dnd.js';
-import { parsePageRange, pageRangeFromLabel } from '../lib/page-range.js';
-import { parseConfig, serializeConfig } from '../lib/structure-config.js';
+import { parsePageRange, pageRangeText } from '../lib/page-range.js';
+import { parseConfig, serializeConfig, type ParsedConfig } from '../lib/structure-config.js';
 import { type NodeLevel, type StructureNode, isLeaf } from '../types/structure-node.js';
 
 type StructureTreePanelProps = {
@@ -32,6 +32,8 @@ type StructureTreePanelProps = {
   bindingSlot: string | null;
   /** Page count of the working document, so typed page ranges can be range-checked before binding. */
   maxPages: number;
+  /** Load a parsed config into the tree (and re-bind its page assignments) — owned by the page. */
+  onImport: (parsed: ParsedConfig) => void;
   /** Report a rejected config import (bad/unreadable file) so the page can toast it. */
   onImportError: (message: string) => void;
 };
@@ -76,6 +78,7 @@ export function StructureTreePanel({
   onBindPages,
   bindingSlot,
   maxPages,
+  onImport,
   onImportError,
 }: StructureTreePanelProps): JSX.Element {
   const { tree } = controller;
@@ -105,7 +108,7 @@ export function StructureTreePanel({
       onImportError('That file is not a valid structure config.');
       return;
     }
-    controller.loadConfig(parsed);
+    onImport(parsed);
   };
 
   return (
@@ -362,7 +365,7 @@ function BindingSlot({ leafId, kind, node, busy, maxPages, onBindPages, onUnbind
         <span className={`inline-flex items-center self-start rounded px-1.5 py-0.5 text-[11px] font-semibold ${tone.chip}`}>{KIND_LABEL[kind]}</span>
         <PageRangeInput
           maxPages={maxPages}
-          initial={artifact ? pageRangeFromLabel(artifact.sourceLabel) : ''}
+          initial={artifact ? pageRangeText(artifact.pageNumbers) : ''}
           onCommit={commitPages}
           onCancel={() => { setEditing(false); }}
         />

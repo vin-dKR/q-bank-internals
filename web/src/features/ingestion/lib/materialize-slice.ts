@@ -33,6 +33,7 @@ export async function materializePages(
     id: makeId(),
     bytes: await out.save(),
     pageCount: pageNumbers.length,
+    pageNumbers: [...pageNumbers],
     sourceLabel: labelForPages(pageNumbers),
   };
 }

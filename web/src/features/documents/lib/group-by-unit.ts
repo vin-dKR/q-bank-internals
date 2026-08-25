@@ -16,6 +16,14 @@ export type DocumentUnit = {
   supporting: Document[];
 };
 
+/** The question PDF that represents a unit for verification: the extracted one, else the first. */
+export function representativeQuestion(questions: readonly Document[]): Document | undefined {
+  const extracted = questions.find(
+    (doc) => doc.status === 'extracted' || doc.status === 'completed' || doc.status === 'published',
+  );
+  return extracted ?? questions[0];
+}
+
 function unitKey(doc: Document): string {
   const norm = (value: string): string => value.trim().toLowerCase().replace(/\s+/g, ' ');
   return [norm(doc.path.module), norm(doc.path.chapter), norm(doc.path.section)].join(' | ');
