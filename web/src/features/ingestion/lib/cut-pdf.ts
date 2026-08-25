@@ -1,4 +1,4 @@
-import { type PDFDocument as PDFDocumentType, type PDFEmbeddedPage, PDFDocument, PageSizes } from 'pdf-lib';
+import { type PDFDocument as PDFDocumentType, type PDFEmbeddedPage, PageSizes } from 'pdf-lib';
 
 /**
  * A rectangular cell of a source page, as 0–1 fractions. `start`/`end` are measured from the top of
@@ -16,7 +16,6 @@ export type Slice = {
 /** PDF bytes accepted by the builders — the browser hands us either shape. */
 export type PdfInput = ArrayBuffer | Uint8Array;
 
-const TOP_MARGIN = 72; // 1-inch top margin (72 points) on every slice after the first
 const EPSILON = 1e-4; // fractions closer than this bound a zero-area cell — nothing to draw
 
 /**
@@ -51,35 +50,4 @@ export function drawCellOnA4(target: PDFDocumentType, cell: PDFEmbeddedPage, top
     width: cell.width * scale,
     height: cell.height * scale,
   });
-}
-
-/**
- * A built PDF plus, for each input slice (by index), the 1-based page it landed on — or null when
- * the slice was a zero-area cell and produced no page. The map is what lets a source-page topic
- * config be re-expressed in the built PDF's page space.
- */
-export type BuiltSlicesPdf = { bytes: Uint8Array; pageNumberOfSlice: (number | null)[] };
-
-/**
- * Build a single PDF from cells of a source PDF: each cell is cropped, reflowed onto its own A4
- * page, and appended. Used to split a chapter's tagged slices into question/answer PDFs.
- */
-export async function buildPdfFromSlices(pdfBytes: PdfInput, slices: Slice[]): Promise<BuiltSlicesPdf> {
-  const origPdf = await PDFDocument.load(pdfBytes.slice(0));
-  const mergedPdf = await PDFDocument.create();
-  const pageNumberOfSlice: (number | null)[] = [];
-  let pageCount = 0;
-
-  for (const [idx, slice] of slices.entries()) {
-    const cell = await embedCell(mergedPdf, origPdf, slice);
-    if (!cell) {
-      pageNumberOfSlice.push(null);
-      continue;
-    }
-    drawCellOnA4(mergedPdf, cell, idx > 0 ? TOP_MARGIN : 0);
-    pageCount += 1;
-    pageNumberOfSlice.push(pageCount);
-  }
-
-  return { bytes: await mergedPdf.save(), pageNumberOfSlice };
 }
