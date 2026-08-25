@@ -32,6 +32,7 @@ export {
   IconDownload,
   IconCheck,
   IconWarning,
+  IconSearch,
   IconZoomIn,
   IconZoomOut,
   IconChevronDown,

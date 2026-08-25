@@ -33,8 +33,11 @@ export type StructureTreeController = {
   removeNode: (id: string) => void;
   bindArtifact: (leafId: string, kind: ChapterKind, artifact: MaterializedArtifact) => void;
   unbindArtifact: (leafId: string, kind: ChapterKind) => void;
-  /** Replace metadata and rebuild the forest from an imported config (fresh ids, no bindings). */
-  loadConfig: (config: ParsedConfig) => void;
+  /**
+   * Replace metadata and rebuild the forest from an imported config (fresh ids, no bindings).
+   * Returns the rebuilt forest so the caller can re-bind the config's page assignments to it.
+   */
+  loadConfig: (config: ParsedConfig) => StructureNode[];
   reset: () => void;
 };
 
@@ -91,9 +94,11 @@ export function useStructureTree(): StructureTreeController {
     setNodes((prev) => unbindArtifactIn(prev, leafId, kind));
   }, []);
 
-  const loadConfig = useCallback((config: ParsedConfig): void => {
+  const loadConfig = useCallback((config: ParsedConfig): StructureNode[] => {
+    const fresh = nodesFromConfig(config.nodes);
     setMeta(config.metadata);
-    setNodes(nodesFromConfig(config.nodes));
+    setNodes(fresh);
+    return fresh;
   }, []);
 
   const reset = useCallback((): void => {

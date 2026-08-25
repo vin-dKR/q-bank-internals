@@ -1,16 +1,29 @@
+import type { ChapterKind } from '@ingest/contracts';
 import { emptyMetadata, type ChapterMetadataDraft } from '../types/chapter-group.js';
-import { NODE_LEVELS, type NodeLevel, type StructureNode, type StructureTree } from '../types/structure-node.js';
+import {
+  NODE_LEVELS,
+  isLeaf,
+  type LeafBindings,
+  type NodeLevel,
+  type StructureNode,
+  type StructureTree,
+} from '../types/structure-node.js';
 import { makeId } from './make-id.js';
 
+/** The page assignments a leaf's bindings were cut from — 1-based working-document page numbers. */
+export type ConfigPages = Partial<Record<ChapterKind, number[]>>;
+
 /**
- * The portable, JSON-serializable shape of one structure node: its structure only — label, level,
- * and (optional) question type — with no id and no bindings. Ids are regenerated on import and
- * bindings hold document-specific binary bytes, so neither belongs in a shareable config.
+ * The portable, JSON-serializable shape of one structure node: label, level, (optional) question
+ * type, and — on a bound leaf — the page numbers each part was cut from. Ids are regenerated on
+ * import and binding *bytes* stay out (they are document-specific); the page numbers are portable
+ * provenance, re-materialized against the loaded PDF when the config is imported.
  */
 export type ConfigNode = {
   label: string;
   level: NodeLevel | null;
   questionType?: string;
+  pages?: ConfigPages;
   children: ConfigNode[];
 };
 
@@ -38,16 +51,31 @@ const METADATA_KEYS: readonly (keyof ChapterMetadataDraft)[] = [
   'questionType',
 ];
 
+const PAGE_KINDS: readonly ChapterKind[] = ['question', 'answer', 'solution'];
+
+/** The exportable page numbers of a leaf's bindings, or undefined when nothing is bound. */
+function pagesFromBindings(bindings: LeafBindings | undefined): ConfigPages | undefined {
+  if (!bindings) return undefined;
+  const pages: ConfigPages = {};
+  for (const kind of PAGE_KINDS) {
+    const artifact = bindings[kind];
+    if (artifact && artifact.pageNumbers.length > 0) pages[kind] = [...artifact.pageNumbers];
+  }
+  return Object.keys(pages).length > 0 ? pages : undefined;
+}
+
 function toConfigNode(node: StructureNode): ConfigNode {
+  const pages = pagesFromBindings(node.bindings);
   return {
     label: node.label,
     level: node.level,
     ...(node.questionType !== undefined ? { questionType: node.questionType } : {}),
+    ...(pages !== undefined ? { pages } : {}),
     children: node.children.map(toConfigNode),
   };
 }
 
-/** Strip a live tree down to a shareable config: structure only, no ids, no bound page slices. */
+/** Strip a live tree down to a shareable config: structure + page numbers, no ids, no PDF bytes. */
 export function serializeConfig(tree: StructureTree): StructureConfig {
   return {
     version: CONFIG_VERSION,
@@ -77,6 +105,22 @@ function parseLevel(value: unknown): NodeLevel | null {
     : null;
 }
 
+/**
+ * Parse a node's page assignments leniently: a kind whose list is not purely positive integers is
+ * dropped (never half-bound to a wrong slice), and an empty result collapses to "no pages".
+ */
+function parsePages(value: unknown): ConfigPages | undefined {
+  if (!isRecord(value)) return undefined;
+  const pages: ConfigPages = {};
+  for (const kind of PAGE_KINDS) {
+    const list = value[kind];
+    if (!Array.isArray(list) || list.length === 0) continue;
+    if (!list.every((page) => typeof page === 'number' && Number.isInteger(page) && page >= 1)) continue;
+    pages[kind] = list as number[];
+  }
+  return Object.keys(pages).length > 0 ? pages : undefined;
+}
+
 function parseNode(value: unknown): ConfigNode | null {
   if (!isRecord(value)) return null;
   if (typeof value.label !== 'string') return null;
@@ -89,10 +133,12 @@ function parseNode(value: unknown): ConfigNode | null {
     children.push(parsed);
   }
 
+  const pages = parsePages(value.pages);
   return {
     label: value.label,
     level: parseLevel(value.level),
     ...(typeof value.questionType === 'string' ? { questionType: value.questionType } : {}),
+    ...(pages !== undefined && children.length === 0 ? { pages } : {}),
     children,
   };
 }
@@ -129,4 +175,35 @@ export function parseConfig(text: string): ParsedConfig | null {
   }
 
   return { metadata: parseMetadata(raw.metadata), nodes };
+}
+
+/** One page assignment recovered from an imported config, addressed to its rebuilt live leaf. */
+export type ConfigPageBinding = {
+  leafId: string;
+  kind: ChapterKind;
+  pages: number[];
+};
+
+/**
+ * Pair every imported leaf's page assignments with the id of its rebuilt live node, so the caller
+ * can re-materialize each slice from the loaded PDF. `nodes` must be the forest built from `configs`
+ * (see {@link nodesFromConfig}) — the two are walked in lockstep by position.
+ */
+export function configPageBindings(
+  configs: ConfigNode[],
+  nodes: StructureNode[],
+): ConfigPageBinding[] {
+  const out: ConfigPageBinding[] = [];
+  configs.forEach((config, index) => {
+    const node = nodes[index];
+    if (!node) return;
+    if (config.pages && isLeaf(node)) {
+      for (const kind of PAGE_KINDS) {
+        const pages = config.pages[kind];
+        if (pages && pages.length > 0) out.push({ leafId: node.id, kind, pages });
+      }
+    }
+    out.push(...configPageBindings(config.children, node.children));
+  });
+  return out;
 }

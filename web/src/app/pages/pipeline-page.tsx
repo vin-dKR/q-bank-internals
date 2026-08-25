@@ -1,17 +1,26 @@
 import { type JSX, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import type { BankQuestion } from '@ingest/contracts';
 import { DocumentPicker, useRestoreDocument } from '../../features/documents/index.js';
 import { VerifyWorkspace, usePublishDocument } from '../../features/questions/index.js';
+import { BankQuestionSearch } from '../../features/bank/index.js';
 import { Button, Card, PageHeader, Spinner, useConfirm } from '../../shared/ui/index.js';
 
 /**
- * Verify & publish: pick a unit, crop its figures onto each question, review, then publish into the
- * main bank. Once a unit is chosen the page becomes a full-height workspace with only a slim bar on
- * top (picker + publish), so the PDF and question editor own the screen.
+ * Verify & publish. Two ways in, both landing in the SAME workspace:
+ *  - pick a unit (its question PDF), or
+ *  - search a published question and open its source — the workspace reopens the exact document +
+ *    page it was published from (restoring the soft-deleted source), with that question ringed.
+ * Once a unit is chosen the page becomes a full-height workspace with only a slim bar on top
+ * (picker + publish), so the PDF and question editor own the screen.
  */
 export function PipelinePage(): JSX.Element {
   const [searchParams] = useSearchParams();
   const [documentId, setDocumentId] = useState<string | null>(searchParams.get('documentId'));
+  // When a search hit opens the workspace, land on its page with its question ringed; both are null
+  // for the plain unit-pick path (open at page 1, nothing pre-focused).
+  const [initialPage, setInitialPage] = useState<number | null>(null);
+  const [focusQuestionId, setFocusQuestionId] = useState<string | null>(null);
   const autoRun = searchParams.get('auto') === '1' && documentId === searchParams.get('documentId');
   const publish = usePublishDocument();
   const restore = useRestoreDocument();
@@ -29,6 +38,27 @@ export function PipelinePage(): JSX.Element {
     }
   }, [restoreTarget, restoreMutate]);
 
+  // Open a searched published question in the same workspace: restore its (possibly soft-deleted)
+  // source, then land on the exact document/page it was published from with that question ringed.
+  const openFromSearch = (question: BankQuestion): void => {
+    const ref = question.ingestRef;
+    if (!ref) return;
+    if (restoredFor.current !== ref.documentId) {
+      restoredFor.current = ref.documentId;
+      restoreMutate(ref.documentId);
+    }
+    setInitialPage(ref.sourceRegion.page);
+    setFocusQuestionId(ref.questionId);
+    setDocumentId(ref.documentId);
+  };
+
+  // Switching units from the top bar starts a clean workspace (no carried-over search focus).
+  const selectUnit = (id: string): void => {
+    setInitialPage(null);
+    setFocusQuestionId(null);
+    setDocumentId(id);
+  };
+
   const onPublish = (): void => {
     if (!documentId) return;
     void confirm({
@@ -43,14 +73,26 @@ export function PipelinePage(): JSX.Element {
       <section className="flex flex-col gap-6">
         <PageHeader
           title="Verify & publish"
-          subtitle="Pick a unit, crop figures onto each question, review, then publish into the main bank."
+          subtitle="Open a unit to review its questions, or find a published question to fix at its source."
         />
-        <Card>
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[13px] font-medium text-ink-2">Unit</span>
-            <DocumentPicker value={documentId} onChange={setDocumentId} />
-          </label>
-        </Card>
+        <div className="grid items-start gap-6 lg:grid-cols-2">
+          <Card>
+            <div className="flex flex-col gap-1">
+              <h2 className="card__title">Units</h2>
+              <p className="muted">Pick a unit to review and publish its questions.</p>
+            </div>
+            <DocumentPicker value={null} onChange={selectUnit} />
+          </Card>
+          <Card>
+            <div className="flex flex-col gap-1">
+              <h2 className="card__title">Fix a published question</h2>
+              <p className="muted">
+                Search the bank, then reopen the exact source page it was published from.
+              </p>
+            </div>
+            <BankQuestionSearch onPick={openFromSearch} />
+          </Card>
+        </div>
         {confirmDialog}
       </section>
     );
@@ -61,7 +103,7 @@ export function PipelinePage(): JSX.Element {
   const sessionBar = (
     <>
       <div className="min-w-0 flex-1">
-        <DocumentPicker value={documentId} onChange={setDocumentId} />
+        <DocumentPicker value={documentId} onChange={selectUnit} />
       </div>
       <Button variant="primary" className="flex-none" disabled={publish.isPending} onClick={onPublish}>
         {publish.isPending ? <><Spinner /> Publishing…</> : 'Publish to bank →'}
@@ -71,7 +113,13 @@ export function PipelinePage(): JSX.Element {
 
   return (
     <section className="workspace max-[1000px]:h-auto">
-      <VerifyWorkspace documentId={documentId} autoRun={autoRun} sessionBar={sessionBar} />
+      <VerifyWorkspace
+        documentId={documentId}
+        autoRun={autoRun}
+        sessionBar={sessionBar}
+        {...(initialPage !== null ? { initialPage } : {})}
+        {...(focusQuestionId !== null ? { focusQuestionId } : {})}
+      />
       {confirmDialog}
     </section>
   );

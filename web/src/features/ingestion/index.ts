@@ -17,6 +17,7 @@ export { materializePages } from './lib/materialize-slice.js';
 export { setDraggedPages, readDraggedPages, isPageDrag, PAGE_DND_MIME } from './lib/page-dnd.js';
 export { assembleChapterUpload, type AssembledUpload } from './lib/assemble-chapter.js';
 export { leaves, resolveQuestionType } from './lib/structure-tree.js';
+export { configPageBindings, type ParsedConfig } from './lib/structure-config.js';
 export {
   type StructureTree,
   type StructureNode,

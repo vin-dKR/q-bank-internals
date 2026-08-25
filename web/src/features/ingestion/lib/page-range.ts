@@ -32,14 +32,22 @@ export function parsePageRange(input: string, maxPage: number): number[] | null 
 }
 
 /**
- * The compact range expression for a set of pages — the inverse of {@link parsePageRange} used to
- * prefill the edit input from a binding's provenance. `"page 3"` / `"pages 3–5"` (either dash) become
- * `"3"` / `"3-5"`; a scattered `"N pages"` label has no faithful range, so it yields `""`.
+ * The compact range expression for explicit pages — the inverse of {@link parsePageRange} used to
+ * prefill the edit input from a binding's page numbers. `[3, 4, 5, 8]` becomes `"3-5, 8"`.
  */
-export function pageRangeFromLabel(label: string): string {
-  const single = label.match(/^page\s+(\d+)$/i);
-  if (single) return single[1] ?? '';
-  const span = label.match(/^pages\s+(\d+)\s*[–-]\s*(\d+)$/i);
-  if (span) return `${span[1] ?? ''}-${span[2] ?? ''}`;
-  return '';
+export function pageRangeText(pages: number[]): string {
+  const sorted = [...new Set(pages)].sort((a, b) => a - b);
+  const parts: string[] = [];
+  let i = 0;
+  while (i < sorted.length) {
+    let j = i;
+    while (j + 1 < sorted.length && sorted[j + 1] === (sorted[j] ?? 0) + 1) j += 1;
+    const from = sorted[i];
+    const to = sorted[j];
+    if (from !== undefined && to !== undefined) {
+      parts.push(from === to ? String(from) : `${String(from)}-${String(to)}`);
+    }
+    i = j + 1;
+  }
+  return parts.join(', ');
 }

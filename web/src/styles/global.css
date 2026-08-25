@@ -1195,19 +1195,38 @@
   }
 
   /* ==========================================================================
-     Bank search hits
+     Pick rows — the one row language for "choose a thing to open" lists
+     (verify entry: the unit index and the published-question search hits).
      ========================================================================== */
-  .bank-hit-list {
-    @apply m-0 flex list-none flex-col p-0;
+  .pick-list {
+    @apply m-0 flex list-none flex-col gap-0.5 p-0;
   }
-  .bank-hit {
-    @apply flex items-center justify-between gap-3 border-t border-line py-2.5;
+  .pick-row {
+    @apply flex w-full cursor-pointer items-center gap-3 rounded-lg border-0 bg-transparent px-3 py-2.5 text-left transition-colors;
   }
-  .bank-hit__body {
-    @apply min-w-0 flex-1 text-sm;
+  .pick-row:hover {
+    @apply bg-surface-2;
   }
-  .bank-hit__meta {
-    @apply mt-0.5 text-xs text-ink-3;
+  .pick-row:focus-visible {
+    @apply outline-none ring-2 ring-indigo-500/40;
+  }
+  .pick-row--static {
+    @apply cursor-default;
+  }
+  .pick-row--static:hover {
+    @apply bg-transparent;
+  }
+  .pick-row__text {
+    @apply flex min-w-0 flex-1 flex-col gap-0.5;
+  }
+  .pick-row__name {
+    @apply truncate text-sm text-ink;
+  }
+  .pick-row__meta {
+    @apply truncate text-xs text-ink-3;
+  }
+  .pick-row__go {
+    @apply size-4 flex-none text-ink-3;
   }
 }
 

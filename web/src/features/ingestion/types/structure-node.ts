@@ -25,6 +25,11 @@ export type MaterializedArtifact = {
   /** Standalone PDF bytes for just this slice. Immutable once created. */
   bytes: Uint8Array;
   pageCount: number;
+  /**
+   * The 1-based working-document pages this slice was cut from, in materialization order. Portable
+   * provenance: the exported config carries these so the same PDF can be rebound after an import.
+   */
+  pageNumbers: number[];
   /** Human-facing provenance for display only, e.g. "pages 3–5". */
   sourceLabel: string;
 };
