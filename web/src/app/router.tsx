@@ -1,8 +1,7 @@
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { AppLayout } from './layout/app-layout.js';
 import { RouteError } from './route-error.js';
 import { PipelinePage } from './pages/pipeline-page.js';
-import { IngestPage } from './pages/ingest-page.js';
 import { TreeIngestPage } from './pages/tree-ingest-page.js';
 import { SessionsPage } from './pages/sessions-page.js';
 import { SessionDetailPage } from './pages/session-detail-page.js';
@@ -27,8 +26,9 @@ export const router = createBrowserRouter([
     element: <AppLayout />,
     errorElement,
     children: [
-      { index: true, element: <IngestPage />, errorElement },
-      { path: 'tree', element: <TreeIngestPage />, errorElement },
+      { index: true, element: <TreeIngestPage />, errorElement },
+      // v1 "Cut & upload" was removed; v2 is now the default. Keep /tree as a redirect for old links.
+      { path: 'tree', element: <Navigate to="/" replace />, errorElement },
       { path: 'sessions', element: <SessionsPage />, errorElement },
       { path: 'sessions/:sessionId', element: <SessionDetailPage />, errorElement },
       { path: 'verify', element: <PipelinePage />, errorElement },
