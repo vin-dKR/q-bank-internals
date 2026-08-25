@@ -7,6 +7,7 @@ import type {
   UpdateDocument,
 } from '@ingest/contracts';
 import type { CreateDocumentInput, DocumentRepository } from '../../../modules/documents/index.js';
+import { notSoftDeleted } from '../prisma.js';
 
 type PageRangeRow = { from: number; to: number };
 type TopicTypeRow = {
@@ -114,7 +115,7 @@ export class PrismaDocumentRepository implements DocumentRepository {
 
   async list(query: DocumentListQuery): Promise<{ items: Document[]; total: number }> {
     const where = {
-      deletedAt: null,
+      ...notSoftDeleted(),
       ...(query.sessionId ? { sessionId: query.sessionId } : {}),
       ...(query.status ? { status: { in: query.status } } : {}),
     };
@@ -132,7 +133,7 @@ export class PrismaDocumentRepository implements DocumentRepository {
 
   async listStatusesBySession(sessionId: string): Promise<DocumentStatus[]> {
     const rows = await this.prisma.document.findMany({
-      where: { sessionId, deletedAt: null },
+      where: { sessionId, ...notSoftDeleted() },
       select: { status: true },
     });
     return rows.map((row) => row.status);
@@ -140,7 +141,7 @@ export class PrismaDocumentRepository implements DocumentRepository {
 
   async listBySession(sessionId: string): Promise<Document[]> {
     const rows = await this.prisma.document.findMany({
-      where: { sessionId, deletedAt: null },
+      where: { sessionId, ...notSoftDeleted() },
       orderBy: { createdAt: 'asc' },
     });
     return rows.map(toDocument);
@@ -195,7 +196,7 @@ export class PrismaDocumentRepository implements DocumentRepository {
 
   async resetInFlight(): Promise<number> {
     const result = await this.prisma.document.updateMany({
-      where: { status: { in: ['queued', 'extracting'] }, deletedAt: null },
+      where: { status: { in: ['queued', 'extracting'] }, ...notSoftDeleted() },
       data: { status: 'failed' },
     });
     return result.count;

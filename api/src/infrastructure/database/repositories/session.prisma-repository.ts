@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import type { SessionListQuery } from '@ingest/contracts';
+import { notSoftDeleted } from '../prisma.js';
 import type {
   CreateSessionInput,
   SessionRecord,
@@ -57,8 +58,10 @@ export class PrismaSessionRepository implements SessionRepository {
 
   async list(_query: SessionListQuery): Promise<SessionRecord[]> {
     // Hide soft-deleted sessions from the listing; they remain fetchable by id (findById) for restore.
+    // `notSoftDeleted()` matches deletedAt null OR unset — a plain `{ deletedAt: null }` silently
+    // hides every row where the field is absent (see prisma.ts).
     const rows = await this.prisma.session.findMany({
-      where: { deletedAt: null },
+      where: notSoftDeleted(),
       orderBy: { createdAt: 'desc' },
     });
     return rows.map(toRecord);
