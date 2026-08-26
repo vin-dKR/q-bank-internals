@@ -3,8 +3,8 @@ export type CatalogFilterState = {
   exam: string;
   subject: string;
   /**
-   * Ingest taxonomy level with no column on the published `Question` collection: it only narrows the
-   * cascading dropdown options (module → chapter), so it is not sent to the browse-list query.
+   * Module is stamped onto the published row at publish, so it both narrows the cascading dropdown
+   * options (module → chapter) AND filters the browse list.
    */
   module: string;
   chapter: string;
@@ -12,6 +12,8 @@ export type CatalogFilterState = {
   questionType: string;
   /** '' = any, 'true' = flagged only, 'false' = not flagged. */
   flagged: '' | 'true' | 'false';
+  /** '' = any, 'true' = PYQ only, 'false' = exclude PYQ. */
+  pyq: '' | 'true' | 'false';
   q: string;
 };
 
@@ -24,6 +26,7 @@ export const EMPTY_FILTERS: CatalogFilterState = {
   section: '',
   questionType: '',
   flagged: '',
+  pyq: '',
   q: '',
 };
 

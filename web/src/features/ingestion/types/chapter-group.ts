@@ -10,6 +10,12 @@ export type ChapterMetadataDraft = {
   chapter: string;
   sectionName: string;
   questionType: string;
+  /** Flags this chapter's questions as previous-year questions (PYQ), capturing the exam + year below. */
+  pyq: boolean;
+  /** The exam a PYQ chapter's questions were asked in (e.g. NEET); meaningful only when `pyq` is set. */
+  pyqExam: string;
+  /** The year a PYQ chapter's questions were asked (e.g. "2019"); meaningful only when `pyq` is set. */
+  pyqYear: string;
 };
 
 /**
@@ -45,7 +51,7 @@ export type ChapterGroup = {
 };
 
 export function emptyMetadata(): ChapterMetadataDraft {
-  return { source: '', exam: '', subject: '', module: '', chapter: '', sectionName: '', questionType: '' };
+  return { source: '', exam: '', subject: '', module: '', chapter: '', sectionName: '', questionType: '', pyq: false, pyqExam: '', pyqYear: '' };
 }
 
 /** The chapter (if any) that owns a given page, resolved for the on-page slice overlay. */

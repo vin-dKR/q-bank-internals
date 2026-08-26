@@ -41,7 +41,9 @@ export type ParsedConfig = {
 };
 
 const CONFIG_VERSION = 1;
-const METADATA_KEYS: readonly (keyof ChapterMetadataDraft)[] = [
+// The string-valued metadata fields, copied verbatim on import. The boolean `pyq` flag is handled
+// separately below (it is not a string), while `serializeConfig` exports every field via a spread.
+const METADATA_KEYS: readonly Exclude<keyof ChapterMetadataDraft, 'pyq'>[] = [
   'source',
   'exam',
   'subject',
@@ -49,6 +51,8 @@ const METADATA_KEYS: readonly (keyof ChapterMetadataDraft)[] = [
   'chapter',
   'sectionName',
   'questionType',
+  'pyqExam',
+  'pyqYear',
 ];
 
 const PAGE_KINDS: readonly ChapterKind[] = ['question', 'answer', 'solution'];
@@ -150,6 +154,7 @@ function parseMetadata(value: unknown): ChapterMetadataDraft {
     const field = value[key];
     if (typeof field === 'string') draft[key] = field;
   }
+  if (typeof value.pyq === 'boolean') draft.pyq = value.pyq;
   return draft;
 }
 

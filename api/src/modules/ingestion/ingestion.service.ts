@@ -55,6 +55,13 @@ export class IngestionService {
       kind: metadata.kind,
       sectionName: metadata.sectionName,
       questionType: metadata.questionType,
+      // Persist the operator's per-chapter exam/subject onto the document so publish reads the
+      // authoritative value from here, not the first-write-wins session backfill below.
+      exam: metadata.exam,
+      subject: metadata.subject,
+      pyq: metadata.pyq ?? false,
+      pyqExam: metadata.pyqExam ?? null,
+      pyqYear: metadata.pyqYear ?? null,
       source: metadata.source ?? null,
       pageRange: null,
       topics: metadata.topics ?? [],

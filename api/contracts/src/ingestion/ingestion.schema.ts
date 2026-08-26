@@ -29,6 +29,12 @@ export const ChapterUploadMetadataSchema = ChapterPathSchema.extend({
   kind: ChapterKindSchema,
   /** Optional provenance of the chapter's questions: pyq / module / textbook (open string). */
   source: SourceSchema.optional(),
+  /** Whether this chapter's questions are previous-year questions (PYQ) — set by the operator at cut time. */
+  pyq: z.boolean().optional(),
+  /** The exam a PYQ chapter's questions were asked in (e.g. NEET). Sent only when `pyq` is set. */
+  pyqExam: z.string().optional(),
+  /** The year a PYQ chapter's questions were asked (e.g. "2019"). Sent only when `pyq` is set. */
+  pyqYear: z.string().optional(),
   /**
    * Optional topic-level structure of a QUESTION part: each topic's predefined question-type blocks
    * with the page spans they occupy in the uploaded PDF. Omitted for the chapter-wise flow (and for

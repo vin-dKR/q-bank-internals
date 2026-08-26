@@ -58,9 +58,14 @@ const FLAGGED_OPTIONS: readonly Option[] = [
   { value: 'false', label: 'Not flagged' },
 ];
 
+const PYQ_OPTIONS: readonly Option[] = [
+  { value: 'true', label: 'PYQ only' },
+  { value: 'false', label: 'Exclude PYQ' },
+];
+
 /**
- * The left-rail filter panel for the Questions browse. Seven dropdowns (Exam · Subject · Module ·
- * Chapter · Section · Question type · Flagged) plus Clear. Selecting a value applies immediately —
+ * The left-rail filter panel for the Questions browse. Eight dropdowns (Exam · Subject · Module ·
+ * Chapter · Section · Question type · Flagged · PYQ) plus Clear. Selecting a value applies immediately —
  * there is no separate "Apply" step — and the option sets cascade: they arrive already narrowed by
  * the current exam/subject/module/chapter/type. `disabled` greys the controls while options load.
  */
@@ -85,6 +90,7 @@ export function FilterSidebar({
     filters.section !== '' ||
     filters.questionType !== '' ||
     filters.flagged !== '' ||
+    filters.pyq !== '' ||
     filters.q !== '';
 
   return (
@@ -144,6 +150,13 @@ export function FilterSidebar({
         options={FLAGGED_OPTIONS}
         value={filters.flagged}
         onChange={(flagged) => { onChange({ flagged: flagged as CatalogFilterState['flagged'] }); }}
+      />
+      <FilterField
+        label="PYQ"
+        anyLabel="Any source"
+        options={PYQ_OPTIONS}
+        value={filters.pyq}
+        onChange={(pyq) => { onChange({ pyq: pyq as CatalogFilterState['pyq'] }); }}
       />
     </div>
   );
