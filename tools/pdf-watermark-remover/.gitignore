@@ -1,0 +1,7 @@
+# Sample PDFs and anything the tool produces. The README documents the
+# validation run in full; the files themselves would sit in git history for good.
+*.pdf
+cleaned/
+before_after.png
+__pycache__/
+*.pyc

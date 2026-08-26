@@ -14,6 +14,11 @@ build/
 !.vscode/extensions.json
 .idea/
 
+# python tools under tools/
+__pycache__/
+*.pyc
+.venv/
+
 # logs
 *.log
 logs/
