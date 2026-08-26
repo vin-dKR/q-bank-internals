@@ -14,6 +14,9 @@ export interface DriveStorage {
   /** Create a folder with the given name under the given parent. */
   createFolder(name: string, parentId: string): Promise<DriveFolder>;
 
+  /** Permanently delete the folder with the given id (and everything inside it). */
+  deleteFolder(folderId: string): Promise<void>;
+
   /** Upload PDF bytes as a new file inside the given folder. */
   uploadPdf(input: { name: string; bytes: Buffer; folderId: string }): Promise<DriveFile>;
 

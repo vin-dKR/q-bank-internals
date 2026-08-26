@@ -19,6 +19,10 @@ export class UnconfiguredDriveStorage implements DriveStorage {
     return Promise.reject(errors.driveUnavailable());
   }
 
+  deleteFolder(_folderId: string): Promise<void> {
+    return Promise.reject(errors.driveUnavailable());
+  }
+
   uploadPdf(_input: { name: string; bytes: Buffer; folderId: string }): Promise<DriveFile> {
     return Promise.reject(errors.driveUnavailable());
   }

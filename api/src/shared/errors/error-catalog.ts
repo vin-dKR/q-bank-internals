@@ -54,6 +54,13 @@ export const errors = {
   driveWriteFailed: (reason: string): AppError =>
     new AppError('DRIVE_WRITE_FAILED', 502, `Drive upload failed: ${reason}`),
 
+  driveFolderNotEmpty: (id: string): AppError =>
+    new AppError(
+      'DRIVE_FOLDER_NOT_EMPTY',
+      409,
+      `Folder "${id}" is not empty. Delete its contents first, or confirm a force delete.`,
+    ),
+
   uploadMissingFile: (): AppError =>
     new AppError('UPLOAD_MISSING_FILE', 400, 'No PDF file was included in the upload.'),
 

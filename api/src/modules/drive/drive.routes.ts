@@ -9,6 +9,7 @@ export function createDriveRouter(service: DriveService): Router {
   router.get('/files', controller.listFiles);
   router.get('/folders', controller.listFolders);
   router.post('/folders', controller.createFolder);
+  router.delete('/folders/:id', controller.deleteFolder);
 
   return router;
 }

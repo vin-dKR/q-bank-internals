@@ -34,3 +34,27 @@ export const CreateFolderSchema = z.object({
   parentId: z.string().optional(),
 });
 export type CreateFolder = z.infer<typeof CreateFolderSchema>;
+
+/** Path params for deleting a folder by its Drive id. */
+export const DeleteFolderParamsSchema = z.object({
+  id: z.string().min(1),
+});
+export type DeleteFolderParams = z.infer<typeof DeleteFolderParamsSchema>;
+
+/**
+ * Query for deleting a folder. `force=true` deletes a non-empty folder and everything inside it;
+ * omitted (or `false`) blocks the delete when the folder still holds sub-folders or PDFs.
+ */
+export const DeleteFolderQuerySchema = z.object({
+  force: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => value === 'true'),
+});
+export type DeleteFolderQuery = z.infer<typeof DeleteFolderQuerySchema>;
+
+/** Result of a delete: the id of the folder that was removed. */
+export const DeleteFolderResultSchema = z.object({
+  id: z.string(),
+});
+export type DeleteFolderResult = z.infer<typeof DeleteFolderResultSchema>;

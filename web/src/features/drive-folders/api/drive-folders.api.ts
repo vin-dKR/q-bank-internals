@@ -1,5 +1,15 @@
-import type { CreateFolder, DriveFolder, DriveFolderList } from '@ingest/contracts';
-import { CreateFolderSchema, DriveFolderListSchema, DriveFolderSchema } from '@ingest/contracts';
+import type {
+  CreateFolder,
+  DeleteFolderResult,
+  DriveFolder,
+  DriveFolderList,
+} from '@ingest/contracts';
+import {
+  CreateFolderSchema,
+  DeleteFolderResultSchema,
+  DriveFolderListSchema,
+  DriveFolderSchema,
+} from '@ingest/contracts';
 import { request } from '../../../shared/api/http-client.js';
 
 /** Feature-scoped calls to the Drive folder endpoints. The only place this feature hits the network. */
@@ -14,6 +24,14 @@ export const driveFoldersApi = {
       method: 'POST',
       body: CreateFolderSchema.parse(body),
       schema: DriveFolderSchema,
+    });
+  },
+
+  remove: (id: string, force = false): Promise<DeleteFolderResult> => {
+    const query = force ? `?${new URLSearchParams({ force: 'true' }).toString()}` : '';
+    return request(`/drive/folders/${encodeURIComponent(id)}${query}`, {
+      method: 'DELETE',
+      schema: DeleteFolderResultSchema,
     });
   },
 };
