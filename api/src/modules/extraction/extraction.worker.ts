@@ -1,10 +1,12 @@
 import { type Document, matchKeyToAnswer, parseMatchKey, type QuestionOption } from '@ingest/contracts';
 import { logger } from '../../shared/logger/logger.js';
+import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { NewQuestion, QuestionRepository } from '../questions/index.js';
 import type { DriveService } from '../drive/index.js';
 import type { AiTokenUsage, UsageService } from '../usage/index.js';
-import type { ExtractionJobStore } from './extraction.repository.js';
+import type { ExtractionJobPatch, ExtractionJobStore } from './extraction.repository.js';
+import type { ExtractionRunRegistry } from './extraction-run-registry.js';
 import type { ExtractionJobPayload } from './job-queue.js';
 import type { PdfRasterizer } from './pdf-rasterizer.js';
 import type {
@@ -138,6 +140,8 @@ export class ExtractionWorker {
     private readonly rasterizer: PdfRasterizer,
     private readonly extractor: VisionExtractor,
     private readonly usage: UsageService,
+    private readonly runs: ExtractionRunRegistry,
+    private readonly timeoutMs: number,
   ) {}
 
   async run(payload: ExtractionJobPayload): Promise<void> {
@@ -170,12 +174,28 @@ export class ExtractionWorker {
     await this.documents.updateStatus(documentId, 'extracting');
     await this.jobs.update(jobId, { status: 'running', startedAt: now() });
 
+    // The per-run deadline: register an AbortController (so the cancel action can also reach it) and
+    // arm a timer that aborts it once the run exceeds the configured budget. Both cancel and timeout
+    // surface as an aborted signal on the in-flight vision call, handled in the catch below.
+    const controller = this.runs.register(jobId);
+    const timer = setTimeout(() => { controller.abort('timeout'); }, this.timeoutMs);
+
     try {
       const pdf = await this.drive.downloadPdf(document.driveFileId);
       const pages = await this.rasterizer.rasterize(pdf);
-      const { questions: drafts, usage } = await this.extractor.extractQuestions({ pages, document });
+      await this.jobs.update(jobId, { pagesTotal: pages.length, pagesDone: 0 });
+      const { questions: drafts, usage } = await this.extractor.extractQuestions({
+        pages,
+        document,
+        signal: controller.signal,
+        onProgress: (progress) => this.writeProgress(jobId, progress),
+      });
       await this.recordUsage(document, usage);
-      const answered = await this.applyAnswers(document, drafts);
+      const answered = await this.applyAnswers(document, drafts, controller.signal);
+      // The answer/solution phase swallows its own errors (a bad sibling PDF must not sink the
+      // questions), so an abort that lands there would otherwise be lost — re-check the deadline
+      // before persisting so a cancel/timeout still aborts instead of saving a half-answered result.
+      controller.signal.throwIfAborted();
       // Comprehension sub-questions are merged into one question per passage AFTER answers are folded
       // in, so each sub-question's answer/explanation is already on it before they combine.
       const collapsed = collapseComprehension(answered);
@@ -186,14 +206,41 @@ export class ExtractionWorker {
       await this.jobs.update(jobId, {
         status: 'succeeded',
         questionsFound: count,
+        pagesDone: pages.length,
         finishedAt: now(),
       });
       logger.info({ documentId, questionsFound: count }, 'Extraction complete');
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      // Document returns to a re-runnable state whether the run failed, timed out, or was cancelled.
       await this.documents.updateStatus(documentId, 'failed');
-      await this.jobs.update(jobId, { status: 'failed', error: message, finishedAt: now() });
-      logger.error({ documentId, err: message }, 'Extraction failed');
+      if (controller.signal.aborted && controller.signal.reason === 'cancelled') {
+        await this.jobs.update(jobId, { status: 'cancelled', finishedAt: now() });
+        logger.info({ documentId }, 'Extraction cancelled');
+      } else {
+        const message = controller.signal.aborted
+          ? errors.extractionTimedOut(this.timeoutMs).message
+          : error instanceof Error
+            ? error.message
+            : String(error);
+        await this.jobs.update(jobId, { status: 'failed', error: message, finishedAt: now() });
+        logger.error({ documentId, err: message }, 'Extraction failed');
+      }
+    } finally {
+      clearTimeout(timer);
+      this.runs.release(jobId);
+    }
+  }
+
+  /**
+   * Persist live page progress, best-effort: a progress-write failure is logged, never allowed to
+   * fail the extraction it only measures (mirrors {@link recordUsage}).
+   */
+  private async writeProgress(jobId: string, patch: ExtractionJobPatch): Promise<void> {
+    try {
+      await this.jobs.update(jobId, patch);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn({ jobId, err: message }, 'Failed to record extraction progress');
     }
   }
 
@@ -233,6 +280,7 @@ export class ExtractionWorker {
   private async applyAnswers(
     document: Document,
     drafts: ExtractedQuestion[],
+    signal: AbortSignal,
   ): Promise<ExtractedQuestion[]> {
     if (!document.sessionId) return drafts;
     const siblings = await this.documents.listBySession(document.sessionId);
@@ -251,23 +299,23 @@ export class ExtractionWorker {
     if (hasRanges) {
       for (const answerDoc of answerDocs) {
         await this.collectTopicSheets(answerDoc, document.topics, 'answer', sheets, (pages) =>
-          this.extractor.extractAnswers({ pages, document: answerDoc }),
+          this.extractor.extractAnswers({ pages, document: answerDoc, signal }),
         );
       }
       for (const solutionDoc of solutionDocs) {
         await this.collectTopicSheets(solutionDoc, document.topics, 'solution', sheets, (pages) =>
-          this.extractor.extractSolutions({ pages, document: solutionDoc }),
+          this.extractor.extractSolutions({ pages, document: solutionDoc, signal }),
         );
       }
     } else {
       for (const answerDoc of answerDocs) {
         await this.collectSheets(answerDoc, sheets, (pages) =>
-          this.extractor.extractAnswers({ pages, document: answerDoc }),
+          this.extractor.extractAnswers({ pages, document: answerDoc, signal }),
         );
       }
       for (const solutionDoc of solutionDocs) {
         await this.collectSheets(solutionDoc, sheets, (pages) =>
-          this.extractor.extractSolutions({ pages, document: solutionDoc }),
+          this.extractor.extractSolutions({ pages, document: solutionDoc, signal }),
         );
       }
     }

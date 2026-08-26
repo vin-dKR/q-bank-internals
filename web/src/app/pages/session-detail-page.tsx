@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { Document, DocumentStatus } from '@ingest/contracts';
 import { DocumentStatusSchema } from '@ingest/contracts';
 import {
+  ExtractionProgress,
   useDeleteSession,
   useRunDocumentExtraction,
   useRunSessionExtraction,
@@ -39,6 +40,14 @@ export function SessionDetailPage(): JSX.Element {
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState('');
   const [configsFor, setConfigsFor] = useState<string | null>(null);
+  // Extraction runs started from this view, shown as live status bars until they finish.
+  const [activeJobIds, setActiveJobIds] = useState<string[]>([]);
+  const trackJobs = (ids: string[]): void => {
+    setActiveJobIds((prev) => [...prev, ...ids.filter((id) => !prev.includes(id))]);
+  };
+  const dropJob = (id: string): void => {
+    setActiveJobIds((prev) => prev.filter((jobId) => jobId !== id));
+  };
 
   const documents = useDocuments(
     status === 'all' ? { sessionId } : { sessionId, status: [status] },
@@ -116,7 +125,7 @@ export function SessionDetailPage(): JSX.Element {
           type="button"
           className="btn btn--xs"
           disabled={runDoc.isPending}
-          onClick={() => { runDoc.mutate(doc.id); }}
+          onClick={() => { runDoc.mutate(doc.id, { onSuccess: (job) => { trackJobs([job.id]); } }); }}
         >
           Run
         </button>
@@ -215,11 +224,19 @@ export function SessionDetailPage(): JSX.Element {
             type="button"
             className="btn"
             disabled={runSession.isPending || busy || pending === 0}
-            onClick={() => { runSession.mutate(s.id); }}
+            onClick={() => { runSession.mutate(s.id, { onSuccess: (r) => { trackJobs(r.jobIds); } }); }}
           >
             {busy ? <><Spinner /> Extracting…</> : 'Run extraction on all pending'}
           </button>
         </div>
+
+        {activeJobIds.length > 0 ? (
+          <div className="flex flex-col gap-2">
+            {activeJobIds.map((id) => (
+              <ExtractionProgress key={id} jobId={id} onDismiss={() => { dropJob(id); }} />
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <div className="card">

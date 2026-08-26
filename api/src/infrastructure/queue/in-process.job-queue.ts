@@ -22,6 +22,12 @@ export class InProcessJobQueue implements JobQueue {
     return Promise.resolve();
   }
 
+  /** Nothing waits in a queue here — work runs detached the instant it is enqueued — so there is no
+   * queued entry to drop. A run already in flight is stopped through its AbortController, not here. */
+  cancel(): Promise<void> {
+    return Promise.resolve();
+  }
+
   process(handler: (payload: ExtractionJobPayload) => Promise<void>): void {
     this.handler = handler;
   }

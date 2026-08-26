@@ -183,6 +183,8 @@ model ExtractionJob {
   status        String   @default("queued")
   model         String
   questionsFound Int     @default(0)
+  pagesTotal    Int      @default(0)
+  pagesDone     Int      @default(0)
   error         String?
   startedAt     DateTime?
   finishedAt    DateTime?

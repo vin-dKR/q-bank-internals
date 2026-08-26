@@ -40,6 +40,16 @@ export const errors = {
   extractionInProgress: (documentId: string): AppError =>
     new AppError('EXTRACTION_IN_PROGRESS', 409, `Document "${documentId}" is already extracting.`),
 
+  extractionJobNotFound: (id: string): AppError =>
+    new AppError('EXTRACTION_JOB_NOT_FOUND', 404, `No extraction job with id "${id}".`),
+
+  extractionTimedOut: (ms: number): AppError =>
+    new AppError(
+      'EXTRACTION_TIMED_OUT',
+      504,
+      `Extraction exceeded the ${String(ms)}ms time limit and was stopped. Re-run to try again.`,
+    ),
+
   driveUnavailable: (): AppError =>
     new AppError('DRIVE_UNAVAILABLE', 502, 'Google Drive could not be reached.'),
 

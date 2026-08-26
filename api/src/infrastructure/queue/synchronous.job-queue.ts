@@ -31,6 +31,12 @@ export class SynchronousJobQueue implements JobQueue {
     }
   }
 
+  /** Runs inline inside the enqueue call, so there is never a queued entry to drop; a run in flight is
+   * stopped through its AbortController. */
+  cancel(): Promise<void> {
+    return Promise.resolve();
+  }
+
   process(handler: (payload: ExtractionJobPayload) => Promise<void>): void {
     this.handler = handler;
   }

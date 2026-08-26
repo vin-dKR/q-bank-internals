@@ -9,6 +9,7 @@ export function createExtractionRouter(service: ExtractionService): Router {
   router.post('/', controller.start);
   router.post('/sessions/:sessionId', controller.startSession);
   router.get('/jobs/:id', controller.getJob);
+  router.post('/jobs/:id/cancel', controller.cancel);
 
   return router;
 }

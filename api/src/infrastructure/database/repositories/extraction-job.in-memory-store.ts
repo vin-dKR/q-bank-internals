@@ -13,6 +13,8 @@ export class InMemoryExtractionJobStore implements ExtractionJobStore {
       status: 'queued',
       model: input.model,
       questionsFound: 0,
+      pagesTotal: 0,
+      pagesDone: 0,
       error: null,
       startedAt: null,
       finishedAt: null,

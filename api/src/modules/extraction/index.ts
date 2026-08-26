@@ -1,5 +1,6 @@
 export { ExtractionService } from './extraction.service.js';
 export { ExtractionWorker } from './extraction.worker.js';
+export { ExtractionRunRegistry, type ExtractionAbortReason } from './extraction-run-registry.js';
 export { createExtractionRouter } from './extraction.routes.js';
 export type { ExtractionJobPatch, ExtractionJobStore } from './extraction.repository.js';
 export type { JobQueue, ExtractionJobPayload } from './job-queue.js';
@@ -10,6 +11,7 @@ export type {
   AnswerExtraction,
   AnswerSheet,
   ExtractedQuestion,
+  ExtractionProgress,
   PageImage,
   QuestionExtraction,
   VisionExtractor,

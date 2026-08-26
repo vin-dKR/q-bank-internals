@@ -22,7 +22,26 @@ export class BullMqJobQueue implements JobQueue {
   }
 
   async enqueue(payload: ExtractionJobPayload): Promise<void> {
-    await this.queue.add('extract', payload, { removeOnComplete: true, removeOnFail: 100 });
+    // Pin the BullMQ job id to our job id so `cancel` can target the queued entry directly.
+    await this.queue.add('extract', payload, {
+      jobId: payload.jobId,
+      removeOnComplete: true,
+      removeOnFail: 100,
+    });
+  }
+
+  async cancel(jobId: string): Promise<void> {
+    const job = await this.queue.getJob(jobId);
+    if (!job) return;
+    try {
+      // Removes the entry while it is still waiting; throws once a worker has locked it (active).
+      await job.remove();
+    } catch (error) {
+      logger.warn(
+        { jobId, err: error instanceof Error ? error.message : String(error) },
+        'BullMQ job could not be removed (already active); the run must stop via its AbortController',
+      );
+    }
   }
 
   process(handler: (payload: ExtractionJobPayload) => Promise<void>): void {

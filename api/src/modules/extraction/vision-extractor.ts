@@ -54,11 +54,31 @@ export type AnswerExtraction = { sheets: AnswerSheet[]; usage: AiTokenUsage };
  * never the API. Each method returns the model's token {@link AiTokenUsage} so the worker can
  * record spend.
  */
+/** Live progress of a page-by-page extraction, reported after each page completes. */
+export type ExtractionProgress = { pagesTotal: number; pagesDone: number; questionsFound: number };
+
 export interface VisionExtractor {
-  /** Extract question drafts from a document's rasterized question pages. */
-  extractQuestions(input: { pages: PageImage[]; document: Document }): Promise<QuestionExtraction>;
+  /**
+   * Extract question drafts from a document's rasterized question pages. `signal` aborts the in-flight
+   * vision call on cancel/timeout; `onProgress` fires after each page so the worker can persist live
+   * progress (pages done + questions so far).
+   */
+  extractQuestions(input: {
+    pages: PageImage[];
+    document: Document;
+    signal?: AbortSignal;
+    onProgress?: (progress: ExtractionProgress) => Promise<void>;
+  }): Promise<QuestionExtraction>;
   /** Extract answer keys (letters/values only) from a document's rasterized answer-sheet pages. */
-  extractAnswers(input: { pages: PageImage[]; document: Document }): Promise<AnswerExtraction>;
+  extractAnswers(input: {
+    pages: PageImage[];
+    document: Document;
+    signal?: AbortSignal;
+  }): Promise<AnswerExtraction>;
   /** Extract worked-solution explanations (and any final answer) from a solution PDF's pages. */
-  extractSolutions(input: { pages: PageImage[]; document: Document }): Promise<AnswerExtraction>;
+  extractSolutions(input: {
+    pages: PageImage[];
+    document: Document;
+    signal?: AbortSignal;
+  }): Promise<AnswerExtraction>;
 }
