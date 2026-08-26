@@ -200,10 +200,22 @@ export type RefinedLatex = z.infer<typeof RefinedLatexSchema>;
  * Ask the AI to re-read the source page of ONE already-extracted question and re-extract its fields
  * from scratch (stem, options, answer, explanation) — the "read the page again" companion to the
  * LaTeX refiner. Addressed by the question's id together with its document (which resolves the page).
+ *
+ * `source` overrides WHICH page image is read: by default the question's own source page, but the
+ * verify screen points the answer/explanation re-read at the sibling answer/solution document and
+ * this topic's page in it, so those fields are read from the answer/solution PDF — never the question
+ * sheet. The question's identity (its number/stem/type) is still resolved from `documentId`.
  */
+export const ReExtractSourceSchema = z.object({
+  documentId: z.string().min(1),
+  page: z.number().int().positive(),
+});
+export type ReExtractSource = z.infer<typeof ReExtractSourceSchema>;
+
 export const ReExtractQuestionSchema = z.object({
   documentId: z.string().min(1),
   questionId: z.string().min(1),
+  source: ReExtractSourceSchema.optional(),
 });
 export type ReExtractQuestion = z.infer<typeof ReExtractQuestionSchema>;
 

@@ -6,6 +6,7 @@ import type {
   Question,
   QuestionBatchUpdate,
   ReExtractedQuestion,
+  ReExtractSource,
   UpdateQuestion,
 } from '@ingest/contracts';
 import {
@@ -82,12 +83,18 @@ export const questionsApi = {
 
   /**
    * AI "read the page again": re-extract one question's fields (stem, options, answer, explanation)
-   * straight from its source page image — the companion to {@link refine}, which only cleans text.
+   * straight from a source page image — the companion to {@link refine}, which only cleans text.
+   * `source` redirects the read to the sibling answer/solution document + this topic's page, so an
+   * answer/explanation re-read reads that PDF; omit it to read the question's own page.
    */
-  reExtract: (documentId: string, questionId: string): Promise<ReExtractedQuestion> => {
+  reExtract: (
+    documentId: string,
+    questionId: string,
+    source?: ReExtractSource,
+  ): Promise<ReExtractedQuestion> => {
     return request('/questions/re-extract', {
       method: 'POST',
-      body: { documentId, questionId },
+      body: { documentId, questionId, ...(source ? { source } : {}) },
       schema: ReExtractedQuestionSchema,
     });
   },
