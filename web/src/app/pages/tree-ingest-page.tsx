@@ -34,7 +34,7 @@ import {
 import { SessionBar } from '../../features/sessions/index.js';
 import { useCurrentSession } from '../../shared/lib/current-session.js';
 import { bytesToBlob, saveBlob } from '../../shared/lib/files.js';
-import { IconDownload, PageHeader, Spinner, useToast } from '../../shared/ui/index.js';
+import { IconButton, IconChevronDown, IconDownload, IconGripVertical, PageHeader, Spinner, useToast } from '../../shared/ui/index.js';
 
 const DEFAULT_WIDTH = 560;
 const MIN_WIDTH = 320;
@@ -85,6 +85,11 @@ export function TreeIngestPage(): JSX.Element {
   const [pdfBytes, setPdfBytes] = useState<ArrayBuffer | Uint8Array | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [mergedSources, setMergedSources] = useState<{ name: string; from: number; to: number }[]>([]);
+  // The individual uploaded PDFs are kept (not just the merged bytes) so the operator can reorder
+  // them and we can re-merge in the new order. Only populated when more than one file is loaded.
+  const [loadedFiles, setLoadedFiles] = useState<LoadedPdf[]>([]);
+  const [mergeExpanded, setMergeExpanded] = useState(false);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [pageWidth, setPageWidth] = useState(DEFAULT_WIDTH);
   const [cutMode, setCutMode] = useState<CutMode>('none');
@@ -162,6 +167,9 @@ export function TreeIngestPage(): JSX.Element {
     setPdfBytes(null);
     setFileName(null);
     setMergedSources([]);
+    setLoadedFiles([]);
+    setMergeExpanded(false);
+    setDragIndex(null);
     setNumPages(0);
     clearSelection();
     setPageWidth(DEFAULT_WIDTH);
@@ -175,6 +183,24 @@ export function TreeIngestPage(): JSX.Element {
    * into one continuous document so cut/structure/upload work over the merged preview. The source
    * order and each file's page span are kept so the operator sees where each file starts.
    */
+  /** Merge the given ordered files into one working document and record each file's page span. */
+  const mergeInto = useCallback(
+    async (files: LoadedPdf[]): Promise<void> => {
+      const merged = await mergePdfs(files.map((file) => new Uint8Array(file.bytes)));
+      setPdfBytes(merged.bytes);
+      setFileName(`${String(files.length)} PDFs merged`);
+      setMergedSources(
+        merged.spans.map((span, index) => ({
+          name: files[index]?.name ?? `PDF ${String(index + 1)}`,
+          from: span.from,
+          to: span.to,
+        })),
+      );
+      workingDoc.reset(merged.bytes);
+    },
+    [workingDoc],
+  );
+
   const loadFiles = useCallback(
     async (files: LoadedPdf[]): Promise<void> => {
       resetDoc();
@@ -186,15 +212,31 @@ export function TreeIngestPage(): JSX.Element {
         workingDoc.reset(new Uint8Array(first.bytes));
         return;
       }
-      const merged = await mergePdfs(files.map((file) => new Uint8Array(file.bytes)));
-      setPdfBytes(merged.bytes);
-      setFileName(`${String(files.length)} PDFs merged`);
-      setMergedSources(
-        merged.spans.map((span, index) => ({ name: files[index]?.name ?? first.name, from: span.from, to: span.to })),
-      );
-      workingDoc.reset(merged.bytes);
+      setLoadedFiles(files);
+      await mergeInto(files);
     },
-    [resetDoc, workingDoc],
+    [resetDoc, workingDoc, mergeInto],
+  );
+
+  /**
+   * Reorder the merged files (drag or keyboard) and re-merge in the new order so the preview follows.
+   * Reordering repaginates the document, so the cut/reflow scratch is dropped (the tree is untouched).
+   */
+  const reorderFiles = useCallback(
+    (from: number, to: number): void => {
+      setDragIndex(null);
+      if (from === to || from < 0 || to < 0 || from >= loadedFiles.length || to >= loadedFiles.length) return;
+      const next = [...loadedFiles];
+      const [moved] = next.splice(from, 1);
+      if (!moved) return;
+      next.splice(to, 0, moved);
+      setLoadedFiles(next);
+      splitPoints.reset();
+      reflow.clear();
+      clearSelection();
+      void mergeInto(next);
+    },
+    [loadedFiles, mergeInto, splitPoints, reflow, clearSelection],
   );
 
   /** Materialize the mode's edits into a fresh version so modes chain. The tree is untouched. */
@@ -534,7 +576,20 @@ export function TreeIngestPage(): JSX.Element {
           <div className="panel-head">
             <SessionBar compact />
             <div className="panel-file">
-              <span className="panel-file__name" title={fileName ?? undefined}>{fileName ?? 'Loaded PDF'}</span>
+              {mergedSources.length > 0 ? (
+                <button
+                  type="button"
+                  className="panel-file__name panel-file__toggle"
+                  aria-expanded={mergeExpanded}
+                  onClick={() => { setMergeExpanded((open) => !open); }}
+                  title="Show merged files — drag to reorder"
+                >
+                  <IconChevronDown className={mergeExpanded ? 'panel-file__caret is-open' : 'panel-file__caret'} />
+                  <span className="truncate">{fileName}</span>
+                </button>
+              ) : (
+                <span className="panel-file__name" title={fileName ?? undefined}>{fileName ?? 'Loaded PDF'}</span>
+              )}
               <span className="panel-file__meta">
                 {numPages > 0 ? <span>{numPages} page{numPages === 1 ? '' : 's'}</span> : null}
                 <button type="button" className="btn btn--ghost btn--xs" onClick={downloadWorking} title="Download the current working PDF">
@@ -545,11 +600,33 @@ export function TreeIngestPage(): JSX.Element {
             </div>
           </div>
 
-          {mergedSources.length > 0 ? (
-            <ul className="results">
+          {mergedSources.length > 0 && mergeExpanded ? (
+            <ul className="merge-list" aria-label="Merged PDFs — drag to reorder">
               {mergedSources.map((source, index) => (
-                <li key={index} className="note" title={source.name}>
-                  {source.name} · page{source.from === source.to ? ` ${String(source.from)}` : `s ${String(source.from)}–${String(source.to)}`}
+                <li
+                  key={index}
+                  className={dragIndex === index ? 'merge-list__item is-dragging' : 'merge-list__item'}
+                  draggable
+                  onDragStart={(event) => { setDragIndex(index); event.dataTransfer.effectAllowed = 'move'; }}
+                  onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }}
+                  onDrop={(event) => { event.preventDefault(); if (dragIndex !== null) reorderFiles(dragIndex, index); }}
+                  onDragEnd={() => { setDragIndex(null); }}
+                >
+                  <IconButton
+                    className="merge-list__grip"
+                    icon={<IconGripVertical />}
+                    label={`Reorder ${source.name} — drag, or use the arrow keys`}
+                    size="sm"
+                    onKeyDown={(event) => {
+                      if (event.key === 'ArrowUp') { event.preventDefault(); reorderFiles(index, index - 1); }
+                      else if (event.key === 'ArrowDown') { event.preventDefault(); reorderFiles(index, index + 1); }
+                    }}
+                  />
+                  <span className="merge-list__pos" aria-hidden>{index + 1}</span>
+                  <span className="merge-list__name truncate" title={source.name}>{source.name}</span>
+                  <span className="merge-list__span text-ink-2">
+                    page{source.from === source.to ? ` ${String(source.from)}` : `s ${String(source.from)}–${String(source.to)}`}
+                  </span>
                 </li>
               ))}
             </ul>

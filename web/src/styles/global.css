@@ -846,6 +846,43 @@
   .panel-file__meta {
     @apply flex flex-none items-center gap-2 whitespace-nowrap text-xs text-ink-2;
   }
+  .panel-file__toggle {
+    @apply flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-sm text-left text-[13px] font-semibold text-ink transition-colors;
+    background: none;
+  }
+  .panel-file__toggle:hover {
+    @apply text-ink-2;
+  }
+  .panel-file__toggle:focus-visible {
+    @apply outline-none ring-2 ring-indigo-500/40;
+  }
+  .panel-file__caret {
+    @apply size-4 flex-none text-ink-2 transition-transform;
+  }
+  .panel-file__caret.is-open {
+    transform: rotate(180deg);
+  }
+  .merge-list {
+    @apply flex flex-col gap-1;
+  }
+  .merge-list__item {
+    @apply flex items-center gap-2 rounded-lg border border-line bg-surface px-2 py-1.5 text-[13px] transition-colors;
+  }
+  .merge-list__item.is-dragging {
+    @apply opacity-50;
+  }
+  .merge-list__grip {
+    @apply cursor-grab;
+  }
+  .merge-list__pos {
+    @apply grid size-5 flex-none place-items-center rounded-full bg-surface-2 text-[11px] font-semibold text-ink-2;
+  }
+  .merge-list__name {
+    @apply min-w-0 flex-1 text-ink;
+  }
+  .merge-list__span {
+    @apply flex-none whitespace-nowrap text-xs;
+  }
   .workspace .cutter-layout {
     @apply min-h-0 flex-1 items-stretch;
     height: auto;
