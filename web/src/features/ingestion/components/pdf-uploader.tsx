@@ -1,26 +1,38 @@
 import { type JSX, useRef } from 'react';
 
+/** One selected PDF's cloned bytes (detachment-safe) and its original filename. */
+export type LoadedPdf = { bytes: ArrayBuffer; name: string };
+
 type PdfUploaderProps = {
   fileName: string | null;
-  onLoad: (bytes: ArrayBuffer, fileName: string) => void;
+  onLoad: (files: LoadedPdf[]) => void;
   onClear: () => void;
 };
 
-/** Upload a PDF and hand its bytes (cloned to avoid detachment) to the page. */
-export function PdfUploader({ fileName, onLoad, onClear }: PdfUploaderProps): JSX.Element {
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const handleFile = (file: File | undefined): void => {
-    if (!file) return;
-    if (file.type !== 'application/pdf') return;
+/** Read one PDF's bytes, or null when it is not a PDF or cannot be read. */
+function readPdf(file: File): Promise<LoadedPdf | null> {
+  if (file.type !== 'application/pdf') return Promise.resolve(null);
+  return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = (event) => {
       const result = event.target?.result;
-      if (result instanceof ArrayBuffer) {
-        onLoad(result.slice(0), file.name);
-      }
+      resolve(result instanceof ArrayBuffer ? { bytes: result.slice(0), name: file.name } : null);
     };
+    reader.onerror = () => { resolve(null); };
     reader.readAsArrayBuffer(file);
+  });
+}
+
+/** Upload one or more PDFs and hand their ordered bytes (cloned to avoid detachment) to the page. */
+export function PdfUploader({ fileName, onLoad, onClear }: PdfUploaderProps): JSX.Element {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleFiles = (list: FileList | null): void => {
+    if (!list || list.length === 0) return;
+    void Promise.all(Array.from(list).map(readPdf)).then((loaded) => {
+      const pdfs = loaded.filter((file): file is LoadedPdf => file !== null);
+      if (pdfs.length > 0) onLoad(pdfs);
+    });
   };
 
   if (fileName) {
@@ -41,8 +53,9 @@ export function PdfUploader({ fileName, onLoad, onClear }: PdfUploaderProps): JS
           ref={inputRef}
           type="file"
           accept="application/pdf"
+          multiple
           hidden
-          onChange={(event) => { handleFile(event.target.files?.[0]); }}
+          onChange={(event) => { handleFiles(event.target.files); }}
         />
       </div>
     );
@@ -54,7 +67,7 @@ export function PdfUploader({ fileName, onLoad, onClear }: PdfUploaderProps): JS
       onClick={() => inputRef.current?.click()}
       onDrop={(event) => {
         event.preventDefault();
-        handleFile(event.dataTransfer.files[0]);
+        handleFiles(event.dataTransfer.files);
       }}
       onDragOver={(event) => { event.preventDefault(); }}
     >
@@ -62,10 +75,14 @@ export function PdfUploader({ fileName, onLoad, onClear }: PdfUploaderProps): JS
         ref={inputRef}
         type="file"
         accept="application/pdf"
+        multiple
         hidden
-        onChange={(event) => { handleFile(event.target.files?.[0]); }}
+        onChange={(event) => { handleFiles(event.target.files); }}
       />
-      <p className="muted">Drag &amp; drop a multi-chapter PDF here, or click to choose a file.</p>
+      <p className="muted">
+        Drag &amp; drop one or more PDFs here, or click to choose. Multiple files merge into one
+        continuous document, in the order selected.
+      </p>
     </div>
   );
 }

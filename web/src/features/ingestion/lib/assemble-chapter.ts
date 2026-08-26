@@ -1,6 +1,7 @@
 import { PDFDocument } from 'pdf-lib';
 import type { ChapterKind, ChapterTopic, ChapterUploadMetadata } from '@ingest/contracts';
 import type { NodeLevel, StructureNode, StructureTree } from '../types/structure-node.js';
+import { appendPdf } from './merge-pdfs.js';
 import { leaves, resolveQuestionType } from './structure-tree.js';
 
 /** One unit per chapter, so its section name is a constant — the per-section detail lives in topics. */
@@ -52,11 +53,8 @@ async function assembleKind(
   for (const leaf of orderedLeaves) {
     const artifact = leaf.node.bindings?.[kind];
     if (!artifact) continue;
-    const src = await PDFDocument.load(artifact.bytes);
-    const copied = await out.copyPages(src, src.getPageIndices());
-    const from = out.getPageCount() + 1;
-    for (const page of copied) out.addPage(page);
-    spans.push({ leaf, from, to: out.getPageCount() });
+    const { from, to } = await appendPdf(out, artifact.bytes);
+    spans.push({ leaf, from, to });
   }
   if (spans.length === 0) return null;
   return { bytes: await out.save(), spans };
