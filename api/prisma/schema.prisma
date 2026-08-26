@@ -95,6 +95,15 @@ model Document {
   kind          String          @default("question")
   sectionName   String?
   questionType  String?
+  // Exam + subject the operator picked for this chapter, persisted per-document so publish stamps the
+  // authoritative values onto each bank row (the session's copy is only a filter-option hint). Null on legacy docs.
+  exam          String?
+  subject       String?
+  // PYQ provenance chosen at cut time: whether the chapter's questions are previous-year questions,
+  // and the exam + year they were asked in. Carried to the bank row on publish. Null/false on legacy docs.
+  pyq           Boolean         @default(false)
+  pyqExam       String?
+  pyqYear       String?
   // Question provenance chosen at cut time: pyq / module / textbook (open string). Null on legacy docs.
   source        String?
   pageRange     PageRange?

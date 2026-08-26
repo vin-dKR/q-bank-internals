@@ -32,6 +32,10 @@ const RawCatalogQuestionSchema = z
     question_type: z.string().nullable().catch(null),
     topic: z.string().nullable().catch(null),
     flagged: ejsonBool.catch(false),
+    // PYQ provenance stamped at publish; absent/false on non-PYQ and legacy rows.
+    is_pyq: ejsonBool.catch(false),
+    pyq_exam: z.string().nullable().catch(null),
+    pyq_year: z.string().nullable().catch(null),
     // Provenance stamped at publish (null on legacy rows) — only `document_id` is needed here, to let
     // the browse card reopen the source in Verify. Tolerant so a malformed ref degrades to null.
     ingest_ref: z.object({ document_id: z.string() }).nullable().catch(null),
@@ -55,6 +59,9 @@ const RawCatalogQuestionSchema = z
       questionType: doc.question_type,
       topic: doc.topic,
       flagged: doc.flagged,
+      isPyq: doc.is_pyq,
+      pyqExam: doc.pyq_exam,
+      pyqYear: doc.pyq_year,
       documentId: doc.ingest_ref?.document_id ?? null,
       options: doc.options,
       isQuestionImage: doc.isQuestionImage,
@@ -219,12 +226,17 @@ export class MongoCatalogStore implements CatalogStore {
     const filter: Record<string, unknown> = {};
     if (filters.exam) filter.exam_name = filters.exam;
     if (filters.subject) filter.subject = filters.subject;
+    // `module` is stamped onto the bank row at publish, so the Module dropdown now narrows the list.
+    if (filters.module) filter.module = filters.module;
     if (filters.chapter) filter.chapter = filters.chapter;
     if (filters.section) filter.section_name = filters.section;
     if (filters.questionType) filter.question_type = filters.questionType;
     if (filters.flagged === true) filter.flagged = true;
     // "Not flagged" includes rows where the field is false, null, or absent — legacy rows have no flag.
     else if (filters.flagged === false) filter.flagged = { $ne: true };
+    if (filters.pyq === true) filter.is_pyq = true;
+    // "Not PYQ" includes rows where the field is false, null, or absent — legacy rows have no PYQ flag.
+    else if (filters.pyq === false) filter.is_pyq = { $ne: true };
 
     const keyword = filters.q?.trim() ?? '';
     if (keyword.length >= MIN_SEARCH_LENGTH) {

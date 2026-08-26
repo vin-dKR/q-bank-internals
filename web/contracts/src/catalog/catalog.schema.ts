@@ -20,6 +20,11 @@ export const CatalogQuestionSchema = z.object({
   questionType: z.string().nullable(),
   topic: z.string().nullable(),
   flagged: z.boolean(),
+  // PYQ provenance stamped at publish: whether the question is a previous-year question, and the
+  // exam + year it was asked in. `isPyq` is false and exam/year null on non-PYQ or legacy rows.
+  isPyq: z.boolean(),
+  pyqExam: z.string().nullable(),
+  pyqYear: z.string().nullable(),
   // The ingest document this question was published from (read off `ingest_ref.document_id`), so the
   // browse card's "Edit" can reopen it in Verify at `/verify?documentId=…`. Null on legacy rows
   // published before provenance was stamped — those cannot be reopened, so Edit is hidden.
@@ -40,10 +45,12 @@ export type CatalogQuestion = z.infer<typeof CatalogQuestionSchema>;
 export const CatalogQuerySchema = z.object({
   exam: z.string().optional(),
   subject: z.string().optional(),
+  module: z.string().optional(),
   chapter: z.string().optional(),
   section: z.string().optional(),
   questionType: z.string().optional(),
   flagged: z.enum(['true', 'false']).optional(),
+  pyq: z.enum(['true', 'false']).optional(),
   q: z.string().optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().int().positive().max(50).default(20),

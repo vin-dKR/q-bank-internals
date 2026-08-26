@@ -20,6 +20,12 @@ function isCorrect(correct: Set<string>, index: number): boolean {
   return correct.has(optionLabel(index)) || correct.has(String(index + 1));
 }
 
+/** The PYQ badge text: "PYQ" plus the exam and/or year when the operator captured them. */
+function pyqLabel(question: CatalogQuestion): string {
+  const detail = [question.pyqExam, question.pyqYear].filter((part) => part && part.trim()).join(' ');
+  return detail ? `PYQ · ${detail}` : 'PYQ';
+}
+
 /** Only render images we can trust as absolute URLs; fix the common double-encoding (`%2520` → `%20`). */
 function imageUrl(url: string): string | null {
   if (!url.startsWith('http')) return null;
@@ -54,6 +60,7 @@ export function QuestionCard({
         {question.subject ? <Badge tone="review" dot={false}>{question.subject}</Badge> : null}
         {question.chapter ? <Badge tone="neutral" dot={false}>{question.chapter}</Badge> : null}
         {question.section ? <Badge tone="neutral" dot={false}>{question.section}</Badge> : null}
+        {question.isPyq ? <Badge tone="progress" dot={false}>{pyqLabel(question)}</Badge> : null}
         {question.flagged ? <Badge tone="danger">Flagged</Badge> : null}
         <span className="flex-1" />
         {question.documentId ? (

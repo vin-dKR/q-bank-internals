@@ -134,6 +134,7 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
     // Unit-level fallback type (topics cover every question page); use the first leaf's type.
     questionType: resolveQuestionType(firstLeaf.node, firstLeaf.ancestors).trim(),
     ...(m.source.trim() ? { source: m.source.trim() } : {}),
+    ...pyqFields(m),
   };
 
   return {
@@ -154,5 +155,16 @@ function emptyBase(m: StructureTree['metadata']): Base {
     sectionName: UNIT_SECTION,
     questionType: '',
     ...(m.source.trim() ? { source: m.source.trim() } : {}),
+    ...pyqFields(m),
+  };
+}
+
+/** The PYQ upload fields, present only when the chapter is flagged as previous-year questions. */
+function pyqFields(m: StructureTree['metadata']): Partial<Pick<Base, 'pyq' | 'pyqExam' | 'pyqYear'>> {
+  if (!m.pyq) return {};
+  return {
+    pyq: true,
+    ...(m.pyqExam.trim() ? { pyqExam: m.pyqExam.trim() } : {}),
+    ...(m.pyqYear.trim() ? { pyqYear: m.pyqYear.trim() } : {}),
   };
 }

@@ -4,10 +4,12 @@ import type { CatalogQuestion } from '@ingest/contracts';
 export type CatalogFilters = {
   exam?: string;
   subject?: string;
+  module?: string;
   chapter?: string;
   section?: string;
   questionType?: string;
   flagged?: boolean;
+  pyq?: boolean;
   q?: string;
 };
 
