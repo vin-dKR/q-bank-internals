@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Image Background Remover</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9986;</text></svg>">
+</head>
+<body>
+  <div class="app">
+
+    <header class="masthead">
+      <h1>Image Background Remover</h1>
+      <p>Cut the subject out of a photo and put it on white, black, or nothing at all.</p>
+    </header>
+
+    <!-- ---------------------------------------------------------------- -->
+    <section id="dropzone" class="dropzone" tabindex="0" role="button"
+             aria-label="Upload an image">
+      <svg class="dropzone__icon" viewBox="0 0 48 48" aria-hidden="true">
+        <path d="M24 32V10m0 0-8 8m8-8 8 8" />
+        <path d="M8 30v6a4 4 0 0 0 4 4h24a4 4 0 0 0 4-4v-6" />
+      </svg>
+      <p class="dropzone__title">Drag &amp; drop an image here</p>
+      <p class="dropzone__or">or</p>
+      <button type="button" class="btn btn--primary" id="chooseBtn">Choose Image</button>
+      <p class="dropzone__hint">JPG, PNG, WEBP or TIFF &middot; up to {{ max_upload_mb }} MB</p>
+      <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp,image/tiff,image/bmp" hidden>
+    </section>
+
+    <!-- ---------------------------------------------------------------- -->
+    <section id="progress" class="progress" hidden aria-live="polite">
+      <div class="progress__bar"><div class="progress__fill"></div></div>
+      <p class="progress__text" id="progressText">Reading image&hellip;</p>
+    </section>
+
+    <!-- ---------------------------------------------------------------- -->
+    <section id="result" class="result" hidden>
+
+      <div class="panes">
+        <figure class="pane">
+          <figcaption class="pane__label">Original</figcaption>
+          <div class="pane__stage" data-bg="neutral">
+            <img id="beforeImg" alt="The uploaded image">
+          </div>
+        </figure>
+
+        <figure class="pane">
+          <figcaption class="pane__label">Result</figcaption>
+          <div class="pane__stage pane__stage--paint" id="afterStage" data-bg="white">
+            <canvas id="afterCanvas" aria-label="The image with its background removed"></canvas>
+            <div class="brush-cursor" id="brushCursor" hidden></div>
+          </div>
+        </figure>
+      </div>
+
+      <!-- Manual touch-up: paint on the result to fix what the automatic
+           pass got wrong. Strokes are replayed server-side onto the
+           full-resolution mask, so the download matches what you see. -->
+      <div class="retouch">
+        <div class="retouch__group">
+          <span class="control__label" id="brushLabel">Touch up</span>
+          <div class="segmented" role="radiogroup" aria-labelledby="brushLabel">
+            <button type="button" class="segmented__btn is-active" data-brush="erase"
+                    role="radio" aria-checked="true">
+              <svg class="ico" viewBox="0 0 16 16" aria-hidden="true">
+                <circle cx="8" cy="8" r="6" /><path d="M5 8h6" />
+              </svg>Erase
+            </button>
+            <button type="button" class="segmented__btn" data-brush="restore"
+                    role="radio" aria-checked="false">
+              <svg class="ico" viewBox="0 0 16 16" aria-hidden="true">
+                <circle cx="8" cy="8" r="6" /><path d="M5 8h6M8 5v6" />
+              </svg>Restore
+            </button>
+          </div>
+        </div>
+
+        <label class="retouch__group retouch__slider">
+          <span class="control__label">Brush size</span>
+          <input type="range" id="brushSize" min="8" max="160" value="40">
+        </label>
+
+        <label class="retouch__group retouch__check">
+          <input type="checkbox" id="snapEdges" checked>
+          <span>Snap to edges</span>
+        </label>
+
+        <label class="retouch__group retouch__check"
+               title="For photos of paper: evens out the lighting and removes the colour cast so the page reads as a true white sheet.">
+          <input type="checkbox" id="whitenPaper">
+          <span>Whiten paper</span>
+        </label>
+
+        <div class="retouch__actions">
+          <button type="button" class="btn btn--ghost btn--sm" id="undoBtn" disabled>Undo</button>
+          <button type="button" class="btn btn--ghost btn--sm" id="clearEditsBtn" disabled>Clear</button>
+        </div>
+
+        <span class="retouch__status" id="retouchStatus" aria-live="polite"></span>
+      </div>
+
+      <div class="controls">
+        <div class="control">
+          <span class="control__label" id="bgLabel">Background</span>
+          <div class="segmented" role="radiogroup" aria-labelledby="bgLabel">
+            <button type="button" class="segmented__btn is-active" data-bg="white"
+                    role="radio" aria-checked="true">
+              <span class="swatch swatch--white"></span>White
+            </button>
+            <button type="button" class="segmented__btn" data-bg="black"
+                    role="radio" aria-checked="false">
+              <span class="swatch swatch--black"></span>Black
+            </button>
+            <button type="button" class="segmented__btn" data-bg="transparent"
+                    role="radio" aria-checked="false">
+              <span class="swatch swatch--checker"></span>Transparent
+            </button>
+          </div>
+        </div>
+
+        <div class="control">
+          <span class="control__label" id="fmtLabel">Format</span>
+          <div class="segmented" role="radiogroup" aria-labelledby="fmtLabel">
+            <button type="button" class="segmented__btn is-active" data-format="png"
+                    role="radio" aria-checked="true">PNG</button>
+            <button type="button" class="segmented__btn" data-format="jpg"
+                    role="radio" aria-checked="false">JPG</button>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button type="button" class="btn btn--primary" id="downloadBtn">Download</button>
+          <button type="button" class="btn btn--ghost" id="resetBtn">New image</button>
+        </div>
+      </div>
+
+      <p class="meta" id="meta"></p>
+    </section>
+
+    <!-- ---------------------------------------------------------------- -->
+    <div id="error" class="notice" role="alert" hidden></div>
+
+    <footer class="footnote">
+      Works best on plain or studio backgrounds. Busy scenes keep more of the
+      original around the subject &mdash; by design, so nothing is cut off the
+      subject itself. Paint on the result to fix anything it got wrong.
+    </footer>
+
+  </div>
+
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

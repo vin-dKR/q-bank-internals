@@ -25,10 +25,11 @@ on its own, from its own directory:
 
 ```
 ingest/
-├── api/   Express + Node backend. Has a main(). Deploys as its own Vercel project (Root Directory: api).
+├── api/     Express + Node backend. Has a main(). Deploys as its own Vercel project (Root Directory: api).
 │   └── contracts/   vendored copy of @ingest/contracts, installed via "file:./contracts".
-└── web/   Vite + React frontend. Deploys as its own Vercel project (Root Directory: web).
-    └── contracts/   vendored copy of @ingest/contracts, installed via "file:./contracts".
+├── web/     Vite + React frontend. Deploys as its own Vercel project (Root Directory: web).
+│   └── contracts/   vendored copy of @ingest/contracts, installed via "file:./contracts".
+└── tools/   Standalone operator tools. Not apps: not deployed, not imported, run by hand.
 ```
 
 **The API boundary is `@ingest/contracts`** — zod schemas + inferred DTO types, the single source of
@@ -41,6 +42,36 @@ into each app**. The rule that replaces "apps → packages":
 - A change to the boundary must be applied to **both** `api/contracts` and `web/contracts` (they are
   copies). Keep them identical.
 - The two apps **never** import from each other. Anything shared crosses only through `@ingest/contracts`.
+
+### `tools/` — standalone operator tools
+
+`api/` and `web/` remain the only **apps**. `tools/` holds programs an operator runs by hand
+against files, not services the product calls. A directory earns a place here only if all four
+hold, and it stays out of `api/` and `web/` because of them:
+
+1. **Nothing imports it.** No app depends on it; deleting it cannot break a build.
+2. **It is not deployed.** No Vercel project points at it. Putting it inside `api/` would drag
+   non-Node files into that project's Root Directory for no reason.
+3. **It is run against files, by a person**, with its own entry point.
+4. **Its language is chosen by the problem, not by the repo.** Where a tool needs a library that
+   only exists well outside Node, it may be written in that language.
+
+Consequences, so this does not become a loophole:
+
+- A tool that grows a caller inside the product stops being a tool. Move it behind
+  `@ingest/contracts` as a real API surface at that point — do not let apps shell out to `tools/`.
+- **Section 2's kebab-case rule binds directory names, not source files whose own language
+  mandates otherwise.** `tools/pdf-bg-remover/` is kebab-case; the Python inside it is
+  `snake_case` because PEP 8 says so, and fighting a language's own convention to satisfy ours
+  produces code no Python reader trusts.
+- Every tool carries a `README.md` saying what it does and how to run it, and pins its
+  dependencies. Sample inputs and generated output are gitignored — this repo does not carry
+  binaries that git history can never release.
+
+**Current tools:** `pdf-bg-remover` — removes the background from a photographed page or object and
+composites it onto white, black, or transparency, with a browser review step and a correction brush.
+Python: the segmentation, guided-filter edge refinement and illumination correction rest on OpenCV
+and NumPy, which have no equivalent in Node.
 
 ---
 

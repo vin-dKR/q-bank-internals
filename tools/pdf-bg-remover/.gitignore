@@ -1,0 +1,9 @@
+# Local virtualenv and Python bytecode.
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Sample inputs and generated output stay out of git.
+samples/
+output/
