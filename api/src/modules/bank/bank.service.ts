@@ -1,4 +1,4 @@
-import type { BankQuestion, UpdateBankImage } from '@ingest/contracts';
+import type { BankQuestion, BankTextResult, UpdateBankImage, UpdateBankText } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { BankQuestionStore } from './bank.repository.js';
 
@@ -16,6 +16,15 @@ export class BankService {
   /** Set/clear the flag on a published question (browse "Flag" toggle), keyed by its bank `_id`. */
   async setFlag(id: string, flagged: boolean): Promise<{ id: string; flagged: boolean }> {
     return { id, flagged: await this.bank.setFlag(id, flagged) };
+  }
+
+  /**
+   * Persist an AI-fixed text field (stem/options/answer) on a published question, keyed by its bank
+   * `_id`. Echoes the applied patch back so the browse card can reconcile its optimistic update.
+   */
+  async setText(id: string, patch: UpdateBankText): Promise<BankTextResult> {
+    await this.bank.setText(id, patch);
+    return { id, ...patch };
   }
 
   /** Re-point the question figure or one option image (identified by ingest `questionId`). */
