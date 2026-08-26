@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
 import { KNOWN_QUESTION_TYPES, matchKeyToAnswer, type MatchData, type Question, type ReExtractedQuestion, type ReExtractSource } from '@ingest/contracts';
-import { Badge, Button, Combobox, IconButton, IconEdit, IconFlag, IconPlus, IconScan, IconSparkle, IconUndo, IconX, Spinner, useToast } from '../../../shared/ui/index.js';
+import { Badge, Button, Combobox, IconButton, IconCheck, IconEdit, IconFlag, IconPlus, IconScan, IconSparkle, IconUndo, IconX, Spinner, useToast } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { MatchTableEditor } from './match-table-editor.js';
 import { questionsApi } from '../api/questions.api.js';
@@ -60,7 +60,51 @@ function splitUrls(value: string | null): string[] {
   return value ? value.split(',').map((u) => u.trim()).filter(Boolean) : [];
 }
 
+/** The uppercase option letters marked correct in an answer string ("AC" / "A,C" / "C" → {A,C}). */
+function correctLabelsFromAnswer(answer: string): Set<string> {
+  return new Set(answer.toUpperCase().match(/[A-Z]/g) ?? []);
+}
+
+/** Serialise correct option letters to the stored multi-correct form: sorted, joined, no separator. */
+function labelsToAnswer(labels: Iterable<string>): string {
+  return [...labels].sort().join('');
+}
+
 const FIELD_LABEL = 'text-[13px] font-medium text-ink-2';
+
+/**
+ * The click-to-mark-correct control on an option in Verify: radio-like for single_correct (round),
+ * checkbox-like for multi_correct (square). The correct state reuses the green answer treatment
+ * (`--color-ok`). A real button — keyboard-operable, focus ring, ≥32px — with an accessible label.
+ */
+function OptionCorrectToggle({
+  label,
+  correct,
+  multi,
+  onToggle,
+}: {
+  label: string;
+  correct: boolean;
+  multi: boolean;
+  onToggle: () => void;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      aria-pressed={correct}
+      aria-label={correct ? `Unmark option ${label} as correct` : `Mark option ${label} as correct`}
+      title={multi ? 'Toggle this option as correct' : 'Mark this option as the correct answer'}
+      onClick={onToggle}
+      className={[
+        'inline-flex h-8 w-8 flex-none items-center justify-center border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40',
+        multi ? 'rounded-md' : 'rounded-full',
+        correct ? 'border-ok bg-ok-soft text-ok' : 'border-line text-ink-3 hover:border-line-strong hover:text-ink-2',
+      ].join(' ')}
+    >
+      {correct ? <IconCheck /> : null}
+    </button>
+  );
+}
 
 /** A tiny ghost icon button for one of a field's AI actions ("Fix LaTeX" or "read the page again"). */
 function AiButton({
@@ -271,6 +315,26 @@ export function EditableQuestionCard({
   const questionTypeOptions = [...new Set([...KNOWN_QUESTION_TYPES, ...(question.questionType ? [question.questionType] : [])])];
   const topicSuggestions = [...new Set([question.path.chapter, ...topicOptions].filter(Boolean))];
 
+  // For single/multi-correct types the operator can click an option to set the correct answer, kept in
+  // sync with the manual answer text: the highlight is derived from `draft.answer` (so typing updates
+  // it), and a click rewrites `draft.answer` in the stored letter format (single: "C"; multi: sorted
+  // joined letters like "AC"). The answer string stays the single source of truth publish reads.
+  const multiCorrect = draft.questionType === 'multi_correct';
+  const optionsSelectable = draft.questionType === 'single_correct' || multiCorrect;
+  const correctLabels = optionsSelectable ? correctLabelsFromAnswer(draft.answer) : new Set<string>();
+  const toggleCorrect = (optionLabel: string): void => {
+    const upper = optionLabel.toUpperCase();
+    if (multiCorrect) {
+      const next = new Set(correctLabels);
+      if (next.has(upper)) next.delete(upper);
+      else next.add(upper);
+      const optionLabels = new Set(draft.options.map((o) => o.label.toUpperCase()));
+      set('answer', labelsToAnswer([...next].filter((letter) => optionLabels.has(letter))));
+    } else {
+      set('answer', upper);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-line bg-surface p-4">
       <div className="flex items-center gap-2.5">
@@ -404,9 +468,19 @@ export function EditableQuestionCard({
                 </Button>
               </div>
             </div>
-            {draft.options.map((option, i) => (
+            {draft.options.map((option, i) => {
+              const correct = optionsSelectable && correctLabels.has(option.label.toUpperCase());
+              return (
               <div key={i} className="flex items-center gap-2">
-                <strong>{option.label}.</strong>
+                {optionsSelectable ? (
+                  <OptionCorrectToggle
+                    label={option.label}
+                    correct={correct}
+                    multi={multiCorrect}
+                    onToggle={() => { toggleCorrect(option.label); }}
+                  />
+                ) : null}
+                <strong className={correct ? 'text-ok' : undefined}>{option.label}.</strong>
                 <div className="flex-1">
                   <EditableLatexValue value={option.body} onChange={(v) => { setOption(i, v); }} placeholder="Click to edit option" />
                 </div>
@@ -434,7 +508,8 @@ export function EditableQuestionCard({
                   onClick={() => { set('options', draft.options.filter((_, j) => j !== i)); }}
                 />
               </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="flex flex-col gap-1.5">
