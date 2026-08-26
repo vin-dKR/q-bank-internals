@@ -14,7 +14,7 @@ import {
   ToolbarSpacer,
 } from '../../../shared/ui/index.js';
 import { ENTER_KEY, MOD_KEY, SHIFT_KEY, combo } from '../../../shared/lib/platform.js';
-import type { PreviewView } from './pdf-previewer.js';
+import { MAX_GRID_COLUMNS, MIN_GRID_COLUMNS, type PreviewView } from './pdf-previewer.js';
 
 type PdfPagesToolbarProps = {
   view: PreviewView;
@@ -23,6 +23,9 @@ type PdfPagesToolbarProps = {
   onZoomIn: () => void;
   onZoomOut: () => void;
   onZoomReset: () => void;
+  /** Grid density — thumbnails per row; the slider drives it (fewer = larger, in grid view only). */
+  gridColumns: number;
+  onGridColumnsChange: (columns: number) => void;
   /** Live count of pending cut lines (undo with ⌘Z, clear with "Reset lines" in the mode bar). */
   cutCount: number;
   cutNoun: string;
@@ -48,6 +51,8 @@ export function PdfPagesToolbar({
   onZoomIn,
   onZoomOut,
   onZoomReset,
+  gridColumns,
+  onGridColumnsChange,
   cutCount,
   cutNoun,
   numPages,
@@ -85,17 +90,32 @@ export function PdfPagesToolbar({
       <ToolbarDivider />
 
       <ToolbarGroup>
-        <IconButton icon={<IconZoomOut />} label="Zoom out" disabled={view === 'grid'} onClick={onZoomOut} />
-        <button
-          type="button"
-          className="btn btn--ghost btn--xs"
-          title="Reset zoom"
-          disabled={view === 'grid'}
-          onClick={onZoomReset}
-        >
-          {zoomPercent}%
-        </button>
-        <IconButton icon={<IconZoomIn />} label="Zoom in" disabled={view === 'grid'} onClick={onZoomIn} />
+        {view === 'grid' ? (
+          <label className="tbar__slider" title="Thumbnails per row — slide right to enlarge (fewer per row)">
+            <IconZoomOut />
+            <input
+              type="range"
+              min={MIN_GRID_COLUMNS}
+              max={MAX_GRID_COLUMNS}
+              step={1}
+              value={MIN_GRID_COLUMNS + MAX_GRID_COLUMNS - gridColumns}
+              aria-label="Thumbnails per row"
+              onChange={(event) => {
+                onGridColumnsChange(MIN_GRID_COLUMNS + MAX_GRID_COLUMNS - Number(event.target.value));
+              }}
+            />
+            <IconZoomIn />
+            <span className="tbar__count">{gridColumns}/row</span>
+          </label>
+        ) : (
+          <>
+            <IconButton icon={<IconZoomOut />} label="Zoom out" onClick={onZoomOut} />
+            <button type="button" className="btn btn--ghost btn--xs" title="Reset zoom" onClick={onZoomReset}>
+              {zoomPercent}%
+            </button>
+            <IconButton icon={<IconZoomIn />} label="Zoom in" onClick={onZoomIn} />
+          </>
+        )}
       </ToolbarGroup>
 
       <ToolbarDivider />
@@ -190,6 +210,7 @@ const SHORTCUTS: Shortcut[] = [
   { keys: ['Esc'], what: 'Clear the selection' },
   { keys: ['Del'], what: 'Delete the selected pages' },
   { keys: ['Drag'], what: 'Drop a page onto a leaf’s Q / A / S' },
+  { keys: ['Right-click'], what: 'Preview a grid page full-screen' },
 ];
 
 /** The full shortcut cheat-sheet shown in the toolbar's help popover. */

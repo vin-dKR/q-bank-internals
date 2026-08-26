@@ -1,4 +1,4 @@
-import { type JSX, useCallback, useEffect, useRef, useState } from 'react';
+import { type CSSProperties, type JSX, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ChapterKind, ChapterTopic, ChapterUploadMetadata } from '@ingest/contracts';
 import {
@@ -12,6 +12,9 @@ import {
   ReflowBlocksPanel,
   StructureTreePanel,
   type ParsedConfig,
+  DEFAULT_GRID_COLUMNS,
+  MAX_GRID_COLUMNS,
+  MIN_GRID_COLUMNS,
   applyGridSplit,
   applyReflow,
   assembleChapterUpload,
@@ -35,6 +38,33 @@ const DEFAULT_WIDTH = 560;
 const MIN_WIDTH = 320;
 const MAX_WIDTH = 1000;
 const ZOOM_STEP = 80;
+
+/** Right-panel width persistence — the operator drags the split to give the topic tree more room. */
+const PANEL_KEY = 'ingest:cutterPanelWidth';
+const DEFAULT_PANEL = 420;
+const MIN_PANEL = 320;
+const MAX_PANEL = 720;
+
+/** Read the persisted panel width, clamped to the allowed range; defaults if storage is unreadable. */
+function readPanelWidth(): number {
+  try {
+    const raw = Number(localStorage.getItem(PANEL_KEY));
+    return Number.isFinite(raw) && raw >= MIN_PANEL && raw <= MAX_PANEL ? raw : DEFAULT_PANEL;
+  } catch {
+    // Storage unavailable (private mode / disabled) — fall back to the default width.
+    return DEFAULT_PANEL;
+  }
+}
+
+/** Persist the panel width; silently no-ops if storage is unavailable. */
+function writePanelWidth(width: number): void {
+  try {
+    localStorage.setItem(PANEL_KEY, String(width));
+  } catch {
+    // Storage unavailable — the choice just won't survive this reload; nothing to recover.
+    return;
+  }
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -61,6 +91,9 @@ export function TreeIngestPage(): JSX.Element {
   const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
   const [anchorPage, setAnchorPage] = useState<number | null>(null);
   const [view, setView] = useState<PreviewView>('list');
+  const [gridColumns, setGridColumns] = useState(DEFAULT_GRID_COLUMNS);
+  const [panelWidth, setPanelWidth] = useState(readPanelWidth);
+  const panelWidthRef = useRef(panelWidth);
   const [bindingSlot, setBindingSlot] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [didUpload, setDidUpload] = useState(false);
@@ -91,6 +124,35 @@ export function TreeIngestPage(): JSX.Element {
     setSelectedPages(new Set());
     setAnchorPage(null);
   }, []);
+
+  const setPanel = useCallback((width: number): void => {
+    const clamped = Math.min(MAX_PANEL, Math.max(MIN_PANEL, width));
+    panelWidthRef.current = clamped;
+    setPanelWidth(clamped);
+  }, []);
+
+  // Drag the split: moving the handle left widens the right panel (the topic tree), shrinking the
+  // preview so long topic names fit. The chosen width persists on release; double-click resets it.
+  const onResizeStart = useCallback((event: ReactMouseEvent): void => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = panelWidthRef.current;
+    const move = (moveEvent: MouseEvent): void => { setPanel(startWidth - (moveEvent.clientX - startX)); };
+    const up = (): void => {
+      writePanelWidth(panelWidthRef.current);
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      document.body.classList.remove('is-col-resizing');
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+    document.body.classList.add('is-col-resizing');
+  }, [setPanel]);
+
+  const resetPanel = useCallback((): void => {
+    setPanel(DEFAULT_PANEL);
+    writePanelWidth(DEFAULT_PANEL);
+  }, [setPanel]);
 
   /** Clear only the working-document scratch — never the tree (that decoupling is the whole point). */
   const resetDoc = useCallback((): void => {
@@ -361,7 +423,7 @@ export function TreeIngestPage(): JSX.Element {
 
   return (
     <section className="workspace">
-      <div className="cutter-layout">
+      <div className="cutter-layout" style={{ '--cutter-panel-w': `${String(panelWidth)}px` } as CSSProperties}>
         <div className="cutter-layout__preview">
           <PdfModeSelector
             mode={cutMode}
@@ -393,6 +455,10 @@ export function TreeIngestPage(): JSX.Element {
             onZoomIn={() => { setPageWidth((w) => Math.min(MAX_WIDTH, w + ZOOM_STEP)); }}
             onZoomOut={() => { setPageWidth((w) => Math.max(MIN_WIDTH, w - ZOOM_STEP)); }}
             onZoomReset={() => { setPageWidth(DEFAULT_WIDTH); }}
+            gridColumns={gridColumns}
+            onGridColumnsChange={(columns) => {
+              setGridColumns(Math.min(MAX_GRID_COLUMNS, Math.max(MIN_GRID_COLUMNS, columns)));
+            }}
             cutCount={pendingCount}
             cutNoun={isReflow ? 'crops' : 'cuts'}
             numPages={numPages}
@@ -419,10 +485,23 @@ export function TreeIngestPage(): JSX.Element {
               taggable={false}
               bindable
               view={view}
+              gridColumns={gridColumns}
               selectedPages={selectedPages}
               onToggleSelect={toggleSelect}
             />
           </div>
+        </div>
+
+        <div
+          className="cutter-layout__resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize the preview and panel"
+          title="Drag to resize · double-click to reset"
+          onMouseDown={onResizeStart}
+          onDoubleClick={resetPanel}
+        >
+          <span className="cutter-layout__grip" aria-hidden />
         </div>
 
         <aside className="cutter-layout__panel stack">

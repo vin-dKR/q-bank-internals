@@ -548,6 +548,19 @@
   .tbar__page input {
     @apply w-16 border-0 bg-transparent px-0 py-1.5 text-[13px] text-ink outline-none placeholder:text-ink-3;
   }
+  /* Grid-density slider: thumbnails per row (fewer = larger), flanked by the zoom glyphs. */
+  .tbar__slider {
+    @apply inline-flex flex-none items-center gap-2 text-ink-3;
+  }
+  .tbar__slider svg {
+    @apply size-4 flex-none;
+  }
+  .tbar__slider input[type='range'] {
+    @apply h-1.5 w-28 cursor-pointer appearance-none rounded-full bg-line accent-brand;
+  }
+  .tbar__slider input[type='range']:focus-visible {
+    @apply outline-none ring-2 ring-brand/25;
+  }
 
   /* Shortcut cheat-sheet inside the toolbar help popover. */
   .shortcuts__title {
@@ -625,6 +638,19 @@
   .modal__panel--sm {
     @apply gap-3;
     width: min(420px, 100%);
+  }
+  /* Full-screen page preview (right-click a grid thumbnail): a header strip + the page, scrollable. */
+  .modal__panel--page {
+    width: min(96vw, 960px);
+  }
+  .modal__head {
+    @apply flex items-center justify-between gap-3;
+  }
+  .modal__head h2 {
+    @apply m-0 text-base font-semibold text-ink;
+  }
+  .page-fullscreen {
+    @apply flex justify-center overflow-auto rounded-lg bg-white p-2;
   }
   .modal__foot {
     @apply mt-1 flex justify-end gap-2;
@@ -745,8 +771,24 @@
      Cutter workspace layout + preview
      ========================================================================== */
   .cutter-layout {
-    @apply grid items-start gap-6;
-    grid-template-columns: minmax(0, 1fr) 420px;
+    @apply grid items-start;
+    /* Preview | drag handle | panel. The panel width is operator-set (var) and persists; the handle
+       column is the gutter, so there is no separate gap to fight with the resize. */
+    grid-template-columns: minmax(320px, 1fr) 14px var(--cutter-panel-w, 420px);
+  }
+  .cutter-layout__resizer {
+    @apply relative flex cursor-col-resize items-stretch justify-center;
+    touch-action: none;
+  }
+  .cutter-layout__grip {
+    @apply my-auto h-10 w-0.5 rounded-full bg-line transition-colors;
+  }
+  .cutter-layout__resizer:hover .cutter-layout__grip,
+  .cutter-layout__resizer:active .cutter-layout__grip {
+    @apply bg-brand;
+  }
+  body.is-col-resizing {
+    @apply cursor-col-resize select-none;
   }
   .cutter-layout__preview {
     @apply sticky flex flex-col overflow-hidden rounded-xl border border-line bg-surface-2 shadow-sm;
@@ -848,7 +890,8 @@
   }
   .previewer__grid {
     @apply grid justify-center gap-3;
-    grid-template-columns: repeat(auto-fill, 152px);
+    /* Column count is the operator's density slider (fewer columns → larger pages). */
+    grid-template-columns: repeat(var(--grid-cols, 5), minmax(0, 1fr));
   }
   .page-thumb {
     @apply relative flex w-full cursor-pointer flex-col gap-1 rounded-md border border-line bg-white p-1 shadow-sm transition-colors;
@@ -1509,6 +1552,9 @@
 @media (max-width: 900px) {
   .cutter-layout {
     grid-template-columns: 1fr;
+  }
+  .cutter-layout__resizer {
+    display: none;
   }
   .cutter-layout__preview {
     position: static;
