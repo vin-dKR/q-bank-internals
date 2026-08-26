@@ -39,6 +39,34 @@ export function useSession(id: string | null): UseQueryResult<Session> {
   });
 }
 
+/** Polls one extraction job's live progress while it is queued/running; stops once terminal. */
+export function useExtractionJob(jobId: string): UseQueryResult<ExtractionJob> {
+  return useQuery({
+    queryKey: ['extraction-job', jobId],
+    queryFn: () => sessionsApi.getJob(jobId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === 'queued' || status === 'running' ? 1500 : false;
+    },
+  });
+}
+
+/** Cancels an in-flight extraction job; refreshes views so the document shows as re-runnable. */
+export function useCancelExtraction(): UseMutationResult<ExtractionJob, Error, string> {
+  const queryClient = useQueryClient();
+  const { error } = useToast();
+  return useMutation({
+    mutationFn: (jobId: string) => sessionsApi.cancelJob(jobId),
+    onSuccess: (job) => {
+      void queryClient.invalidateQueries({ queryKey: ['extraction-job', job.id] });
+      void queryClient.invalidateQueries({ queryKey: ['documents'] });
+      void queryClient.invalidateQueries({ queryKey: ['session'] });
+      void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+    },
+    onError: (err) => { error('Could not cancel extraction', err.message); },
+  });
+}
+
 /** Opens a new session and refreshes the list so it appears immediately. */
 export function useCreateSession(): UseMutationResult<Session, Error, CreateSession> {
   const queryClient = useQueryClient();
@@ -107,7 +135,11 @@ export function useBulkDeleteSessions(): UseMutationResult<{ deleted: number }, 
 }
 
 /** Queues extraction for a whole session, then refreshes views to show progress. */
-export function useRunSessionExtraction(): UseMutationResult<{ enqueued: number }, Error, string> {
+export function useRunSessionExtraction(): UseMutationResult<
+  { enqueued: number; jobIds: string[] },
+  Error,
+  string
+> {
   const queryClient = useQueryClient();
   const { success, error } = useToast();
   return useMutation({

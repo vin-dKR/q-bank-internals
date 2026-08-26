@@ -8,6 +8,8 @@ type JobRow = {
   status: string;
   model: string;
   questionsFound: number;
+  pagesTotal: number;
+  pagesDone: number;
   error: string | null;
   startedAt: Date | null;
   finishedAt: Date | null;
@@ -20,6 +22,8 @@ function toJob(row: JobRow): ExtractionJob {
     status: row.status as ExtractionJob['status'],
     model: row.model,
     questionsFound: row.questionsFound,
+    pagesTotal: row.pagesTotal,
+    pagesDone: row.pagesDone,
     error: row.error,
     startedAt: row.startedAt?.toISOString() ?? null,
     finishedAt: row.finishedAt?.toISOString() ?? null,
@@ -52,6 +56,8 @@ export class PrismaExtractionJobStore implements ExtractionJobStore {
       data: {
         ...(patch.status !== undefined ? { status: patch.status } : {}),
         ...(patch.questionsFound !== undefined ? { questionsFound: patch.questionsFound } : {}),
+        ...(patch.pagesTotal !== undefined ? { pagesTotal: patch.pagesTotal } : {}),
+        ...(patch.pagesDone !== undefined ? { pagesDone: patch.pagesDone } : {}),
         ...(patch.error !== undefined ? { error: patch.error } : {}),
         ...(patch.startedAt !== undefined
           ? { startedAt: patch.startedAt === null ? null : new Date(patch.startedAt) }

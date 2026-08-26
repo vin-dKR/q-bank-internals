@@ -10,6 +10,7 @@ export function createExtractionController(service: ExtractionService): {
   start: RequestHandler;
   startSession: RequestHandler;
   getJob: RequestHandler;
+  cancel: RequestHandler;
 } {
   return {
     start: asyncHandler(async (req, res) => {
@@ -23,6 +24,10 @@ export function createExtractionController(service: ExtractionService): {
 
     getJob: asyncHandler(async (req, res) => {
       ok(res, await service.getJob(requiredParam(req, 'id')));
+    }),
+
+    cancel: asyncHandler(async (req, res) => {
+      ok(res, await service.cancel(requiredParam(req, 'id')));
     }),
   };
 }

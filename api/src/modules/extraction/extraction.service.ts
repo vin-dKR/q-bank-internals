@@ -3,6 +3,7 @@ import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { UsageService } from '../usage/index.js';
 import type { ExtractionJobStore } from './extraction.repository.js';
+import type { ExtractionRunRegistry } from './extraction-run-registry.js';
 import type { JobQueue } from './job-queue.js';
 
 /**
@@ -18,6 +19,7 @@ export class ExtractionService {
     private readonly queue: JobQueue,
     private readonly usage: UsageService,
     private readonly model: string,
+    private readonly runs: ExtractionRunRegistry,
   ) {}
 
   /** Queue extraction for one document. Idempotent-ish: refuses a document already extracting. */
@@ -38,22 +40,45 @@ export class ExtractionService {
    * batch" action. Answer/solution PDFs are pulled in automatically by their question sibling, and
    * already-extracted files are skipped, so this never re-does completed work.
    */
-  async enqueueSession(sessionId: string): Promise<{ enqueued: number }> {
+  async enqueueSession(sessionId: string): Promise<{ enqueued: number; jobIds: string[] }> {
     const documents = await this.documents.listBySession(sessionId);
     const targets = documents.filter(
       (document) =>
         document.kind === 'question' &&
         (document.status === 'uploaded' || document.status === 'failed'),
     );
+    const jobIds: string[] = [];
     for (const document of targets) {
-      await this.enqueue(document.id);
+      const job = await this.enqueue(document.id);
+      jobIds.push(job.id);
     }
-    return { enqueued: targets.length };
+    return { enqueued: targets.length, jobIds };
   }
 
   async getJob(id: string): Promise<ExtractionJob> {
     const job = await this.jobs.findById(id);
-    if (!job) throw errors.documentNotFound(id);
+    if (!job) throw errors.extractionJobNotFound(id);
     return job;
+  }
+
+  /**
+   * Cancel an in-flight extraction: signal the run's AbortController (stops the vision call in this
+   * process), drop the still-queued entry from the queue, mark the job `cancelled`, and return the
+   * document to a re-runnable `failed` state. A no-op on an already-finished job (idempotent).
+   */
+  async cancel(jobId: string): Promise<ExtractionJob> {
+    const job = await this.jobs.findById(jobId);
+    if (!job) throw errors.extractionJobNotFound(jobId);
+    if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled') {
+      return job;
+    }
+    this.runs.abort(jobId, 'cancelled');
+    await this.queue.cancel(jobId);
+    const cancelled = await this.jobs.update(jobId, {
+      status: 'cancelled',
+      finishedAt: new Date().toISOString(),
+    });
+    await this.documents.updateStatus(job.documentId, 'failed');
+    return cancelled;
   }
 }

@@ -12,7 +12,10 @@ import { request } from '../../../shared/api/http-client.js';
 const SessionListSchema = paginated(SessionSchema);
 type SessionList = z.infer<typeof SessionListSchema>;
 
-const EnqueueResultSchema = z.object({ enqueued: z.number().int().nonnegative() });
+const EnqueueResultSchema = z.object({
+  enqueued: z.number().int().nonnegative(),
+  jobIds: z.array(z.string()),
+});
 type EnqueueResult = z.infer<typeof EnqueueResultSchema>;
 
 /** Feature-scoped calls to the sessions + extraction endpoints. The only place this feature hits the network. */
@@ -65,6 +68,19 @@ export const sessionsApi = {
     return request('/extraction', {
       method: 'POST',
       body: { documentId },
+      schema: ExtractionJobSchema,
+    });
+  },
+
+  /** Fetch one extraction job's live progress (drives the status bar). */
+  getJob: (jobId: string): Promise<ExtractionJob> => {
+    return request(`/extraction/jobs/${jobId}`, { schema: ExtractionJobSchema });
+  },
+
+  /** Cancel an in-flight extraction job; the document returns to a re-runnable state. */
+  cancelJob: (jobId: string): Promise<ExtractionJob> => {
+    return request(`/extraction/jobs/${jobId}/cancel`, {
+      method: 'POST',
       schema: ExtractionJobSchema,
     });
   },

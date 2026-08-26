@@ -1,8 +1,11 @@
 import type { ExtractionJob } from '@ingest/contracts';
 
-/** Fields the worker updates on a job as it moves queued → running → succeeded/failed. */
+/** Fields the worker updates on a job as it moves queued → running → succeeded/failed/cancelled. */
 export type ExtractionJobPatch = Partial<
-  Pick<ExtractionJob, 'status' | 'questionsFound' | 'error' | 'startedAt' | 'finishedAt'>
+  Pick<
+    ExtractionJob,
+    'status' | 'questionsFound' | 'pagesTotal' | 'pagesDone' | 'error' | 'startedAt' | 'finishedAt'
+  >
 >;
 
 /** Persistence port for extraction jobs (§3). Implemented in-memory (dev) or Prisma (prod). */

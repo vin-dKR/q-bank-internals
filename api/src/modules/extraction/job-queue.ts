@@ -8,6 +8,12 @@ export type ExtractionJobPayload = { jobId: string; documentId: string };
  */
 export interface JobQueue {
   enqueue(payload: ExtractionJobPayload): Promise<void>;
+  /**
+   * Drop the job for `jobId` from the queue if it is still waiting. Best-effort: a job already being
+   * consumed can only be stopped by the run's AbortController (same-process queues), so a durable
+   * BullMQ worker in another process cannot be aborted here — this only removes the queued entry.
+   */
+  cancel(jobId: string): Promise<void>;
   /** Register the consumer. Called by the worker process (and, for the in-process adapter, the API). */
   process(handler: (payload: ExtractionJobPayload) => Promise<void>): void;
   close(): Promise<void>;

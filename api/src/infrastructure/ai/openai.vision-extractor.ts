@@ -4,6 +4,7 @@ import type {
   AnswerExtraction,
   AnswerSheet,
   ExtractedQuestion,
+  ExtractionProgress,
   PageImage,
   QuestionExtraction,
   VisionExtractor,
@@ -156,13 +157,17 @@ export class OpenAiVisionExtractor implements VisionExtractor {
   async extractQuestions(input: {
     pages: PageImage[];
     document: Document;
+    signal?: AbortSignal;
+    onProgress?: (progress: ExtractionProgress) => Promise<void>;
   }): Promise<QuestionExtraction> {
     const results: ExtractedQuestion[] = [];
     const usage = this.emptyUsage();
+    const pagesTotal = input.pages.length;
+    let pagesDone = 0;
     for (const page of input.pages) {
       // Per page: the topic config can bind different pages to different fixed question types.
       const prompt = questionPrompt(input.document, page.pageNumber);
-      const { content } = await this.call(prompt, page.png, usage);
+      const { content } = await this.call(prompt, page.png, usage, input.signal);
       for (const raw of parseQuestions(content)) {
         results.push({
           questionNumber: toQuestionNumber(raw.question_number),
@@ -177,6 +182,10 @@ export class OpenAiVisionExtractor implements VisionExtractor {
           passage: asStringOrNull(raw.passage),
         });
       }
+      pagesDone += 1;
+      if (input.onProgress) {
+        await input.onProgress({ pagesTotal, pagesDone, questionsFound: results.length });
+      }
     }
     logger.info(
       { documentId: input.document.id, model: this.model, pages: input.pages.length, questions: results.length },
@@ -185,14 +194,18 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     return { questions: results, usage };
   }
 
-  async extractAnswers(input: { pages: PageImage[]; document: Document }): Promise<AnswerExtraction> {
+  async extractAnswers(input: {
+    pages: PageImage[];
+    document: Document;
+    signal?: AbortSignal;
+  }): Promise<AnswerExtraction> {
     const sheets: AnswerExtraction['sheets'] = [];
     const usage = this.emptyUsage();
     for (const page of input.pages) {
       // Per page: the topic config can bind different pages to different fixed question types, so the
       // answer-value format is resolved per page (mirrors extractQuestions).
       const prompt = answerPrompt(input.document, page.pageNumber);
-      const { content } = await this.call(prompt, page.png, usage);
+      const { content } = await this.call(prompt, page.png, usage, input.signal);
       sheets.push(...parseAnswerSheets(content, input.document.sectionName));
     }
     return { sheets, usage };
@@ -201,12 +214,13 @@ export class OpenAiVisionExtractor implements VisionExtractor {
   async extractSolutions(input: {
     pages: PageImage[];
     document: Document;
+    signal?: AbortSignal;
   }): Promise<AnswerExtraction> {
     const sheets: AnswerExtraction['sheets'] = [];
     const usage = this.emptyUsage();
     for (const page of input.pages) {
       const prompt = solutionPrompt(input.document, page.pageNumber);
-      const { content } = await this.call(prompt, page.png, usage);
+      const { content } = await this.call(prompt, page.png, usage, input.signal);
       sheets.push(...parseSolutionSheets(content, input.document.sectionName));
     }
     return { sheets, usage };
@@ -222,29 +236,40 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     };
   }
 
-  /** One vision call. Folds the response's token usage into `usage` (mutated across the page loop). */
-  private async call(prompt: string, png: Buffer, usage: AiTokenUsage): Promise<{ content: string }> {
-    const response = await this.client.chat.completions.create({
-      model: this.model,
-      // `max_completion_tokens` (not `max_tokens`) and default temperature so the same code runs on
-      // gpt-4o and on the newer reasoning models (e.g. gpt-5.4-mini), which reject `max_tokens` and any
-      // non-default temperature — see the sibling diagram detector. Kept generous because a reasoning
-      // model spends part of this budget on hidden reasoning before the question JSON.
-      max_completion_tokens: 16000,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            {
-              type: 'image_url',
-              image_url: { url: `data:image/png;base64,${png.toString('base64')}`, detail: 'high' },
-            },
-          ],
-        },
-      ],
-    });
+  /**
+   * One vision call. Folds the response's token usage into `usage` (mutated across the page loop).
+   * `signal` (when present) aborts the request the instant the run is cancelled or its deadline fires.
+   */
+  private async call(
+    prompt: string,
+    png: Buffer,
+    usage: AiTokenUsage,
+    signal?: AbortSignal,
+  ): Promise<{ content: string }> {
+    const response = await this.client.chat.completions.create(
+      {
+        model: this.model,
+        // `max_completion_tokens` (not `max_tokens`) and default temperature so the same code runs on
+        // gpt-4o and on the newer reasoning models (e.g. gpt-5.4-mini), which reject `max_tokens` and
+        // any non-default temperature — see the sibling diagram detector. Kept generous because a
+        // reasoning model spends part of this budget on hidden reasoning before the question JSON.
+        max_completion_tokens: 16000,
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              {
+                type: 'image_url',
+                image_url: { url: `data:image/png;base64,${png.toString('base64')}`, detail: 'high' },
+              },
+            ],
+          },
+        ],
+      },
+      signal ? { signal } : undefined,
+    );
     usage.promptTokens += response.usage?.prompt_tokens ?? 0;
     usage.completionTokens += response.usage?.completion_tokens ?? 0;
     usage.totalTokens += response.usage?.total_tokens ?? 0;

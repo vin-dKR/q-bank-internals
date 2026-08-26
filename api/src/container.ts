@@ -3,6 +3,7 @@ import { logger } from './shared/logger/logger.js';
 import { DocumentsService, type DocumentRepository } from './modules/documents/index.js';
 import { SessionsService, type SessionRepository } from './modules/sessions/index.js';
 import {
+  ExtractionRunRegistry,
   ExtractionService,
   ExtractionWorker,
   type ExtractionJobStore,
@@ -250,12 +251,15 @@ export function createContainer(): Container {
       ? new MongoCatalogStore(getPrisma())
       : new UnconfiguredCatalogStore();
   const catalogService = new CatalogService(catalogStore);
+  // Shared in-process registry so the cancel action and the worker's deadline signal the same run.
+  const runRegistry = new ExtractionRunRegistry();
   const extractionService = new ExtractionService(
     documents,
     jobs,
     jobQueue,
     usageService,
     env.EXTRACTION_MODEL,
+    runRegistry,
   );
   const extractionWorker = new ExtractionWorker(
     documents,
@@ -265,6 +269,8 @@ export function createContainer(): Container {
     rasterizer,
     extractor,
     usageService,
+    runRegistry,
+    env.EXTRACTION_TIMEOUT_MS,
   );
   const ingestionService = new IngestionService(
     driveService,
