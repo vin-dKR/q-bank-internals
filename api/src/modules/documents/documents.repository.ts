@@ -19,6 +19,13 @@ export type CreateDocumentInput = {
   kind: ChapterKind;
   sectionName: string | null;
   questionType: QuestionType | null;
+  /** Exam + subject the operator picked for this chapter; null when unknown (legacy/register). */
+  exam: string | null;
+  subject: string | null;
+  /** PYQ provenance: whether the chapter is previous-year questions, plus the exam + year asked. */
+  pyq: boolean;
+  pyqExam: string | null;
+  pyqYear: string | null;
   /** Question provenance (pyq / module / textbook); null when the operator left it blank. */
   source: string | null;
   pageRange: PageRange | null;

@@ -1,0 +1,1829 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Excise — see what leaves before it leaves</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2313161D'/%3E%3Crect x='7' y='6' width='11' height='20' rx='1.5' fill='%23fff'/%3E%3Crect x='15' y='4' width='2' height='24' fill='%23FFA524'/%3E%3C/svg%3E">
+<style>
+/* ==========================================================================
+   Excise — a light table for PDFs.
+   Dark chassis, lit paper. Two accents carry meaning, not decoration:
+   amber is what gets cut, cyan is what stays. No webfonts: a tool that
+   promises nothing leaves the machine should not fetch a typeface.
+   ========================================================================== */
+:root{
+  /* chassis — a light table: paper-white surfaces on a cool neutral bench */
+  --ink:#EEF1F5; --ink-2:#FFFFFF; --ink-3:#F4F6F9; --ink-4:#E7EBF1;
+  --line:#D5DBE4; --line-soft:#E6EAF0;
+  /* lit surface — the rendered page itself */
+  --lit:#FFFFFF; --lit-2:#F7F8FA;
+  /* type */
+  --type:#141920; --muted:#4E586A; --dim:#68727F; --faint:#646E7C;
+  /* meaning: amber cuts, cyan keeps.
+     Two tones each. The plain token is text-safe on a light background; the
+     -fill token is the saturated version, only ever used behind dark text. */
+  --cut:#A26100; --cut-fill:#FFA524;
+  --cut-soft:rgba(255,165,36,.18); --cut-line:rgba(162,97,0,.34);
+  --keep:#0B7A91; --keep-fill:#3FC3DF;
+  --keep-soft:rgba(11,122,145,.11); --keep-line:rgba(11,122,145,.30);
+  --bad:#B3261E; --bad-fill:#E4574F; --bad-soft:rgba(179,38,30,.10);
+  /* faces */
+  --disp:"Bahnschrift Condensed","Bahnschrift","DIN Alternate","Arial Narrow",
+         "Segoe UI Variable Display",system-ui,sans-serif;
+  --body:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,"Helvetica Neue",sans-serif;
+  --mono:"Cascadia Mono","Cascadia Code",Consolas,"SF Mono",ui-monospace,monospace;
+  --bar-h:54px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  background:var(--ink); color:var(--type); font-family:var(--body);
+  font-size:13.5px; line-height:1.6; -webkit-font-smoothing:antialiased;
+  overflow-wrap:break-word;
+}
+h1,h2,h3,h4{margin:0; font-weight:600}
+p{margin:0}
+code,kbd,pre,.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
+button,input,select{font:inherit; color:inherit}
+button{cursor:pointer}
+a{color:var(--keep)}
+:focus-visible{outline:2px solid var(--cut); outline-offset:3px; border-radius:2px}
+::selection{background:var(--cut-fill); color:#12151B}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.hidden{display:none !important}
+
+/* ---- shared type devices ------------------------------------------------ */
+.eyebrow{
+  font-family:var(--mono); font-size:10.5px; letter-spacing:.2em; text-transform:uppercase;
+  color:var(--dim); font-weight:400;
+}
+.readout{font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:12px; color:var(--muted)}
+.big{font-family:var(--disp); font-size:26px; line-height:1; letter-spacing:-.01em; font-weight:600}
+
+/* ---- chassis bar -------------------------------------------------------- */
+.stale{
+  background:var(--cut-fill); color:#12151B; padding:9px 22px; font-size:12.5px; font-weight:600;
+  position:sticky; top:0; z-index:60;
+}
+.stale code{background:rgba(20,28,45,.07); padding:1px 6px; border-radius:3px; font-size:11.5px}
+
+.bar{
+  display:flex; align-items:center; gap:22px; min-height:var(--bar-h); padding:0 22px;
+  border-bottom:1px solid var(--line); position:sticky; top:0; z-index:40;
+  background:var(--ink); overflow:hidden;   /* opaque: a translucent sticky bar lets rows bleed through */
+}
+.brand{
+  font-family:var(--disp); font-size:17px; font-weight:700; letter-spacing:.36em;
+  text-transform:uppercase; white-space:nowrap; color:var(--type);
+}
+.brand i{font-style:normal; color:var(--cut)}
+
+/* the three states are real — load, inspect, cut — so numbering them is honest */
+.steps{display:flex; align-items:center; gap:0; min-width:0}
+.steps .st{
+  display:flex; align-items:center; gap:7px; padding:0 13px; white-space:nowrap;
+  font-family:var(--mono); font-size:10.5px; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--faint); transition:color .25s;
+}
+.steps .st::before{
+  content:""; width:5px; height:5px; border-radius:50%; background:var(--faint); transition:.25s;
+}
+.steps .st + .st{border-left:1px solid var(--line-soft)}
+.steps .st.done{color:var(--dim)}
+.steps .st.done::before{background:var(--keep-fill)}
+.steps .st.now{color:var(--cut)}
+.steps .st.now::before{background:var(--cut-fill); box-shadow:0 0 0 3px var(--cut-soft)}
+
+.filemeta{margin-left:auto; text-align:right; line-height:1.3; min-width:0; padding:8px 0}
+.filemeta b,.filemeta span{display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.filemeta b{font-size:12.5px; color:var(--type); font-weight:500}
+.filemeta span{font-family:var(--mono); font-size:11px; color:var(--dim)}
+.iconbtn{
+  background:transparent; border:1px solid var(--line); color:var(--muted); border-radius:4px;
+  width:28px; height:28px; display:grid; place-items:center; font-family:var(--mono); font-size:12px;
+  flex:none;
+}
+.iconbtn:hover{border-color:var(--muted); color:var(--type)}
+
+.wrap{max-width:1560px; margin:0 auto; padding:0 22px 128px}
+
+/* ---- buttons ------------------------------------------------------------ */
+.btn{
+  background:var(--cut-fill); color:#12151B; border:0; border-radius:4px; padding:10px 20px;
+  font-family:var(--disp); font-size:14px; letter-spacing:.1em; text-transform:uppercase;
+  font-weight:700; display:inline-flex; align-items:center; gap:9px; white-space:nowrap;
+  transition:filter .15s, transform .1s;
+}
+.btn:hover:not(:disabled){filter:brightness(1.09)}
+.btn:active:not(:disabled){transform:translateY(1px)}
+.btn:disabled{background:var(--ink-3); color:var(--faint); cursor:not-allowed; filter:none}
+.btn.ghost{background:transparent; color:var(--type); border:1px solid var(--line)}
+.btn.ghost:hover:not(:disabled){border-color:var(--muted); background:var(--ink-2); filter:none}
+.btn.ghost:disabled{background:transparent; border-color:var(--line-soft); color:var(--faint)}
+.btn.sm{padding:7px 13px; font-size:12px; letter-spacing:.08em}
+.lnk{
+  background:none; border:0; padding:0; color:var(--keep); font-family:var(--mono); font-size:11.5px;
+  text-decoration:underline; text-underline-offset:3px; text-decoration-thickness:1px;
+}
+.lnk:hover{color:var(--type)}
+.spin{
+  width:13px; height:13px; border:2px solid rgba(255,255,255,.2); border-top-color:currentColor;
+  border-radius:50%; display:inline-block; animation:spin .7s linear infinite; flex:none;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ==========================================================================
+   1 — LOAD.  Hero teaches the blade before you ever upload a file.
+   ========================================================================== */
+.hero{
+  display:grid; grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr); gap:56px;
+  align-items:center; padding:70px 0 40px; min-height:calc(100vh - var(--bar-h) - 40px);
+}
+@media(max-width:960px){.hero{grid-template-columns:1fr; gap:38px; padding:40px 0; min-height:0}}
+
+.hero h1{
+  font-family:var(--disp); font-size:clamp(46px,7.4vw,86px); line-height:.94;
+  letter-spacing:-.015em; font-weight:700; margin:16px 0 0;
+}
+.hero h1 em{font-style:normal; color:var(--cut)}
+.hero .lede{color:var(--muted); font-size:15px; margin:20px 0 0; max-width:42ch}
+.hero .lede b{color:var(--type); font-weight:500}
+
+.drop{
+  margin-top:30px; padding:26px; border:1.5px dashed var(--line); border-radius:8px;
+  background:var(--ink-2); display:flex; align-items:center; gap:20px; flex-wrap:wrap;
+  transition:border-color .2s, background .2s;
+}
+.drop.hot{border-color:var(--cut); background:var(--ink-3)}
+.drop .dtxt{flex:1 1 190px; min-width:0}
+.drop .dtxt strong{display:block; font-family:var(--disp); font-size:17px; font-weight:600}
+.drop .dtxt span{color:var(--dim); font-size:12.5px}
+.assure{
+  display:flex; gap:8px 20px; flex-wrap:wrap; margin-top:20px;
+  font-family:var(--mono); font-size:11px; color:var(--dim);
+}
+.assure i{font-style:normal; color:var(--keep); margin-right:5px}
+
+/* ---- the specimen: a live, draggable miniature of the whole product ---- */
+.spec{
+  background:var(--ink-2); border:1px solid var(--line); border-radius:10px; padding:14px;
+  box-shadow:0 22px 60px rgba(20,28,45,.10);
+}
+.spec .cap{
+  display:flex; align-items:center; gap:10px; padding:0 4px 12px;
+}
+.spec .cap .eyebrow{margin-right:auto}
+.spec .cap .hintdrag{font-family:var(--mono); font-size:10.5px; color:var(--cut); letter-spacing:.04em}
+
+.sheet{
+  position:relative; background:var(--lit); border-radius:5px; overflow:hidden;
+  aspect-ratio:5/3.4; user-select:none; touch-action:none; cursor:ew-resize;
+}
+.sheet .side{position:absolute; inset:0; padding:30px 34px; color:#14161B; overflow:hidden}
+.sheet .side.dirty{clip-path:inset(0 calc(100% - var(--wipe,52%)) 0 0)}
+.sheet .ghost{
+  position:absolute; left:50%; top:52%; transform:translate(-50%,-50%) rotate(-24deg);
+  font-family:var(--disp); font-size:clamp(38px,6.4vw,74px); font-weight:700; letter-spacing:.14em;
+  color:#C8CCD4; white-space:nowrap; pointer-events:none;
+}
+.sheet .doc{position:relative}
+.sheet .doc .kick{
+  font-family:var(--mono); font-size:9.5px; letter-spacing:.2em; text-transform:uppercase; color:#8A90A0;
+}
+.sheet .doc h4{font-family:var(--disp); font-size:clamp(17px,2.3vw,23px); color:#14161B; margin:7px 0 12px}
+/* text must run past the blade, or the excised side reads as a blank page */
+.sheet .doc p{font-size:clamp(10.5px,1.25vw,12.5px); line-height:1.75; color:#3C4250}
+.sheet .doc .rule{height:1px; background:#DEE2E9; margin:13px 0}
+.blade{
+  position:absolute; top:0; bottom:0; left:var(--wipe,52%); width:1px; background:var(--cut);
+  box-shadow:0 0 14px 1px rgba(255,165,36,.55); pointer-events:none;
+}
+.blade::after{
+  content:""; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  width:26px; height:26px; border-radius:50%; background:var(--cut-fill);
+  box-shadow:0 2px 10px rgba(20,28,45,.10);
+}
+.blade::before{
+  content:"‹ ›"; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  z-index:2; font-family:var(--mono); font-size:12px; font-weight:700; color:#12151B; letter-spacing:-1px;
+}
+.tab{
+  position:absolute; top:11px; font-family:var(--mono); font-size:9.5px; letter-spacing:.18em;
+  text-transform:uppercase; padding:3px 8px; border-radius:3px; pointer-events:none;
+}
+.tab.l{left:11px; background:rgba(20,22,27,.08); color:#6E7686}
+.tab.r{right:11px; background:var(--cut-soft); color:#B26F00}
+
+/* ---- analysing ---------------------------------------------------------- */
+#stage-loading{min-height:calc(100vh - var(--bar-h) - 60px); display:grid; align-content:center}
+.loading{max-width:560px; margin:0 auto; width:100%; text-align:left}
+.loading .fn{font-family:var(--disp); font-size:23px; margin-bottom:4px; word-break:break-all}
+.loading .sub{color:var(--dim); font-family:var(--mono); font-size:11.5px}
+.track{height:3px; background:var(--ink-3); border-radius:2px; overflow:hidden; margin:24px 0 14px}
+.track i{display:block; height:100%; background:var(--cut-fill); width:0; transition:width .2s}
+.track.idle i{width:34%; animation:slide 1.5s ease-in-out infinite}
+@keyframes slide{0%{margin-left:-34%}100%{margin-left:100%}}
+.phases{display:grid; gap:9px; margin-top:6px}
+.phase{display:flex; align-items:center; gap:11px; font-size:12.5px; color:var(--faint)}
+.phase b{
+  font-family:var(--mono); font-size:10px; width:15px; height:15px; border-radius:50%; flex:none;
+  border:1px solid var(--line); display:grid; place-items:center; font-weight:400; color:var(--faint);
+}
+.phase.done{color:var(--dim)} .phase.done b{border-color:var(--keep); color:var(--keep)}
+.phase.now{color:var(--type)} .phase.now b{border-color:var(--cut); color:var(--cut)}
+.phase .el{margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--faint)}
+
+/* ==========================================================================
+   2 — INSPECT
+   ========================================================================== */
+.cols{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:30px;
+  align-items:start; padding-top:26px}
+@media(max-width:1180px){.cols{grid-template-columns:1fr; gap:26px}}
+
+.sechead{
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  padding-bottom:11px; border-bottom:1px solid var(--line); margin-bottom:18px;
+}
+.sechead h2{font-family:var(--disp); font-size:14px; letter-spacing:.2em; text-transform:uppercase}
+.sechead .readout{margin-left:auto}
+
+/* ---- candidate card ----------------------------------------------------- */
+.card{
+  background:var(--ink-2); border:1px solid var(--line); border-radius:7px; margin-bottom:12px;
+  overflow:hidden; animation:rise .3s cubic-bezier(.2,.7,.3,1) backwards;
+  transition:border-color .18s, background .18s;
+}
+@keyframes rise{from{opacity:0; transform:translateY(8px)}}
+.card:hover{border-color:var(--ink-4)}
+.card.on{border-color:var(--cut-line); background:var(--ink-2);
+  box-shadow:0 0 0 1px var(--cut-line), 0 2px 10px rgba(20,28,45,.07)}
+.card.dup{opacity:.66} .card.dup.on{opacity:1}
+
+.chead{display:flex; gap:13px; padding:14px 16px; align-items:flex-start}
+.tick{
+  appearance:none; width:19px; height:19px; flex:none; margin:2px 0 0;
+  border:1.5px solid var(--dim); border-radius:4px; background:transparent; position:relative;
+  transition:.14s;
+}
+.tick:hover{border-color:var(--muted)}
+.tick:checked{background:var(--cut-fill); border-color:var(--cut-fill)}
+.tick:checked::after{
+  content:""; position:absolute; left:6px; top:2px; width:5px; height:10px;
+  border:solid #12151B; border-width:0 2px 2px 0; transform:rotate(42deg);
+}
+.cmain{flex:1 1 auto; min-width:0}
+.ctitle{
+  font-family:var(--disp); font-size:17px; font-weight:600; cursor:pointer;
+  display:block; line-height:1.3;
+}
+.chips{display:flex; gap:6px; flex-wrap:wrap; margin-top:7px}
+.chip{
+  font-family:var(--mono); font-size:9.5px; letter-spacing:.14em; text-transform:uppercase;
+  padding:3px 7px; border-radius:3px; border:1px solid transparent;
+}
+.chip.declared{background:var(--keep-soft); color:var(--keep); border-color:var(--keep-line)}
+.chip.inferred{background:var(--cut-soft); color:var(--cut); border-color:var(--cut-line)}
+.chip.picked{background:rgba(255,255,255,.07); color:var(--type); border-color:var(--line)}
+.chip.dupe{color:var(--dim); border-color:var(--line)}
+.plain{color:var(--muted); font-size:13px; margin-top:8px}
+.why{color:var(--dim); font-size:12px; margin-top:7px; max-width:64ch}
+.why .ev{
+  font-family:var(--mono); font-size:9.5px; letter-spacing:.15em; text-transform:uppercase;
+  color:var(--faint); margin-right:8px;
+}
+.card.inferred-c .why{color:var(--cut); opacity:.85}
+
+/* the mark itself, in the header -- a card should answer "remove what?" before
+   anyone opens the evidence. This is the what-leaves crop: the deleted pixels
+   alone, on white, so what you see is exactly what goes. */
+.cthumb{
+  flex:none; width:154px; margin:3px 0 0; padding:0; cursor:pointer; position:relative;
+  border:1px solid var(--cut-line); border-radius:4px; overflow:hidden; background:#fff;
+  transition:box-shadow .14s, border-color .14s;
+}
+.cthumb:hover{border-color:var(--cut); box-shadow:0 0 0 3px var(--cut-soft)}
+.cthumb img{display:block; width:100%; height:98px; object-fit:contain; object-position:center}
+/* the label sits below the crop, never over it -- covering the mark would defeat
+   the point of showing it */
+.cthumb figcaption{
+  background:var(--cut-fill); color:#12151B;
+  font-family:var(--mono); font-size:8.5px; letter-spacing:.15em; text-transform:uppercase;
+  padding:3px 0; text-align:center; font-weight:600;
+}
+.cthumb.flat{background:var(--ink-3); border-style:dashed; border-color:var(--line); cursor:default}
+.cthumb.flat span{
+  display:flex; align-items:center; justify-content:center; height:98px; padding:0 10px;
+  font-family:var(--mono); font-size:10px; line-height:1.5; color:var(--dim); text-align:center;
+}
+@media(max-width:760px){.cthumb{display:none}}
+
+.cstat{margin-left:auto; text-align:right; flex:none; padding-left:8px}
+.cstat b{display:block; font-family:var(--disp); font-size:21px; font-weight:600; line-height:1.1}
+.cstat span{font-family:var(--mono); font-size:10px; letter-spacing:.13em; text-transform:uppercase; color:var(--dim)}
+.cstat em{display:block; font-style:normal; font-family:var(--mono); font-size:11px; color:var(--cut); margin-top:4px}
+
+.evtoggle{
+  width:100%; background:var(--ink-3); border:0; border-top:1px solid var(--line);
+  padding:8px 16px; text-align:left; font-family:var(--mono); font-size:10.5px;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--muted);
+  display:flex; align-items:center; gap:9px;
+}
+.evtoggle:hover{color:var(--type)}
+.evtoggle .caret{margin-left:auto; transition:transform .2s}
+.evtoggle[aria-expanded="true"] .caret{transform:rotate(180deg)}
+
+.exhibit{display:grid; grid-template-columns:1fr 1fr 1fr; gap:1px; background:var(--line)}
+@media(max-width:520px){.exhibit{grid-template-columns:1fr}}
+.ex{background:var(--ink-2); padding:11px}
+.ex h4{
+  font-family:var(--mono); font-size:9.5px; letter-spacing:.15em; text-transform:uppercase;
+  color:var(--dim); margin:0 0 8px; font-weight:400;
+}
+.ex.leaves h4{color:var(--cut)}
+.ex figure{
+  margin:0; background:var(--lit); border-radius:4px; overflow:hidden; display:flex;
+  align-items:center; justify-content:center; min-height:74px; max-height:230px;
+}
+.ex.leaves figure{box-shadow:inset 0 0 0 1px var(--cut-line)}
+.ex img{display:block; max-width:100%; max-height:230px; height:auto; object-fit:contain}
+.nochange{padding:13px 16px; border-top:1px solid var(--line); color:var(--dim); font-size:12.5px}
+pre.snip{
+  margin:0; border-top:1px solid var(--line); background:var(--ink-3); color:#33405A;
+  font-size:11px; line-height:1.65; padding:12px 16px; overflow-x:auto; white-space:pre;
+}
+pre.snip .op{color:var(--cut)}
+
+/* ---- bulk selection ----------------------------------------------------- */
+.bulk{display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:14px}
+.bulk .sp{margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--faint)}
+
+/* ---- notes / empty states ---------------------------------------------- */
+.note{
+  background:var(--ink-2); border:1px solid var(--line); border-left:3px solid var(--keep);
+  padding:16px 18px; border-radius:6px; margin-top:16px;
+}
+.note h3{font-family:var(--disp); font-size:16px; margin-bottom:6px}
+.note p{color:var(--muted); max-width:70ch}
+.note.warn{border-left-color:var(--cut)}
+.note.err{border-left-color:var(--bad)} .note.err h3{color:var(--bad)}
+.note .act{margin-top:13px}
+
+/* ==========================================================================
+   PAGE PROOF — the signature. Drag the blade; the watermark wipes off.
+   ========================================================================== */
+.panel{position:sticky; top:calc(var(--bar-h) + 14px)}
+@media(max-width:1180px){.panel{position:static}}
+.stage{background:var(--ink-2); border:1px solid var(--line); border-radius:8px; padding:12px}
+.stagetop{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:11px}
+
+.seg{display:flex; gap:2px; background:var(--ink); border:1px solid var(--line-soft);
+  border-radius:5px; padding:2px}
+.seg button{
+  background:transparent; border:0; color:var(--muted); padding:5px 12px; border-radius:3px;
+  font-family:var(--mono); font-size:10.5px; letter-spacing:.12em; text-transform:uppercase;
+}
+.seg button:hover{color:var(--type)}
+.seg button[aria-pressed="true"]{background:var(--ink-4); color:var(--type)}
+.seg .zval{font-family:var(--mono); font-size:11px; color:var(--muted); padding:5px 2px;
+  min-width:4.6ch; text-align:center}
+
+.pager{display:flex; align-items:center; gap:7px; margin-left:auto}
+.pager button{
+  background:var(--ink-3); border:1px solid var(--line); color:var(--type); border-radius:4px;
+  padding:4px 10px; font-family:var(--mono); font-size:12px;
+}
+.pager button:hover:not(:disabled){border-color:var(--muted)}
+.pager button:disabled{color:var(--faint); cursor:not-allowed}
+.pager input{
+  width:62px; background:var(--ink); border:1px solid var(--line); border-radius:4px;
+  font-family:var(--mono); font-size:12px; padding:4px 8px; text-align:center;
+}
+.pager .of{font-family:var(--mono); font-size:11.5px; color:var(--dim); white-space:nowrap}
+
+.viewport{
+  background:var(--lit-2); border-radius:5px; min-height:330px; max-height:min(74vh,860px);
+  overflow:auto; display:flex; align-items:flex-start; justify-content:center;
+  position:relative; scrollbar-width:thin;
+}
+.viewport.empty{align-items:center; min-height:330px}
+.plate{position:relative; width:calc(100% * var(--z,1)); flex:none; user-select:none; touch-action:pan-y}
+.plate img{display:block; width:100%; height:auto; animation:fade .2s ease}
+@keyframes fade{from{opacity:.4}}
+.plate .lay{position:absolute; inset:0; width:100%; height:100%}
+.plate .lay.b4{clip-path:inset(0 calc(100% - var(--wipe,50%)) 0 0)}
+/* on white paper a 1px hairline vanishes — widen it and give the knob a target */
+.plate.wipe .blade{
+  display:block; cursor:ew-resize; pointer-events:auto; width:2px; margin-left:-1px;
+  box-shadow:0 0 0 1px rgba(20,28,45,.07), 0 0 16px 2px rgba(255,165,36,.5);
+}
+.plate.wipe .blade::after{width:30px; height:30px; box-shadow:0 2px 12px rgba(0,0,0,.5)}
+.plate.wipe .blade::before{font-size:13px}
+.plate .blade{display:none}
+.plate.pickable img{cursor:crosshair}
+.plate .tab{z-index:3}
+.plate.solo .tab, .plate.solo .blade{display:none}
+
+.proofbar{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px;
+  font-size:12.5px; color:var(--dim);
+}
+.proofbar .delta{margin-left:auto; font-family:var(--mono); font-size:11.5px; color:var(--cut); white-space:nowrap}
+.proofbar kbd{
+  background:var(--ink-3); border:1px solid var(--line); border-bottom-width:2px; border-radius:3px;
+  padding:0 5px; font-size:10.5px; color:var(--muted);
+}
+.pointcue{
+  display:flex; align-items:center; gap:9px; margin-top:10px; padding:9px 12px;
+  border:1px dashed var(--line); border-radius:6px; font-size:12.5px; color:var(--muted);
+}
+.pointcue b{color:var(--type); font-weight:500}
+.pointcue.live{border-color:var(--cut-line); background:var(--cut-soft); color:var(--type)}
+
+/* ---- tone reading ------------------------------------------------------- */
+.tone{background:var(--ink-2); border:1px solid var(--line); border-radius:7px; padding:15px 17px 17px; margin-top:14px}
+.tonehead{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:14px}
+.tonehead h3{font-family:var(--disp); font-size:16px}
+.tonehead span{font-family:var(--mono); font-size:11px; color:var(--muted)}
+.ramp{position:relative; height:24px; border-radius:3px; margin:28px 0 36px; background:var(--ink)}
+.ramp .band{position:absolute; top:0; height:24px; border-right:1px solid var(--ink)}
+.ramp .pin{position:absolute; top:-8px; width:2px; height:40px; background:var(--muted)}
+.ramp .pin span{position:absolute; top:-16px; left:50%; transform:translateX(-50%);
+  font-family:var(--mono); font-size:10px; white-space:nowrap; color:var(--muted)}
+.ramp .pin.wm{background:var(--cut)} .ramp .pin.wm span{color:var(--cut)}
+.ramp .pin.ct{background:var(--keep)} .ramp .pin.ct span{color:var(--keep)}
+.ramp .pin.wp{background:var(--type); height:48px; top:-12px}
+.ramp .pin.wp span{top:auto; bottom:-15px; color:var(--type)}
+.tonevals{display:flex; gap:28px; flex-wrap:wrap; margin:0 0 13px}
+.tonevals dt{font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--dim)}
+.tonevals dd{margin:3px 0 0; font-family:var(--mono); font-size:14px}
+.tonevals dd.sub{font-size:11px; color:var(--dim)}
+.tone .warn{color:var(--cut); font-size:12.5px; margin:0 0 13px; max-width:70ch}
+.tone .ok{color:var(--muted); font-size:12.5px; margin:0 0 13px; max-width:70ch}
+
+/* ---- pixel sliders ------------------------------------------------------ */
+.sliders{background:var(--ink-2); border:1px solid var(--line); border-radius:7px; padding:4px 17px 14px; margin-top:14px}
+.sl{display:grid; grid-template-columns:1fr auto; gap:3px 14px; align-items:center;
+  padding:11px 0; border-bottom:1px solid var(--line-soft)}
+.sl:last-child{border-bottom:0}
+.sl label{font-family:var(--disp); font-size:15px}
+.sl output{font-family:var(--mono); font-size:14px; color:var(--cut); text-align:right; min-width:3.5ch}
+.sl p{grid-column:1/-1; margin:0; font-size:12px; color:var(--dim); max-width:64ch}
+.sl input[type=range]{grid-column:1/-1; width:100%; accent-color:var(--cut); background:transparent; margin:3px 0 0}
+
+/* ==========================================================================
+   EVERY PAGE
+   ========================================================================== */
+/* the sweep now lives inside the sticky panel: its grid scrolls within the
+   panel so the toolbar and the tabs stay put */
+.pviews button{font-size:10.5px}
+.topgo{margin-left:auto; padding:7px 14px; font-size:11px; white-space:nowrap}
+/* Visibility of the two primary buttons is decided in syncActions(), not here:
+   the choice depends on state (cut yet or not) as well as width. */
+
+/* what was cut, on demand — a small mark rather than a card holding the page open.
+   The popover hangs off the header row, so it must anchor to that row and not to
+   the whole panel, whose bottom is far below the fold. */
+.panel .sechead{position:relative}
+.ibtn{
+  margin-left:auto; width:24px; height:24px; flex:none; border-radius:50%;
+  border:1px solid var(--keep); background:transparent; color:var(--keep);
+  font-family:var(--disp); font-size:13px; font-weight:700; line-height:1;
+  display:grid; place-items:center;
+}
+.ibtn:hover, .ibtn[aria-expanded="true"]{background:var(--keep-fill); color:#0C1416}
+.infopop{
+  position:absolute; right:0; top:calc(100% - 4px); z-index:15; width:min(430px, 92vw);
+  background:var(--ink-2); border:1px solid var(--keep-line); border-radius:8px;
+  padding:16px 18px; box-shadow:0 18px 40px rgba(20,28,45,.10);
+}
+.infopop h4{font-family:var(--disp); font-size:15px; margin:0 0 12px}
+.infopop dl{display:grid; grid-template-columns:1fr 1fr; gap:11px 20px; margin:0}
+.infopop dt{
+  font-family:var(--mono); font-size:9.5px; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--faint);
+}
+.infopop dd{margin:2px 0 0; font-family:var(--mono); font-size:13px}
+/* amber is the colour of cutting; a file that is already cut is finished, not
+   pending, so the finished state moves to the keep colour in both places */
+.btn.ready{background:var(--keep-fill); color:#0C1416}
+.topgo:disabled{background:var(--ink-3); color:var(--faint); cursor:not-allowed}
+.sechead .readout{margin-left:14px}
+.sweeplede{color:var(--dim); font-size:12.5px; margin:0 0 12px}
+.gridscroll{max-height:calc(100vh - var(--bar-h) - 250px); overflow-y:auto; overscroll-behavior:contain;
+  padding-right:4px; margin-right:-4px}
+.gridscroll::-webkit-scrollbar{width:9px}
+.gridscroll::-webkit-scrollbar-thumb{background:var(--line); border-radius:5px}
+@media(max-width:1180px){.gridscroll{max-height:none; overflow:visible}}
+.sweepbar{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px}
+.sweepbar .prog{font-family:var(--mono); font-size:11.5px; color:var(--dim); margin-left:auto}
+.chk{
+  font-family:var(--mono); font-size:11.5px; color:var(--muted); display:flex; align-items:center;
+  gap:8px; cursor:pointer; user-select:none;
+}
+.chk input{
+  appearance:none; width:16px; height:16px; border:1.5px solid var(--dim); border-radius:3px;
+  cursor:pointer; position:relative; flex:none;
+}
+.chk input:checked{background:var(--cut-fill); border-color:var(--cut-fill)}
+.chk input:checked::after{
+  content:""; position:absolute; left:4.5px; top:1px; width:4px; height:8px;
+  border:solid #12151B; border-width:0 2px 2px 0; transform:rotate(42deg);
+}
+.legend{display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:13px;
+  font-family:var(--mono); font-size:11px; color:var(--dim)}
+.legend i{display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:6px;
+  vertical-align:-1px; border:1px solid}
+.legend .l-ok i{border-color:var(--line); background:var(--ink-3)}
+.legend .l-odd i{border-color:var(--cut); background:var(--cut-soft)}
+.legend .l-zero i{border-color:var(--keep); background:var(--keep-soft)}
+.legend .sp{margin-left:auto}
+
+.grid{--cardw:150px; display:grid; grid-template-columns:repeat(auto-fill,minmax(var(--cardw),1fr)); gap:12px}
+.cell{
+  position:relative; background:var(--ink-2); border:1px solid var(--line); border-radius:6px;
+  padding:7px; text-align:center; animation:rise .18s backwards;
+}
+.cell:hover{border-color:var(--muted)}
+.cell.odd{border-color:var(--cut-line)}
+.cell.zero{border-color:var(--keep-line)}
+.cell.here{outline:2px solid var(--type); outline-offset:1px}
+.cell.out{opacity:.35}
+.cell figure{margin:0; background:#fff; border-radius:3px; overflow:hidden; cursor:zoom-in;
+  box-shadow:0 1px 5px rgba(0,0,0,.4)}
+.cell img{display:block; width:100%; height:auto}
+.cell .meta{display:flex; align-items:baseline; gap:8px; justify-content:center; margin-top:6px}
+.cell b{font-family:var(--mono); font-size:11px; color:var(--type); font-weight:500}
+.cell i{font-family:var(--mono); font-size:10.5px; font-style:normal; color:var(--dim)}
+.cell.odd i{color:var(--cut)} .cell.zero i{color:var(--keep)}
+.cell .pk{
+  position:absolute; top:12px; left:12px; z-index:2; appearance:none; width:18px; height:18px;
+  border:1.5px solid var(--muted); border-radius:4px; background:rgba(19,22,29,.86); cursor:pointer;
+}
+.cell .pk:checked{background:var(--cut-fill); border-color:var(--cut-fill)}
+.cell .pk:checked::after{
+  content:""; position:absolute; left:5px; top:1.5px; width:4px; height:8px;
+  border:solid #12151B; border-width:0 2px 2px 0; transform:rotate(42deg);
+}
+.grid.list{display:block}
+.grid.list .cell{display:grid; grid-template-columns:30px 50px 1fr auto; align-items:center; gap:14px;
+  text-align:left; padding:7px 11px; margin-bottom:5px}
+.grid.list .cell .pk{position:static}
+.grid.list .cell figure{width:50px}
+.grid.list .cell .meta{margin:0; justify-content:flex-start; gap:14px}
+.grid.list .cell .tagtxt{font-family:var(--mono); font-size:11px; color:var(--dim)}
+.sweephint{font-size:12.5px; color:var(--dim); margin-top:14px; max-width:80ch}
+.sweephint b{color:var(--cut); font-weight:500}
+.sweephint u{color:var(--keep); text-decoration:none}
+
+/* ==========================================================================
+   3 — CUT
+   ========================================================================== */
+.dock{
+  position:fixed; left:0; right:0; bottom:0; z-index:35; background:var(--ink-2);
+  border-top:1px solid var(--line); box-shadow:0 -10px 30px rgba(0,0,0,.4); padding:11px 22px;
+  display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+}
+.dock .plan{min-width:0; flex:1 1 260px}
+.dock .plan b{font-family:var(--disp); font-size:16px; font-weight:600}
+.dock .plan span{display:block; font-family:var(--mono); font-size:11px; color:var(--dim);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.dock .right{margin-left:auto; display:flex; align-items:center; gap:10px}
+
+/* NB: not ".done" — that is a state class on the stepper and the loading phases */
+.outcome{
+  margin-top:26px; background:var(--ink-2); border:1px solid var(--cut-line);
+  border-radius:8px; padding:22px; display:flex; gap:26px; flex-wrap:wrap; align-items:center;
+  animation:rise .3s backwards;
+}
+.outcome .info{flex:1 1 340px; min-width:0}
+.outcome h3{font-family:var(--disp); font-size:23px; line-height:1.15}
+.outcome dl{display:flex; gap:24px; margin:14px 0 0; flex-wrap:wrap}
+.outcome dt{font-family:var(--mono); font-size:10px; letter-spacing:.13em; text-transform:uppercase; color:var(--dim)}
+.outcome dd{margin:3px 0 0; font-family:var(--mono); font-size:14px}
+.outcome .dl{flex:0 0 auto; text-decoration:none; font-size:15px; padding:14px 24px}
+.outcome .dlcue{flex:0 0 auto; color:var(--dim); font-size:12.5px; margin:0; max-width:22ch}
+.outcome .dlcue b{color:var(--keep)}
+
+/* ---- toasts ------------------------------------------------------------- */
+#toasts{position:fixed; right:18px; bottom:78px; z-index:50; display:grid; gap:8px; max-width:min(380px,86vw)}
+.toast{
+  background:var(--ink-3); border:1px solid var(--line); border-left:3px solid var(--keep);
+  border-radius:6px; padding:11px 14px; font-size:12.5px; box-shadow:0 10px 30px rgba(0,0,0,.5);
+  animation:toastin .22s cubic-bezier(.2,.7,.3,1);
+}
+.toast.warn{border-left-color:var(--cut)} .toast.err{border-left-color:var(--bad)}
+.toast.out{opacity:0; transform:translateX(12px); transition:.25s}
+@keyframes toastin{from{opacity:0; transform:translateX(16px)}}
+
+/* ---- shortcuts sheet ---------------------------------------------------- */
+.veil{position:fixed; inset:0; z-index:70; background:rgba(10,12,16,.72); backdrop-filter:blur(4px);
+  display:grid; place-items:center; padding:22px}
+.keys{background:var(--ink-2); border:1px solid var(--line); border-radius:10px; padding:24px;
+  width:min(430px,100%); box-shadow:0 24px 70px rgba(0,0,0,.6)}
+.keys h3{font-family:var(--disp); font-size:18px; margin-bottom:16px}
+.keys dl{display:grid; grid-template-columns:auto 1fr; gap:11px 18px; margin:0; align-items:center}
+.keys dt{text-align:right}
+.keys dd{margin:0; color:var(--muted); font-size:12.5px}
+.keys kbd{
+  background:var(--ink-3); border:1px solid var(--line); border-bottom-width:2px; border-radius:4px;
+  padding:2px 7px; font-size:11px; color:var(--type);
+}
+/* full-window drop veil */
+.dropveil{position:fixed; inset:0; z-index:80; background:rgba(19,22,29,.9); display:grid;
+  place-items:center; pointer-events:none}
+.dropveil .box{border:2px dashed var(--cut); border-radius:14px; padding:52px 74px; text-align:center}
+.dropveil .box strong{font-family:var(--disp); font-size:32px; display:block}
+.dropveil .box span{color:var(--muted); font-family:var(--mono); font-size:12px}
+
+@media(prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+@media(max-width:760px){
+  .bar{gap:12px; padding:0 14px} .steps{display:none} .wrap{padding:0 14px 150px}
+  .filemeta b{max-width:22ch} .filemeta span{display:none}
+  .dock{padding:10px 14px} .dock .right{width:100%} .dock .right .btn{flex:1}
+  .stagetop{gap:8px} .pager{margin-left:0}
+  #toasts{right:10px; left:10px; bottom:120px; max-width:none}
+}
+</style>
+</head>
+<body>
+
+<div class="stale hidden" id="stale" role="alert"></div>
+
+<header class="bar">
+  <span class="brand">Ex<i>·</i>cise</span>
+  <nav class="steps" id="steps" aria-label="Progress">
+    <span class="st now" data-step="load">Load</span>
+    <span class="st" data-step="inspect">Inspect</span>
+    <span class="st" data-step="cut">Cut</span>
+  </nav>
+  <div class="filemeta" id="filemeta"></div>
+  <button class="iconbtn" id="helpbtn" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+</header>
+
+<div class="wrap">
+
+  <!-- ===================== 1 — LOAD ===================== -->
+  <section id="stage-load">
+    <div class="hero">
+      <div>
+        <p class="eyebrow">Watermark removal, on this machine only</p>
+        <h1>See what leaves<br>before it <em>leaves</em>.</h1>
+        <p class="lede">Excise finds every watermark object in a PDF and shows you
+          <b>the exact pixels it would delete</b> — before it deletes anything. You confirm.
+          Text, selection and search survive intact.</p>
+
+        <div class="drop" id="drop">
+          <div class="dtxt">
+            <strong>Drop a PDF here</strong>
+            <span>or choose one — up to 300 MB</span>
+          </div>
+          <button class="btn" id="pick">Choose file</button>
+          <input type="file" id="file" accept="application/pdf,.pdf" hidden>
+        </div>
+
+        <div class="assure">
+          <span><i>●</i>Never uploaded anywhere</span>
+          <span><i>●</i>Deleted after 6 hours</span>
+          <span><i>●</i>Original file untouched</span>
+        </div>
+      </div>
+
+      <!-- the specimen is a working miniature of the tool: drag it -->
+      <div class="spec">
+        <div class="cap">
+          <span class="eyebrow">Try it — no file needed</span>
+          <span class="hintdrag">drag the blade →</span>
+        </div>
+        <div class="sheet" id="specsheet" style="--wipe:92%">
+          <div class="side clean">
+            <div class="doc">
+              <p class="kick">Staff Selection Commission</p>
+              <h4>Question 14</h4>
+              <p>A train 180 m long crosses a platform in 21 seconds and passes a standing
+                 observer in 9 seconds. Find the length of the platform, and state the speed
+                 of the train in kilometres per hour.</p>
+              <div class="rule"></div>
+              <p>Marks: 2 · Negative marking applies. Answers must be entered on the response
+                 sheet in blue or black ballpoint pen only. Rough work is to be done in the
+                 space provided at the end of this booklet.</p>
+            </div>
+          </div>
+          <div class="side dirty">
+            <div class="ghost" aria-hidden="true">SPECIMEN</div>
+            <div class="doc">
+              <p class="kick">Staff Selection Commission</p>
+              <h4>Question 14</h4>
+              <p>A train 180 m long crosses a platform in 21 seconds and passes a standing
+                 observer in 9 seconds. Find the length of the platform, and state the speed
+                 of the train in kilometres per hour.</p>
+              <div class="rule"></div>
+              <p>Marks: 2 · Negative marking applies. Answers must be entered on the response
+                 sheet in blue or black ballpoint pen only. Rough work is to be done in the
+                 space provided at the end of this booklet.</p>
+            </div>
+          </div>
+          <span class="tab l">Original</span>
+          <span class="tab r">Excised</span>
+          <div class="blade"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== ANALYSING ===================== -->
+  <section id="stage-loading" class="hidden">
+    <div class="loading">
+      <p class="eyebrow">Reading</p>
+      <div class="fn" id="ld-name">—</div>
+      <div class="sub" id="ld-size"></div>
+      <div class="track" id="ld-track"><i id="ld-fill"></i></div>
+      <div class="phases" id="ld-phases">
+        <div class="phase" data-p="0"><b>1</b>Handing the file to the local server<span class="el" id="ld-e0"></span></div>
+        <div class="phase" data-p="1"><b>2</b>Reading the page structure<span class="el" id="ld-e1"></span></div>
+        <div class="phase" data-p="2"><b>3</b>Testing each candidate and rendering the proof<span class="el" id="ld-e2"></span></div>
+      </div>
+      <div class="note warn hidden" id="ld-err">
+        <h3>That file could not be read</h3>
+        <p id="ld-errmsg"></p>
+        <div class="act"><button class="btn ghost sm" id="ld-retry">Choose another file</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== 2 — INSPECT ===================== -->
+  <section id="stage-work" class="hidden">
+    <div class="cols">
+      <div>
+        <div class="sechead">
+          <h2>What was found</h2>
+          <span class="readout" id="candcount"></span>
+        </div>
+
+        <div class="bulk hidden" id="bulk">
+          <button class="lnk" id="selreco">Select recommended</button>
+          <button class="lnk" id="selall-c">Select all</button>
+          <button class="lnk" id="selnone-c">Clear</button>
+          <span class="sp" id="bulkstat"></span>
+        </div>
+
+        <div id="cards"></div>
+
+        <div id="empty" class="note hidden">
+          <h3 id="emptyhead">No watermark object in this file</h3>
+          <p id="emptybody">Nothing here is tagged, flagged or repeated in a way that marks it as a
+             watermark, so there is no object to cut on the evidence alone.</p>
+          <div class="act"><button class="btn ghost sm" id="gotopoint">Point at the watermark instead</button></div>
+        </div>
+
+        <section id="raster" class="hidden">
+          <div class="sechead" style="margin-top:26px"><h2>Pixel cleanup</h2><span class="readout" id="rasterstat"></span></div>
+          <div class="note warn" style="margin-top:0">
+            <h3>This rewrites every page as a picture</h3>
+            <p>Selectable text does not survive it — there is none in this file to lose. Tune the
+               controls until the watermark is gone and your content is untouched, then cut.</p>
+          </div>
+          <div id="tone"></div>
+          <div class="sliders" id="sliders"></div>
+        </section>
+      </div>
+
+      <aside class="panel">
+        <div class="sechead">
+          <div class="seg pviews" role="group" aria-label="Proof view">
+            <button id="pv-one" aria-pressed="true">This page</button>
+            <button id="pv-all" aria-pressed="false">Every page</button>
+          </div>
+          <!-- the cut, and then the finished file, within reach without scrolling -->
+          <button class="btn sm topgo" id="topgo">Cut and download</button>
+          <button class="ibtn hidden" id="cutinfo" aria-expanded="false"
+                  aria-controls="cutinfopop" title="What was cut">i</button>
+          <span class="readout" id="changed"></span>
+          <div class="infopop hidden" id="cutinfopop" role="region" aria-label="What was cut"></div>
+        </div>
+
+        <div id="view-proof">
+        <div class="stage">
+          <div class="stagetop">
+            <div class="seg" role="group" aria-label="Comparison mode">
+              <button id="m-before" aria-pressed="false">Before</button>
+              <button id="m-wipe"   aria-pressed="true">Wipe</button>
+              <button id="m-after"  aria-pressed="false">After</button>
+            </div>
+            <div class="seg" role="group" aria-label="Zoom">
+              <button id="zout" aria-label="Zoom out">−</button>
+              <span class="zval" id="zval">Fit</span>
+              <button id="zin" aria-label="Zoom in">+</button>
+            </div>
+            <div class="pager">
+              <button id="prev" aria-label="Previous page">←</button>
+              <input id="pageno" type="number" min="1" value="1" aria-label="Page number">
+              <span class="of" id="pagetotal"></span>
+              <button id="next" aria-label="Next page">→</button>
+            </div>
+          </div>
+
+          <div class="viewport empty" id="viewport"><span class="spin"></span></div>
+
+          <div class="proofbar">
+            <span>Drag the blade to wipe · hold <kbd>Space</kbd> to peek at the original</span>
+            <span class="delta" id="delta"></span>
+          </div>
+          <div class="pointcue" id="pointcue">
+            <span>Missed a mark? <b>Click it on the page</b> and Excise will name what draws it.</span>
+          </div>
+        </div>
+        </div><!-- /view-proof -->
+
+        <!-- the whole-document check lives in the sticky panel, so reaching it
+             never costs a scroll past the candidate list -->
+        <div id="view-sweep" class="hidden">
+      <p class="sweeplede" id="sweepstat">Check the result across the whole document.</p>
+      <div class="sweepbar">
+        <button class="btn ghost" id="sweepgo">Check all pages</button>
+        <button class="btn ghost hidden" id="sweepstop">Stop</button>
+        <div class="seg" role="group" aria-label="How thoroughly to check">
+          <button id="depth-quick" aria-pressed="false">Sample</button>
+          <button id="depth-full"  aria-pressed="true">Full</button>
+        </div>
+        <div class="seg" role="group" aria-label="View">
+          <button id="viewgrid" aria-pressed="true">Grid</button>
+          <button id="viewlist" aria-pressed="false">List</button>
+        </div>
+        <div class="seg" role="group" aria-label="Thumbnail size">
+          <button id="szout" aria-label="Smaller">−</button>
+          <span class="zval" id="szval">100%</span>
+          <button id="szin" aria-label="Bigger">+</button>
+        </div>
+        <label class="chk"><input type="checkbox" id="onlyodd"> Only pages worth a look</label>
+        <span class="prog" id="sweepprog"></span>
+      </div>
+      <div class="legend">
+        <span class="l-ok"><i></i>Changed as expected</span>
+        <span class="l-odd"><i></i>Changed by an unusual amount</span>
+        <span class="l-zero"><i></i>Nothing removed here</span>
+        <span class="sp" id="selinfo">All pages included</span>
+        <button class="lnk" id="selall">Include all</button>
+        <button class="lnk" id="selnone">Exclude all</button>
+        <button class="lnk" id="selodd">Exclude flagged</button>
+      </div>
+      <div class="gridscroll"><div class="grid" id="sweepgrid"></div></div>
+      <p class="sweephint" id="sweephint"></p>
+        </div><!-- /view-sweep -->
+      </aside>
+    </div>
+
+    <div id="result"></div>
+  </section>
+</div>
+
+<!-- ===================== 3 — CUT ===================== -->
+<div class="dock hidden" id="dock">
+  <div class="plan">
+    <b id="planline">Nothing selected yet</b>
+    <span id="planfile"></span>
+  </div>
+  <span class="right">
+    <button class="btn ghost" id="restart">Start over</button>
+    <button class="btn" id="go">Cut and download</button>
+  </span>
+</div>
+
+<div id="toasts" role="status" aria-live="polite"></div>
+
+<div class="veil hidden" id="keysveil">
+  <div class="keys" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+    <h3>Keyboard</h3>
+    <dl>
+      <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Previous / next page</dd>
+      <dt><kbd>Space</kbd></dt><dd>Hold to peek at the original</dd>
+      <dt><kbd>B</kbd> <kbd>W</kbd> <kbd>A</kbd></dt><dd>Before · Wipe · After</dd>
+      <dt><kbd>+</kbd> <kbd>−</kbd></dt><dd>Zoom the page proof</dd>
+      <dt><kbd>G</kbd></dt><dd>Jump to the page number box</dd>
+      <dt><kbd>?</kbd></dt><dd>Show this list</dd>
+      <dt><kbd>Esc</kbd></dt><dd>Close</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="dropveil hidden" id="dropveil">
+  <div class="box"><strong>Drop it anywhere</strong><span>PDF only</span></div>
+</div>
+
+<script>
+"use strict";
+const $  = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const esc = t => String(t ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;")
+  .replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");  // also used inside attributes
+const kb = n => n >= 1e6 ? (n/1e6).toFixed(1)+' MB' : Math.round(n/1e3)+' KB';
+const plural = (n,w) => n.toLocaleString() + ' ' + w + (n === 1 ? '' : 's');
+
+let S = {
+  token:null, name:'', cands:[], sel:new Set(), open:new Set(),
+  page:0, pages:0, mode:'wipe', wipe:50, zoom:1, shots:{}, peek:false,
+  busy:false, raster:false, params:null,
+  scan:[], sweeping:false, step:1, gridview:'grid', thumbz:100,
+  excluded:new Set(), lastPick:null, proofView:'one',
+  ready:null, readyKey:null,     // the finished file, and the choices that produced it
+};
+
+/* This page reloads from disk on every visit; the server's Python does not.
+   Say so plainly rather than letting it surface as a mystery request failure. */
+(async () => {
+  try{
+    const r = await fetch('/api/version');
+    if(r.status === 404){
+      showStale('This server is running an older version of Excise. Stop it with '
+        + '<code>Ctrl+C</code> and run <code>python app.py</code> again.');
+      return;
+    }
+    const d = await r.json();
+    if(d.stale) showStale(`Server is running older code — ${esc(d.changed.join(', '))} changed since it `
+      + 'started. Stop it with <code>Ctrl+C</code> and run <code>python app.py</code> again.');
+  }catch(e){ /* offline or pre-version build; the scan handler reports specifics */ }
+})();
+function showStale(html){ $('#stale').innerHTML = html; $('#stale').classList.remove('hidden'); }
+
+/* ---------- toasts ---------- */
+function toast(msg, kind){
+  const el = document.createElement('div');
+  el.className = 'toast' + (kind ? ' ' + kind : '');
+  el.textContent = msg;
+  $('#toasts').appendChild(el);
+  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 300); }, kind === 'err' ? 7000 : 4200);
+}
+
+/* ---------- stepper ---------- */
+function step(name){
+  const order = ['load','inspect','cut'], at = order.indexOf(name);
+  $$('#steps .st').forEach((el,i) => {
+    el.classList.toggle('now', i === at);
+    el.classList.toggle('done', i < at);
+  });
+}
+
+/* ==========================================================================
+   Hero specimen — the blade, in miniature. Teaches the gesture before upload.
+   ========================================================================== */
+(function specimen(){
+  const sheet = $('#specsheet');
+  if(!sheet) return;
+  let dragging = false, touched = false;
+  const set = pct => sheet.style.setProperty('--wipe', Math.max(2, Math.min(98, pct)) + '%');
+  const at = e => {
+    const r = sheet.getBoundingClientRect();
+    set((e.clientX - r.left) / r.width * 100);
+  };
+  sheet.addEventListener('pointerdown', e => {
+    dragging = touched = true; sheet.setPointerCapture(e.pointerId); at(e);
+  });
+  sheet.addEventListener('pointermove', e => { if(dragging) at(e); });
+  sheet.addEventListener('pointerup',   () => { dragging = false; });
+  sheet.addEventListener('pointercancel', () => { dragging = false; });
+
+  // one slow pass on load so the gesture reads without being told
+  if(!matchMedia('(prefers-reduced-motion: reduce)').matches){
+    let t0 = null;
+    const ease = x => x < .5 ? 4*x*x*x : 1 - Math.pow(-2*x+2,3)/2;
+    const tick = ts => {
+      if(touched) return;
+      t0 ??= ts;
+      const k = Math.min(1, (ts - t0) / 2400);
+      set(92 - ease(k) * 38);   // wipes right-to-left and rests mid-ghost, where the contrast reads
+      if(k < 1) requestAnimationFrame(tick);
+    };
+    setTimeout(() => requestAnimationFrame(tick), 700);
+  }
+})();
+
+/* ==========================================================================
+   Upload
+   ========================================================================== */
+$('#pick').onclick = () => $('#file').click();
+$('#ld-retry').onclick = () => { showStage('load'); $('#file').value = ''; $('#file').click(); };
+$('#file').onchange = e => { const f = e.target.files[0]; if(f) analyze(f); };
+
+const drop = $('#drop');
+['dragenter','dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('hot'); }));
+['dragleave','drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('hot'); }));
+
+/* the whole window is a target — aiming at a small box is needless work */
+let dragDepth = 0;
+addEventListener('dragenter', e => {
+  if(!$('#stage-load').classList.contains('hidden') && [...e.dataTransfer.types].includes('Files')){
+    dragDepth++; $('#dropveil').classList.remove('hidden');
+  }
+});
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('dragleave', () => { if(--dragDepth <= 0){ dragDepth = 0; $('#dropveil').classList.add('hidden'); } });
+addEventListener('drop', e => {
+  e.preventDefault(); dragDepth = 0; $('#dropveil').classList.add('hidden');
+  if(!$('#stage-load').classList.contains('hidden')){
+    const f = e.dataTransfer.files[0]; if(f) analyze(f);
+  }
+});
+
+function showStage(which){
+  $('#stage-load').classList.toggle('hidden', which !== 'load');
+  $('#stage-loading').classList.toggle('hidden', which !== 'loading');
+  $('#stage-work').classList.toggle('hidden', which !== 'work');
+  $('#dock').classList.toggle('hidden', which !== 'work');
+  step(which === 'work' ? 'inspect' : 'load');
+}
+
+function setPhase(i){
+  $$('#ld-phases .phase').forEach((el,k) => {
+    el.classList.toggle('done', k < i);
+    el.classList.toggle('now',  k === i);
+  });
+}
+
+async function analyze(file){
+  showStage('loading');
+  $('#ld-err').classList.add('hidden');
+  $('#ld-name').textContent = file.name;
+  $('#ld-size').textContent = kb(file.size) + ' · reading on this machine only';
+  if(!/\.pdf$/i.test(file.name)){
+    failLoad('Excise reads PDFs. Pick a file ending in .pdf.');
+    return;
+  }
+  $('#ld-track').classList.remove('idle'); $('#ld-fill').style.width = '0%';
+  setPhase(0);
+
+  const t0 = performance.now();
+  const clock = setInterval(() => {
+    const s = (performance.now() - t0) / 1000;
+    const el = $('#ld-phases .phase.now .el');
+    if(el) el.textContent = s.toFixed(0) + 's';
+  }, 250);
+
+  try{
+    const d = await postFile(file, pct => {
+      $('#ld-fill').style.width = pct + '%';
+      if(pct >= 100){
+        $('#ld-track').classList.add('idle'); setPhase(1);
+        setTimeout(() => { if(!$('#stage-loading').classList.contains('hidden')) setPhase(2); }, 900);
+      }
+    });
+    clearInterval(clock);
+    boot(d);
+  }catch(err){
+    clearInterval(clock);
+    failLoad(err.message);
+  }
+}
+
+function failLoad(msg){
+  $('#ld-track').classList.remove('idle'); $('#ld-fill').style.width = '0%';
+  setPhase(-1);
+  $('#ld-errmsg').textContent = msg;
+  $('#ld-err').classList.remove('hidden');
+}
+
+/* XHR, not fetch: a 300 MB file deserves a real progress bar rather than a spinner */
+function postFile(file, onProgress){
+  return new Promise((resolve, reject) => {
+    const fd = new FormData(); fd.append('file', file);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/analyze');
+    xhr.upload.onprogress = e => { if(e.lengthComputable) onProgress(Math.round(e.loaded / e.total * 100)); };
+    xhr.upload.onload = () => onProgress(100);
+    xhr.onload = () => {
+      let d = null;
+      try{ d = JSON.parse(xhr.responseText); }catch(_){}
+      if(xhr.status >= 200 && xhr.status < 300 && d) resolve(d);
+      else reject(new Error((d && d.detail) || `The server answered ${xhr.status}. Check the terminal running app.py.`));
+    };
+    xhr.onerror = () => reject(new Error('The connection to the local server dropped. Is app.py still running?'));
+    xhr.send(fd);
+  });
+}
+
+function boot(d){
+  S.token = d.token; S.name = d.filename; S.cands = d.candidates; S.pages = d.pages;
+  S.page = d.sample_page;
+  S.sel = new Set(d.candidates.filter(c => c.recommended).map(c => c.id));
+  // on a phone an open exhibit is a full screen of scrolling before the next card
+  S.open = innerWidth < 760 ? new Set()
+         : new Set(d.candidates.filter(c => c.recommended).map(c => c.id));
+  S.raster = !d.candidates.length && (d.page_is_image || d.scanned);
+
+  $('#filemeta').innerHTML = `<b>${esc(d.filename)}</b><span>${plural(d.pages,'page')} · ${kb(d.size)}` +
+    (d.sampled < d.pages
+      ? ` · detected from ${d.sampled} sampled`
+      : ' · all checked') + '</span>';
+  $('#pagetotal').textContent = 'of ' + d.pages;
+  $('#pageno').max = d.pages;
+
+  showStage('work');
+  renderCards();
+
+  if(!d.candidates.length){
+    $('#empty').classList.remove('hidden');
+    if(d.page_is_image){
+      $('#emptyhead').textContent = 'Every page here is one flat picture';
+      $('#emptybody').textContent = 'This PDF has no text layer — the watermark, the words and the '
+        + 'figures are all the same pixels. Removing that picture would leave a blank page, so there is '
+        + 'nothing to cut cleanly. Pixel cleanup below is the way in.';
+      $('#gotopoint').classList.add('hidden');
+    }
+  }
+
+  setProofView('one');
+  setDepth(d.pages > 240 ? 'quick' : 'full', d.pages);
+
+  if(S.raster){
+    $('#raster').classList.remove('hidden');
+    const start = {...d.raster_defaults};
+    if(d.tone && d.tone.recommend_white) start.white_point = d.tone.recommend_white;
+    buildSliders(start);
+    renderTone(d.tone);
+  }
+  refresh();
+}
+
+/* ==========================================================================
+   Candidates
+   ========================================================================== */
+function highlight(t){
+  return esc(t).replace(/\b(BDC|EMC|BMC|Do|q|Q|cm|gs|re|f|W\*|n)\b/g, '<span class="op">$1</span>');
+}
+
+/* plain-language summary; the forensic detail stays available underneath */
+function plainLine(c){
+  if(c.covered) return 'The tagged candidate above already removes this. Tick it only if you leave that one unticked.';
+  if(c.kind === 'tagged')  return 'The tool that made this PDF labelled this block a watermark.';
+  if(c.kind === 'annots')  return 'Stamps layered on top of the page, not part of the page itself.';
+  if(c.kind === 'text')    return 'Every text block in this colour and at this angle will be removed.';
+  if(c.confidence === 'declared') return 'This object identifies itself as a watermark.';
+  if(c.confidence === 'picked')   return 'You pointed at this. Check the crop before you cut.';
+  return 'Repeated on nearly every page. Nothing in the file says it is a watermark — check the crop.';
+}
+
+function renderCards(){
+  const wrap = $('#cards'); wrap.innerHTML = '';
+  const dec = S.cands.filter(c => c.confidence === 'declared').length;
+  const inf = S.cands.length - dec;
+  $('#candcount').textContent = S.cands.length
+    ? `${dec} declared · ${inf} to verify` : '';
+  $('#bulk').classList.toggle('hidden', S.cands.length < 2);
+
+  S.cands.forEach((c, i) => {
+    const on = S.sel.has(c.id);
+    const ex = c.exhibit || {};
+    const hasEv = ex.empty === false;
+    const open = S.open.has(c.id);
+    const el = document.createElement('article');
+    el.className = 'card ' + (c.confidence === 'inferred' ? 'inferred-c ' : '')
+                 + (on ? 'on ' : '') + (c.covered ? 'dup' : '');
+    el.style.animationDelay = Math.min(i * 45, 320) + 'ms';
+
+    const chipText = c.confidence === 'declared' ? 'declared'
+                   : c.confidence === 'picked'   ? 'you picked this' : 'inferred — verify';
+
+    el.innerHTML = `
+      <div class="chead">
+        <input class="tick" type="checkbox" id="cb-${i}" ${on ? 'checked' : ''}
+               aria-label="Remove ${esc(c.title)}">
+        <div class="cmain">
+          <label class="ctitle" for="cb-${i}">${esc(c.title)}</label>
+          <div class="chips">
+            <span class="chip ${c.confidence}">${chipText}</span>
+            ${c.covered ? '<span class="chip dupe">already covered above</span>' : ''}
+          </div>
+          <p class="plain">${esc(plainLine(c))}</p>
+          <p class="why"><span class="ev">Evidence</span>${esc(c.signal)}</p>
+        </div>
+        ${hasEv
+          ? `<figure class="cthumb" title="What leaves — click for the full evidence">
+               <img src="${ex.detail || ex.leaves}" alt="Preview of what removing ${esc(c.title)} takes off the page" loading="lazy">
+               <figcaption>what leaves</figcaption>
+             </figure>`
+          : `<figure class="cthumb flat"><span>nothing visible<br>changes here</span></figure>`}
+        <div class="cstat">
+          <b>${(c.pages || 0).toLocaleString()}</b><span>pages</span>
+          ${ex.affected ? `<em>${ex.affected}% of page</em>` : ''}
+        </div>
+      </div>
+      ${hasEv ? `
+      <button class="evtoggle" aria-expanded="${open}">
+        <span>Evidence — before, after, and what leaves</span><span class="caret">▾</span>
+      </button>
+      <div class="evbody ${open ? '' : 'hidden'}">
+        <div class="exhibit">
+          <div class="ex"><h4>Before</h4><figure><img src="${ex.before}" alt="Region before removal" loading="lazy"></figure></div>
+          <div class="ex"><h4>After</h4><figure><img src="${ex.after}" alt="Same region after removal" loading="lazy"></figure></div>
+          <div class="ex leaves"><h4>What leaves</h4><figure><img src="${ex.leaves}" alt="Only the pixels that would be deleted" loading="lazy"></figure></div>
+        </div>
+        ${c.snippet ? `<pre class="snip">${highlight(c.snippet)}</pre>` : ''}
+      </div>`
+      : `<p class="nochange">${ex.error ? 'Could not render a proof for this one: ' + esc(ex.error)
+                                        : 'Removing this changes nothing visible on the sample page.'}</p>`}`;
+
+    el.querySelector('.tick').onchange = e => {
+      e.target.checked ? S.sel.add(c.id) : S.sel.delete(c.id);
+      el.classList.toggle('on', e.target.checked);
+      refresh();
+    };
+    const tg = el.querySelector('.evtoggle');
+    const setOpen = nowOpen => {
+      if(!tg) return;
+      tg.setAttribute('aria-expanded', nowOpen);
+      el.querySelector('.evbody').classList.toggle('hidden', !nowOpen);
+      nowOpen ? S.open.add(c.id) : S.open.delete(c.id);
+    };
+    if(tg) tg.onclick = () => setOpen(tg.getAttribute('aria-expanded') !== 'true');
+
+    // the header preview is the way into the full evidence, not a dead image
+    const thumb = el.querySelector('.cthumb:not(.flat)');
+    if(thumb) thumb.onclick = () => {
+      setOpen(true);
+      el.querySelector('.evbody').scrollIntoView({behavior:'smooth', block:'nearest'});
+    };
+    wrap.appendChild(el);
+  });
+}
+
+$('#selreco').onclick  = () => { S.sel = new Set(S.cands.filter(c => c.recommended).map(c => c.id)); renderCards(); refresh(); };
+$('#selall-c').onclick = () => { S.sel = new Set(S.cands.map(c => c.id)); renderCards(); refresh(); };
+$('#selnone-c').onclick= () => { S.sel.clear(); renderCards(); refresh(); };
+$('#gotopoint').onclick = () => {
+  $('.panel').scrollIntoView({behavior:'smooth', block:'center'});
+  $('#pointcue').classList.add('live');
+  setTimeout(() => $('#pointcue').classList.remove('live'), 2400);
+};
+
+/* ==========================================================================
+   Tone reading + pixel sliders
+   ========================================================================== */
+function renderTone(t){
+  if(!t){ $('#tone').innerHTML = ''; return; }
+  const scale = v => (v / 255 * 100).toFixed(1);
+  const bars = t.bands.map(b =>
+    `<div class="band" style="left:${scale(b.lo)}%;width:${scale(b.hi - b.lo)}%;
+      background:rgb(${b.lo},${b.lo},${b.lo})" title="${esc(b.label)} ${b.lo}–${b.hi}: ${b.pct}%"></div>`).join('');
+  const pins = t.populations.map(p =>
+    `<div class="pin ${p.hint === 'watermark-like' ? 'wm' : 'ct'}" style="left:${scale(p.grey)}%">
+       <span>${p.grey}</span></div>`).join('');
+
+  $('#tone').innerHTML = `
+    <div class="tone">
+      <div class="tonehead">
+        <h3>Tone reading</h3>
+        <span>${t.neutral ? 'grey watermark — colour keying will not help'
+                          : 'coloured watermark — colour keying applies'}</span>
+      </div>
+      <div class="ramp">${bars}${pins}
+        <div class="pin wp" id="wp-pin" style="left:${scale(S.params ? S.params.white_point : 205)}%"><span>white</span></div>
+      </div>
+      <dl class="tonevals">
+        ${t.populations.map(p => `<div><dt>${esc(p.label)}</dt><dd>grey ${p.grey}</dd>
+           <dd class="sub">${p.blobs} shapes · ${esc(p.hint)}</dd></div>`).join('')}
+      </dl>
+      ${t.overlap
+        ? `<p class="warn">These two sit ${t.watermark_grey - t.content_grey} levels apart. No white point
+           erases the watermark without flattening the real greys too. The suggested ${t.recommend_white}
+           errs toward keeping your content, so expect some watermark to survive.</p>`
+        : `<p class="ok">The two are far enough apart that white point ${t.recommend_white} should clear the
+           watermark and leave the real greys alone.</p>`}
+      ${t.recommend_white ? `<button class="btn ghost sm" id="usereco">Use ${t.recommend_white}</button>` : ''}
+    </div>`;
+
+  const b = $('#usereco');
+  if(b) b.onclick = () => {
+    S.params.white_point = t.recommend_white;
+    $('#k-white_point').value = t.recommend_white;
+    $('#o-white_point').textContent = t.recommend_white;
+    const pin = $('#wp-pin');
+    if(pin) pin.style.left = (t.recommend_white / 255 * 100).toFixed(1) + '%';
+    refresh();
+  };
+}
+
+const KNOBS = [
+  ['white_point','White point', 0,255,'Grey at or above this becomes pure white. Lower it until the watermark goes.'],
+  ['black_point','Black point', 0,255,'Grey at or below this becomes pure black. Raise it for bolder text.'],
+  ['sat_thresh','Colour threshold', 0,255,'How coloured a pixel must be to count as watermark. Does nothing to a grey one.'],
+  ['val_thresh','Brightness floor', 0,255,'Coloured pixels brighter than this are wiped. Raise it if letters are being eaten.'],
+  ['despeckle','Despeckle', 0,40,'Drop ink blobs smaller than this many pixels. 0 is off.'],
+];
+function buildSliders(defs){
+  S.params = {...defs};
+  $('#sliders').innerHTML = KNOBS.map(([k,label,min,max,help]) => `
+    <div class="sl">
+      <label for="k-${k}">${label}</label><output id="o-${k}">${S.params[k]}</output>
+      <input type="range" id="k-${k}" min="${min}" max="${max}" value="${S.params[k]}">
+      <p>${help}</p>
+    </div>`).join('');
+  KNOBS.forEach(([k]) => {
+    $('#k-'+k).oninput = e => {
+      S.params[k] = +e.target.value;
+      $('#o-'+k).textContent = e.target.value;
+      const pin = $('#wp-pin');
+      if(pin && k === 'white_point') pin.style.left = (S.params.white_point / 255 * 100).toFixed(1) + '%';
+      refresh();
+    };
+  });
+}
+
+/* ==========================================================================
+   Page proof
+   ========================================================================== */
+let timer = null;
+function outName(){
+  const stem = S.name.replace(/\.pdf$/i, '');
+  return stem + (S.raster ? '_pixels.pdf' : '_clean.pdf');
+}
+/* what the finished file was built from; if this changes, that file is stale */
+function cutKey(){
+  return JSON.stringify([S.raster, [...S.sel].sort(), [...S.excluded].sort(), S.params]);
+}
+
+/* There is one primary action, and it moves rather than being duplicated.
+     before the cut, wide screen — it sits in the proof header, reachable without scrolling
+     after the cut, or narrow    — it sits in the dock beside Start over
+   Only ever one of the two elements is on screen. */
+function syncActions(){
+  const top = $('#topgo'), go = $('#go');
+  if(!top || !go) return;
+  const ready = !!S.ready;
+  const inHeader = !ready && innerWidth >= 1181;
+
+  top.style.display = inHeader ? '' : 'none';
+  go.style.display  = inHeader ? 'none' : '';
+
+  const label = ready ? `Download ${S.ready.filename}`
+                      : (S.raster ? 'Clean and download' : 'Cut and download');
+  const btn = inHeader ? top : go;
+  btn.textContent = inHeader ? (S.raster ? 'Clean and download' : 'Cut and download') : label;
+  btn.disabled = ready ? false : !S.canCut;
+  btn.classList.toggle('ready', ready);
+  btn.title = ready ? 'Download ' + S.ready.filename : '';
+
+  // the i button only means something once there is a cut to describe
+  const info = $('#cutinfo');
+  if(info){
+    info.classList.toggle('hidden', !ready);
+    if(!ready) closeCutInfo();
+  }
+}
+
+function closeCutInfo(){
+  const pop = $('#cutinfopop'), info = $('#cutinfo');
+  if(pop) pop.classList.add('hidden');
+  if(info) info.setAttribute('aria-expanded', 'false');
+}
+addEventListener('resize', () => syncActions());
+
+function refresh(){
+  if(S.ready && cutKey() !== S.readyKey) S.ready = null;   // choices moved on
+  if(S.raster){
+    $('#planline').textContent = 'Rebuild every page without the watermark';
+    $('#planfile').textContent = `${plural(S.pages,'page')} → ${outName()}`;
+    S.canCut = true;
+  } else {
+    const n = S.sel.size;
+    const scope = S.pages - S.excluded.size;
+    $('#planline').textContent = n
+      ? `Cut ${plural(n,'mark')} from ${plural(scope,'page')}`
+      : 'Nothing selected yet';
+    $('#planfile').textContent = n
+      ? `→ ${outName()}` + (S.excluded.size ? ` · ${plural(S.excluded.size,'page')} excluded` : '')
+      : 'Tick something on the left to see the page change.';
+    S.canCut = n > 0 && scope > 0;
+  }
+  if(S.cands.length > 1) $('#bulkstat').textContent = `${S.sel.size} of ${S.cands.length} selected`;
+  syncActions();
+  clearTimeout(timer);
+  timer = setTimeout(loadPreview, 200);
+}
+
+async function loadPreview(){
+  const vp = $('#viewport');
+  if(!S.shots.before){ vp.className = 'viewport empty'; vp.innerHTML = '<span class="spin"></span>'; }
+  const url  = S.raster ? '/api/raster_preview' : '/api/preview';
+  const body = S.raster ? {token:S.token, page:S.page, ...S.params}
+                        : {token:S.token, ids:[...S.sel], page:S.page};
+  let d;
+  try{
+    const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
+                               body: JSON.stringify(body)});
+    if(!r.ok){
+      let detail = ''; try{ detail = (await r.json()).detail || ''; }catch(_){}
+      throw new Error(detail || `The server answered ${r.status}.`);
+    }
+    d = await r.json();
+  }catch(err){
+    vp.className = 'viewport empty';
+    vp.innerHTML = `<p style="color:var(--dim);font-size:12.5px;padding:20px;text-align:center">${esc(err.message)}</p>`;
+    return;
+  }
+
+  S.shots = d; S.page = d.page;
+  $('#pageno').value = d.page + 1;
+  $('#prev').disabled = d.page <= 0;
+  $('#next').disabled = d.page >= S.pages - 1;
+  $('#delta').textContent = S.raster
+    ? `${d.white_pct}% pure white · ${d.ink_pct}% ink`
+    : (d.changed_pct ? d.changed_pct + '% of this page changes' : 'nothing changes on this page');
+  $('#changed').textContent = 'page ' + (d.page + 1) + ' of ' + S.pages;
+  if(S.raster) $('#rasterstat').textContent = `${d.white_pct}% white · ${d.ink_pct}% ink`;
+  paint();
+}
+
+function paint(){
+  if(!S.shots.before) return;
+  const vp = $('#viewport');
+  const mode = S.peek ? 'before' : S.mode;
+  const wipe = mode === 'before' ? 100 : mode === 'after' ? 0 : S.wipe;
+
+  vp.className = 'viewport';
+  vp.innerHTML = `
+    <div class="plate ${mode === 'wipe' ? 'wipe' : 'solo'} ${S.raster ? '' : 'pickable'}"
+         style="--z:${S.zoom}; --wipe:${wipe}%">
+      <img src="${S.shots.after}" alt="Page ${S.page + 1} after removal">
+      <img class="lay b4" src="${S.shots.before}" alt="Page ${S.page + 1} before removal">
+      <span class="tab l">Before</span>
+      <span class="tab r">After</span>
+      <div class="blade"></div>
+    </div>`;
+
+  $('#m-before').setAttribute('aria-pressed', S.mode === 'before');
+  $('#m-wipe').setAttribute('aria-pressed',   S.mode === 'wipe');
+  $('#m-after').setAttribute('aria-pressed',  S.mode === 'after');
+  $('#zval').textContent = S.zoom === 1 ? 'Fit' : Math.round(S.zoom * 100) + '%';
+
+  const plate = vp.querySelector('.plate');
+  let moved = false;
+
+  if(S.mode === 'wipe' && !S.peek){
+    const setWipe = e => {
+      const r = plate.getBoundingClientRect();
+      S.wipe = Math.max(0, Math.min(100, (e.clientX - r.left) / r.width * 100));
+      plate.style.setProperty('--wipe', S.wipe + '%');
+    };
+    const blade = plate.querySelector('.blade');
+    blade.addEventListener('pointerdown', e => {
+      e.preventDefault(); moved = true;
+      blade.setPointerCapture(e.pointerId);
+      const move = ev => setWipe(ev);
+      const up = () => {
+        blade.removeEventListener('pointermove', move);
+        blade.removeEventListener('pointerup', up);
+        setTimeout(() => { moved = false; }, 60);
+      };
+      blade.addEventListener('pointermove', move);
+      blade.addEventListener('pointerup', up);
+    });
+  }
+
+  if(!S.raster){
+    plate.addEventListener('click', e => {
+      if(moved || e.target.classList.contains('blade')) return;
+      const img = plate.querySelector('img');
+      const r = img.getBoundingClientRect();
+      pick((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+    });
+  }
+}
+
+function setMode(m){ S.mode = m; paint(); }
+function setZoom(z){
+  S.zoom = Math.max(1, Math.min(4, Math.round(z * 10) / 10));
+  paint();
+}
+$('#m-before').onclick = () => setMode('before');
+$('#m-wipe').onclick   = () => setMode('wipe');
+$('#m-after').onclick  = () => setMode('after');
+$('#zin').onclick  = () => setZoom(S.zoom + (S.zoom < 2 ? .5 : 1));
+$('#zout').onclick = () => setZoom(S.zoom - (S.zoom <= 2 ? .5 : 1));
+$('#prev').onclick = () => { if(S.page > 0){ S.page--; loadPreview(); drawSweep(); } };
+$('#next').onclick = () => { if(S.page < S.pages - 1){ S.page++; loadPreview(); drawSweep(); } };
+$('#pageno').onchange = e => {
+  S.page = Math.max(0, Math.min(S.pages - 1, (+e.target.value || 1) - 1));
+  loadPreview(); drawSweep();
+};
+
+/* ==========================================================================
+   Point at it — name whatever draws under the cursor
+   ========================================================================== */
+async function pick(x, y){
+  const cue = $('#pointcue');
+  cue.classList.add('live');
+  cue.innerHTML = '<span class="spin"></span><span>Identifying what draws there…</span>';
+  try{
+    const r = await fetch('/api/pick', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({token:S.token, page:S.page, x, y})
+    });
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.detail || 'Could not identify that point.');
+
+    if(!d.found.length){
+      cue.classList.remove('live');
+      cue.innerHTML = '<span>Nothing is drawn at that point. Click directly on the mark itself.</span>';
+      return;
+    }
+    d.found.forEach(c => { if(!S.cands.some(k => k.id === c.id)) S.cands.push(c); });
+    d.added.forEach(id => { S.sel.add(id); S.open.add(id); });
+    if(S.cands.length) $('#empty').classList.add('hidden');
+
+    cue.classList.remove('live');
+    cue.innerHTML = '<span>Missed a mark? <b>Click it on the page</b> and Excise will name what draws it.</span>';
+    renderCards(); refresh();
+
+    if(d.added.length){
+      toast(`Added ${plural(d.added.length,'candidate')} — check the evidence before you cut.`);
+      const target = $$('.card').find(node => node.querySelector('.chip.picked')) || $('.card');
+      if(target) target.scrollIntoView({behavior:'smooth', block:'center'});
+    } else {
+      toast('That point is already covered by a candidate above.', 'warn');
+    }
+  }catch(err){
+    cue.classList.remove('live');
+    cue.innerHTML = '<span>Missed a mark? <b>Click it on the page</b> and Excise will name what draws it.</span>';
+    toast(err.message, 'err');
+  }
+}
+
+/* ==========================================================================
+   Every page
+   ========================================================================== */
+function median(a){ const s = [...a].sort((x,y) => x - y); return s.length ? s[Math.floor(s.length/2)] : 0; }
+
+function classify(){
+  const pcts = S.scan.map(r => r.changed_pct);
+  const med  = median(pcts.filter(p => p > 0));
+  const tol  = Math.max(0.4, med * 0.45);
+  S.scan.forEach(r => {
+    r.zero = r.changed_pct === 0;
+    r.odd  = !r.zero && Math.abs(r.changed_pct - med) > tol;
+  });
+  return med;
+}
+
+function setDepth(kind, pages){
+  const total = pages || S.pages;
+  S.step = kind === 'quick' ? Math.max(1, Math.ceil(total / 120)) : 1;
+  $('#depth-quick').setAttribute('aria-pressed', S.step > 1);
+  $('#depth-full').setAttribute('aria-pressed',  S.step === 1);
+  $('#depth-quick').textContent = S.step > 1 ? `Every ${S.step}th` : 'Sample';
+  $('#sweepgo').textContent = S.step > 1
+    ? `Check about ${Math.ceil(total / S.step)} pages`
+    : (total > 60 ? `Check all ${total} pages` : 'Check all pages');
+}
+$('#depth-quick').onclick = () => setDepth('quick');
+$('#depth-full').onclick  = () => setDepth('full');
+
+function drawSweep(){
+  if(!S.scan.length){ $('#sweepgrid').innerHTML = ''; return; }
+  const med  = classify();
+  const only = $('#onlyodd').checked;
+  const rows = only ? S.scan.filter(r => r.odd || r.zero) : S.scan;
+  const grid = $('#sweepgrid');
+  grid.className = 'grid' + (S.gridview === 'list' ? ' list' : '');
+  grid.style.setProperty('--cardw', Math.round(150 * S.thumbz / 100) + 'px');
+
+  grid.innerHTML = rows.map(r => {
+    const tag = r.zero ? 'nothing removed' : r.odd ? 'unusual amount' : 'as expected';
+    return `
+    <div class="cell ${r.zero ? 'zero' : r.odd ? 'odd' : ''} ${r.page === S.page ? 'here' : ''} ${S.excluded.has(r.page) ? 'out' : ''}"
+         data-page="${r.page}" title="Page ${r.page + 1} — ${r.changed_pct}% of pixels change, ${tag}">
+      <input type="checkbox" class="pk" ${S.excluded.has(r.page) ? '' : 'checked'}
+             aria-label="Include page ${r.page + 1}">
+      <figure><img src="${r.thumb}" alt="Page ${r.page + 1} after removal" loading="lazy"></figure>
+      <div class="meta"><b>Pg ${r.page + 1}</b><i>${r.changed_pct}%</i></div>
+      ${S.gridview === 'list' ? `<span class="tagtxt">${tag}</span>` : ''}
+    </div>`;
+  }).join('');
+
+  $$('#sweepgrid .cell').forEach(cell => {
+    const page = +cell.dataset.page;
+    cell.querySelector('figure').onclick = () => {
+      S.page = page; loadPreview(); drawSweep();
+      setProofView('one');   // open the page you clicked, in the same panel
+    };
+    cell.querySelector('.pk').onclick = e => {
+      const on = e.target.checked;
+      if(e.shiftKey && S.lastPick !== null){          // shift-click fills the range
+        const [a, b] = [S.lastPick, page].sort((x,y) => x - y);
+        S.scan.filter(r => r.page >= a && r.page <= b)
+              .forEach(r => on ? S.excluded.delete(r.page) : S.excluded.add(r.page));
+      } else {
+        on ? S.excluded.delete(page) : S.excluded.add(page);
+      }
+      S.lastPick = page;
+      drawSweep(); refresh();
+    };
+  });
+
+  const zero = S.scan.filter(r => r.zero).length, odd = S.scan.filter(r => r.odd).length;
+  $('#sweepstat').textContent =
+    `${plural(S.scan.length,'page')} checked${S.step > 1 ? ` (every ${S.step}th)` : ''} · typical change ${med.toFixed(2)}%`;
+  $('#selinfo').textContent = S.excluded.size
+    ? `${S.pages - S.excluded.size} of ${S.pages} pages included`
+    : 'All pages included';
+  $('#sweephint').innerHTML = (zero || odd)
+    ? `<u>${plural(zero,'page')} changed nothing</u> — the watermark is absent there, or drawn some other way.
+       <b>${plural(odd,'page')} changed by an unusual amount</b> against the ${med.toFixed(2)}% typical.
+       Those are the ones worth opening — click any thumbnail.`
+    : `Every page checked changed by about the same amount. That consistency is the evidence:
+       one watermark, removed the same way throughout.`;
+}
+
+function setView(v){
+  S.gridview = v;
+  $('#viewgrid').setAttribute('aria-pressed', v === 'grid');
+  $('#viewlist').setAttribute('aria-pressed', v === 'list');
+  drawSweep();
+}
+function setThumb(z){ S.thumbz = Math.max(60, Math.min(280, z)); $('#szval').textContent = S.thumbz + '%'; drawSweep(); }
+
+/* null means every page; otherwise the pages still ticked */
+function pageScope(){
+  if(!S.excluded.size) return null;
+  const keep = [];
+  for(let i = 0; i < S.pages; i++) if(!S.excluded.has(i)) keep.push(i);
+  return keep;
+}
+
+async function sweep(){
+  S.scan = []; S.sweeping = true;
+  $('#sweepgo').classList.add('hidden'); $('#sweepstop').classList.remove('hidden');
+  let start = 0, total = null;
+  while(S.sweeping){
+    const body = {token:S.token, ids:[...S.sel], start, count:24, step:S.step,
+                  raster:!!S.raster, ...(S.raster && S.params ? S.params : {})};
+    let d;
+    try{
+      const r = await fetch('/api/scan', {method:'POST', headers:{'Content-Type':'application/json'},
+                                          body: JSON.stringify(body)});
+      if(!r.ok){
+        // 404 is ambiguous: a missing endpoint (stale server) and an expired
+        // session both use it, so let the server's own message decide
+        let detail = ''; try{ detail = (await r.json()).detail || ''; }catch(_){}
+        if(r.status === 404 && !detail)
+          throw new Error('This server has no page check — it is running older code. '
+                        + 'Stop it with Ctrl+C and run python app.py again.');
+        throw new Error(detail || `The server answered ${r.status}`);
+      }
+      d = await r.json();
+    }catch(e){
+      $('#sweepprog').textContent = 'stopped';
+      toast(e.message, 'err');
+      break;
+    }
+    total = d.total;
+    S.scan.push(...d.results);
+    drawSweep();
+    $('#sweepprog').textContent = `${S.scan.length} checked of about ${Math.ceil(total / S.step)}`;
+    if(d.done) break;
+    start = S.scan[S.scan.length - 1].page + S.step;
+  }
+  S.sweeping = false;
+  $('#sweepgo').classList.remove('hidden'); $('#sweepgo').textContent = 'Check again';
+  $('#sweepstop').classList.add('hidden');
+}
+
+/* the panel shows one page or the whole document; the tabs never move */
+function setProofView(v){
+  S.proofView = v;
+  $('#pv-one').setAttribute('aria-pressed', v === 'one');
+  $('#pv-all').setAttribute('aria-pressed', v === 'all');
+  $('#view-proof').classList.toggle('hidden', v !== 'one');
+  $('#view-sweep').classList.toggle('hidden', v !== 'all');
+  $('#changed').textContent = v === 'all'
+    ? (S.scan.length ? `${S.scan.length} of ${S.pages} checked` : `${S.pages} pages`)
+    : 'page ' + (S.page + 1);
+  // first visit runs the check itself -- an empty grid behind a button reads as broken
+  if(v === 'all' && !S.scan.length && !S.sweeping) sweep();
+}
+$('#pv-one').onclick = () => setProofView('one');
+$('#pv-all').onclick = () => setProofView('all');
+
+$('#sweepgo').onclick   = sweep;
+$('#sweepstop').onclick = () => { S.sweeping = false; $('#sweepprog').textContent += ' — stopped'; };
+$('#onlyodd').onchange  = drawSweep;
+$('#viewgrid').onclick  = () => setView('grid');
+$('#viewlist').onclick  = () => setView('list');
+$('#szin').onclick      = () => setThumb(S.thumbz + 20);
+$('#szout').onclick     = () => setThumb(S.thumbz - 20);
+$('#selall').onclick    = () => { S.excluded.clear(); drawSweep(); refresh(); };
+$('#selnone').onclick   = () => { S.scan.forEach(r => S.excluded.add(r.page)); drawSweep(); refresh(); };
+$('#selodd').onclick    = () => {
+  S.scan.filter(r => r.odd || r.zero).forEach(r => S.excluded.add(r.page));
+  drawSweep(); refresh();
+};
+
+/* ==========================================================================
+   Cut
+   ========================================================================== */
+async function doCut(){
+  // already cut and nothing has changed since: this press means "give me the file"
+  if(S.ready){ location.href = S.ready.download; return; }
+  if(S.busy) return;
+  S.busy = true;
+  const btn = $('#go'), top = $('#topgo');
+  const label = btn.textContent;
+  btn.disabled = true;
+  if(top){ top.disabled = true; top.textContent = S.raster ? 'Rendering…' : 'Cutting…'; }
+  btn.innerHTML = `<span class="spin"></span>${S.raster ? 'Rendering every page' : 'Cutting'}`;
+  try{
+    const r = await fetch(S.raster ? '/api/clean_raster' : '/api/clean', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(S.raster ? {token:S.token, page:S.page, ...S.params}
+                                    : {token:S.token, ids:[...S.sel], pages:pageScope()})
+    });
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.detail || 'The cut did not complete.');
+
+    const textState = d.text_intact ? ['unchanged','var(--keep)']
+                    : d.text_expected_change ? ['changed, as intended','var(--type)']
+                    : ['changed — check it','var(--cut)'];
+
+    // the summary lives behind the i button, not in a card that holds the page open
+    $('#result').innerHTML = '';
+    $('#cutinfopop').innerHTML = `
+          <h4>${d.raster ? 'Rebuilt' : 'Cut from'} ${plural(d.pages_changed,'page')}${
+            d.scoped_pages ? ` of the ${d.scoped_pages.toLocaleString()} you included` : ''}</h4>
+          <dl>${d.raster ? `
+            <div><dt>Method</dt><dd>pixel pipeline</dd></div>
+            <div><dt>Resolution</dt><dd>${d.dpi} dpi</dd></div>
+            <div><dt>Size</dt><dd>${kb(d.size_before)} → ${kb(d.size_after)}</dd></div>
+            <div><dt>Text layer</dt><dd style="color:var(--cut)">not preserved</dd></div>` : `
+            <div><dt>Tagged blocks</dt><dd>${d.tagged_blocks.toLocaleString()}</dd></div>
+            <div><dt>Object draws</dt><dd>${d.xobject_draws.toLocaleString()}</dd></div>
+            ${d.text_blocks ? `<div><dt>Text blocks</dt><dd>${d.text_blocks.toLocaleString()}</dd></div>` : ''}
+            <div><dt>Annotations</dt><dd>${d.annots.toLocaleString()}</dd></div>
+            <div><dt>Size</dt><dd>${kb(d.size_before)} → ${kb(d.size_after)}</dd></div>
+            <div><dt>Text, ${d.text_checked} pages sampled</dt>
+                 <dd style="color:${textState[1]}">${textState[0]}</dd></div>`}
+          </dl>`;
+    S.ready = {download: d.download, filename: d.filename};
+    S.readyKey = cutKey();
+    step('cut');
+    toast('Cut. Download is in the bar below; the i button says what changed.');
+  }catch(err){
+    $('#result').innerHTML = `<div class="note err">
+      <h3>The cut did not complete</h3>
+      <p>${esc(err.message)}</p>
+      <div class="act"><button class="btn ghost sm" onclick="location.reload()">Start over</button></div>
+    </div>`;
+    $('#result').scrollIntoView({behavior:'smooth', block:'end'});
+    toast(err.message, 'err');
+  }finally{
+    S.busy = false; btn.disabled = false; btn.textContent = label;
+    refresh();          // refresh() ends in syncActions(), which relabels both buttons
+  }
+}
+$('#go').onclick    = doCut;
+$('#topgo').onclick = doCut;
+
+$('#cutinfo').onclick = e => {
+  e.stopPropagation();
+  const pop = $('#cutinfopop');
+  const open = pop.classList.contains('hidden');
+  pop.classList.toggle('hidden', !open);
+  $('#cutinfo').setAttribute('aria-expanded', String(open));
+};
+document.addEventListener('click', e => {
+  if(!e.target.closest('#cutinfopop') && !e.target.closest('#cutinfo')) closeCutInfo();
+});
+document.addEventListener('keydown', e => { if(e.key === 'Escape') closeCutInfo(); });
+$('#restart').onclick = () => location.reload();
+
+/* ==========================================================================
+   Keyboard
+   ========================================================================== */
+const veil = $('#keysveil');
+$('#helpbtn').onclick = () => veil.classList.toggle('hidden');
+veil.onclick = e => { if(e.target === veil) veil.classList.add('hidden'); };
+
+addEventListener('keydown', e => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+  if(e.key === 'Escape'){ veil.classList.add('hidden'); return; }
+  if(e.key === '?'){ e.preventDefault(); veil.classList.toggle('hidden'); return; }
+  if(typing || $('#stage-work').classList.contains('hidden')) return;
+
+  if(e.code === 'Space' && !S.peek){ e.preventDefault(); S.peek = true; paint(); return; }
+  switch(e.key){
+    case 'ArrowLeft':  if(S.page > 0){ S.page--; loadPreview(); drawSweep(); } break;
+    case 'ArrowRight': if(S.page < S.pages - 1){ S.page++; loadPreview(); drawSweep(); } break;
+    case 'b': case 'B': setMode('before'); break;
+    case 'w': case 'W': setMode('wipe');   break;
+    case 'a': case 'A': setMode('after');  break;
+    case '+': case '=': setZoom(S.zoom + .5); break;
+    case '-': case '_': setZoom(S.zoom - .5); break;
+    case 'g': case 'G': $('#pageno').focus(); $('#pageno').select(); break;
+    default: return;
+  }
+  e.preventDefault();
+});
+addEventListener('keyup', e => {
+  if(e.code === 'Space' && S.peek){ S.peek = false; paint(); }
+});
+</script>
+</body>
+</html>

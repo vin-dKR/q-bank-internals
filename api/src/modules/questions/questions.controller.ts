@@ -47,8 +47,8 @@ export function createQuestionsController(service: QuestionsService): {
     }),
 
     reExtract: asyncHandler(async (req, res) => {
-      const { documentId, questionId } = parseOrThrow(ReExtractQuestionSchema, req.body);
-      ok(res, await service.reExtractQuestion(documentId, questionId));
+      const { documentId, questionId, source } = parseOrThrow(ReExtractQuestionSchema, req.body);
+      ok(res, await service.reExtractQuestion(documentId, questionId, source));
     }),
 
     update: asyncHandler(async (req, res) => {

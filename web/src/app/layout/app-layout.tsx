@@ -88,12 +88,53 @@ function IconGauge(): JSX.Element {
 }
 
 const NAV_BASE =
-  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium no-underline transition-colors [&>svg]:size-[18px] [&>svg]:flex-none';
+  'flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm font-medium no-underline transition-colors [&>svg]:size-[18px] [&>svg]:flex-none';
 
-function navClass({ isActive }: { isActive: boolean }): string {
-  return `${NAV_BASE} ${
-    isActive ? 'bg-brand-soft text-brand' : 'text-ink-2 hover:bg-surface-2 hover:text-ink'
-  }`;
+/** Collapsed rail: icon centered in a square target, no label. */
+const NAV_RAIL =
+  'flex items-center justify-center rounded-lg p-2 no-underline transition-colors [&>svg]:size-[18px] [&>svg]:flex-none';
+
+/** Build the NavLink class callback; layout differs between the full sidebar and the collapsed rail. */
+function navClass(collapsed: boolean): (state: { isActive: boolean }) => string {
+  const base = collapsed ? NAV_RAIL : NAV_BASE;
+  return ({ isActive }) =>
+    `${base} ${isActive ? 'bg-brand-soft text-brand' : 'text-ink-2 hover:bg-surface-2 hover:text-ink'}`;
+}
+
+type NavItemProps = {
+  to: string;
+  end?: boolean;
+  icon: JSX.Element;
+  label: string;
+  collapsed: boolean;
+};
+
+/** A single sidebar link: icon + label expanded, icon-only with a tooltip when collapsed. */
+function NavItem({ to, end = false, icon, label, collapsed }: NavItemProps): JSX.Element {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      className={navClass(collapsed)}
+      title={collapsed ? label : undefined}
+      aria-label={collapsed ? label : undefined}
+    >
+      {icon}
+      {!collapsed && <span className="truncate">{label}</span>}
+    </NavLink>
+  );
+}
+
+/** A group heading: uppercase caption expanded, a short centered rule in the collapsed rail. */
+function SectionCaption({ label, collapsed }: { label: string; collapsed: boolean }): JSX.Element {
+  if (collapsed) {
+    return <div className="mx-auto my-2 h-px w-6 bg-line max-[820px]:hidden" aria-hidden="true" />;
+  }
+  return (
+    <div className="px-2 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-ink-3 max-[820px]:hidden">
+      {label}
+    </div>
+  );
 }
 
 /** The shell every page renders inside: a persistent sidebar + the routed content canvas. */
@@ -111,129 +152,83 @@ export function AppLayout(): JSX.Element {
   return (
     <div
       className={`grid min-h-screen max-[820px]:grid-cols-1 ${
-        collapsed ? 'grid-cols-1' : 'grid-cols-[260px_minmax(0,1fr)]'
+        collapsed ? 'grid-cols-[64px_minmax(0,1fr)]' : 'grid-cols-[248px_minmax(0,1fr)]'
       }`}
     >
       <aside
-        className={`sticky top-0 flex h-screen flex-col gap-1 border-r border-line bg-surface p-4 max-[820px]:static max-[820px]:h-auto max-[820px]:flex-row max-[820px]:flex-wrap max-[820px]:items-center max-[820px]:border-b max-[820px]:border-r-0 ${
-          collapsed ? 'hidden max-[820px]:flex' : ''
+        className={`sticky top-0 flex h-screen flex-col gap-0.5 border-r border-line bg-surface max-[820px]:static max-[820px]:h-auto max-[820px]:flex-row max-[820px]:flex-wrap max-[820px]:items-center max-[820px]:border-b max-[820px]:border-r-0 max-[820px]:p-3 ${
+          collapsed ? 'p-2' : 'p-3'
         }`}
       >
-        <div className="mb-2 flex items-center gap-2.5 px-2 py-1">
+        <div
+          className={`mb-1 flex items-center py-1 ${
+            collapsed ? 'flex-col gap-2' : 'gap-2.5 px-1.5'
+          }`}
+        >
           <div className="grid size-8 flex-none place-items-center rounded-lg bg-[linear-gradient(140deg,var(--color-brand),#7c6cf0)] text-sm font-bold text-white">
             E
           </div>
-          <div>
-            <div className="text-sm font-semibold leading-tight">Eduents Ingest</div>
-            <div className="text-xs text-ink-3">PDF → question bank</div>
-          </div>
+          {!collapsed && (
+            <div className="min-w-0">
+              <div className="text-sm font-semibold leading-tight">Eduents Ingest</div>
+              <div className="text-xs text-ink-3">PDF → question bank</div>
+            </div>
+          )}
           <button
             type="button"
             onClick={toggleSidebar}
-            aria-label="Collapse sidebar"
-            title="Collapse sidebar"
-            className="ml-auto grid size-8 flex-none place-items-center rounded-lg text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink max-[820px]:hidden [&>svg]:size-[18px]"
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className={`grid size-8 flex-none place-items-center rounded-lg text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink max-[820px]:hidden [&>svg]:size-[18px] ${
+              collapsed ? '' : 'ml-auto'
+            }`}
           >
             <IconPanelLeft />
           </button>
         </div>
 
-        <div className="px-2 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-ink-3 max-[820px]:hidden">
-          Pipeline
-        </div>
+        <SectionCaption label="Pipeline" collapsed={collapsed} />
         <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
-          <NavLink to="/" end className={navClass}>
-            <IconScissors />
-            Cut &amp; upload
-          </NavLink>
-          <NavLink to="/sessions" className={navClass}>
-            <IconLayers />
-            Sessions &amp; extraction
-          </NavLink>
-          <NavLink to="/verify" className={navClass}>
-            <IconCheck />
-            Fix, verify &amp; publish
-          </NavLink>
+          <NavItem to="/" end icon={<IconScissors />} label="Cut & upload" collapsed={collapsed} />
+          <NavItem to="/sessions" icon={<IconLayers />} label="Sessions & extraction" collapsed={collapsed} />
+          <NavItem to="/verify" icon={<IconCheck />} label="Fix, verify & publish" collapsed={collapsed} />
         </nav>
 
-        <div className="px-2 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-ink-3 max-[820px]:hidden">
-          Question bank
-        </div>
+        <SectionCaption label="Question bank" collapsed={collapsed} />
         <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
-          <NavLink to="/questions" className={navClass}>
-            <IconQuestions />
-            Questions
-          </NavLink>
+          <NavItem to="/questions" icon={<IconQuestions />} label="Questions" collapsed={collapsed} />
         </nav>
 
-        <div className="px-2 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-ink-3 max-[820px]:hidden">
-          Masters
-        </div>
+        <SectionCaption label="Masters" collapsed={collapsed} />
         <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
-          <NavLink to="/masters" className={navClass}>
-            <IconMasters />
-            All masters
-          </NavLink>
+          <NavItem to="/masters" icon={<IconMasters />} label="All masters" collapsed={collapsed} />
         </nav>
 
-        <div className="px-2 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-ink-3 max-[820px]:hidden">
-          Tools
-        </div>
+        <SectionCaption label="Tools" collapsed={collapsed} />
         <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
-          <NavLink to="/tools/chapters" className={navClass}>
-            <IconFileText />
-            Chapter Splitter
-          </NavLink>
-          <NavLink to="/tools/cut" className={navClass}>
-            <IconScissors />
-            PDF Page Cutter
-          </NavLink>
-          <NavLink to="/tools/qna" className={navClass}>
-            <IconScan />
-            QnA PDF Generator
-          </NavLink>
-          <NavLink to="/tools/rename" className={navClass}>
-            <IconImage />
-            Image Renamer
-          </NavLink>
-          <NavLink to="/tools/edit" className={navClass}>
-            <IconEdit />
-            Pdf Editor
-          </NavLink>
+          <NavItem to="/tools/chapters" icon={<IconFileText />} label="Chapter Splitter" collapsed={collapsed} />
+          <NavItem to="/tools/cut" icon={<IconScissors />} label="PDF Page Cutter" collapsed={collapsed} />
+          <NavItem to="/tools/qna" icon={<IconScan />} label="QnA PDF Generator" collapsed={collapsed} />
+          <NavItem to="/tools/rename" icon={<IconImage />} label="Image Renamer" collapsed={collapsed} />
+          <NavItem to="/tools/edit" icon={<IconEdit />} label="Pdf Editor" collapsed={collapsed} />
         </nav>
 
         <div className="flex-1 max-[820px]:hidden" />
 
-        <div className="px-2 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-ink-3 max-[820px]:hidden">
-          System
-        </div>
+        <SectionCaption label="System" collapsed={collapsed} />
         <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
-          <NavLink to="/usage" className={navClass}>
-            <IconGauge />
-            Token usage
-          </NavLink>
+          <NavItem to="/usage" icon={<IconGauge />} label="Token usage" collapsed={collapsed} />
         </nav>
 
-        <div className="mt-3 border-t border-line px-2 py-3 text-xs text-ink-3 max-[820px]:hidden">
-          Phase 1 fills sessions · Phase 2 extracts them.
-        </div>
+        {!collapsed && (
+          <div className="mt-3 border-t border-line px-2 py-3 text-xs text-ink-3 max-[820px]:hidden">
+            Phase 1 fills sessions · Phase 2 extracts them.
+          </div>
+        )}
       </aside>
 
       <div className="min-w-0">
-        {collapsed && (
-          <button
-            type="button"
-            onClick={toggleSidebar}
-            aria-label="Expand sidebar"
-            title="Expand sidebar"
-            className="fixed left-3 top-3 z-20 grid size-9 place-items-center rounded-lg border border-line bg-surface text-ink-2 shadow-sm transition-colors hover:bg-surface-2 hover:text-ink max-[820px]:hidden [&>svg]:size-[18px]"
-          >
-            <IconPanelLeft />
-          </button>
-        )}
-        <main
-          className={`w-full py-8 pr-6 lg:pr-10 ${collapsed ? 'pl-16' : 'pl-6 lg:pl-10'}`}
-        >
+        <main className="w-full py-8 pl-6 pr-6 lg:pl-10 lg:pr-10">
           <Outlet />
         </main>
       </div>

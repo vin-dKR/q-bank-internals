@@ -1,6 +1,6 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
-import { KNOWN_QUESTION_TYPES, matchKeyToAnswer, type MatchData, type Question, type ReExtractedQuestion } from '@ingest/contracts';
+import { KNOWN_QUESTION_TYPES, matchKeyToAnswer, type MatchData, type Question, type ReExtractedQuestion, type ReExtractSource } from '@ingest/contracts';
 import { Badge, Button, Combobox, IconButton, IconEdit, IconFlag, IconPlus, IconScan, IconSparkle, IconUndo, IconX, Spinner, useToast } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { MatchTableEditor } from './match-table-editor.js';
@@ -38,6 +38,13 @@ type Props = {
   /** Suggestions for the creatable dropdowns (existing sections / chapters across the workspace). */
   sectionOptions?: readonly string[];
   topicOptions?: readonly string[];
+  /**
+   * Where the Answer / Explanation "re-read from page" reads from: the sibling answer / solution
+   * document + this topic's page in it. Absent ⇒ that field re-reads the question's own page (the
+   * fallback for a unit with no answer/solution sibling). The stem/options re-read is never redirected.
+   */
+  answerSource?: ReExtractSource | undefined;
+  solutionSource?: ReExtractSource | undefined;
   onDraftChange: (draft: QuestionDraft) => void;
   onSave: () => void;
   /** Arm (or, on the armed target, cancel) draw mode — the drawn crop then saves automatically. */
@@ -100,6 +107,8 @@ export function EditableQuestionCard({
   subject,
   sectionOptions = [],
   topicOptions = [],
+  answerSource,
+  solutionSource,
   onDraftChange,
   onSave,
   onDrawRegion,
@@ -159,17 +168,19 @@ export function EditableQuestionCard({
     }
   };
 
-  // "Read the page again": re-extract this question from its source page image and drop ONE field of
+  // "Read the page again": re-extract this question from a source page image and drop ONE field of
   // the fresh result into the draft. Each field's second AI button re-reads independently (a few
-  // seconds per call), so a click on the answer/explanation can also fill a field left blank on the
-  // question sheet whenever the page itself shows it.
+  // seconds per call). `source` redirects the read to the sibling answer/solution PDF for the
+  // answer/explanation fields, so those never read the question sheet; the stem/options keep reading
+  // the question's own page (no source passed).
   const reExtract = async (
     field: string,
     apply: (fresh: ReExtractedQuestion) => void,
+    source?: ReExtractSource,
   ): Promise<void> => {
     setReading(field);
     try {
-      apply(await questionsApi.reExtract(question.documentId, question.id));
+      apply(await questionsApi.reExtract(question.documentId, question.id, source));
     } catch (error) {
       // The page read failed (empty/truncated model reply, network, etc.). Surface it instead of
       // silently doing nothing — and critically, never touch the field, so the current value survives.
@@ -193,6 +204,7 @@ export function EditableQuestionCard({
     current: string,
     applyText: (text: string) => void,
     pick: (fresh: ReExtractedQuestion) => string | null,
+    source?: ReExtractSource,
   ): JSX.Element => (
     <>
       <AiButton
@@ -205,7 +217,7 @@ export function EditableQuestionCard({
       <AiButton
         busy={reading === key}
         disabled={fixing === key}
-        title="Re-read this question from the page"
+        title={source ? 'Re-read this field from the answer / solution page' : 'Re-read this question from the page'}
         icon={<IconScan />}
         onClick={() => {
           void reExtract(key, (fresh) => {
@@ -215,7 +227,7 @@ export function EditableQuestionCard({
             // the reported "everything resets to nothing" bug. Empty/whitespace ⇒ leave as-is.
             if (value !== null && value.trim() !== '') applyAi(key, current, value, applyText);
             else toast.toast({ tone: 'info', title: 'No update for this field', description: 'The page read did not return text for it — your current value is kept.' });
-          });
+          }, source);
         }}
       />
       {preAi[key] !== undefined ? (
@@ -427,7 +439,7 @@ export function EditableQuestionCard({
 
           <div className="flex flex-col gap-1.5">
             <span className={`flex items-center gap-1.5 ${FIELD_LABEL}`}>
-              Answer {fieldAi('answer', draft.answer, (t) => { set('answer', t); }, (fresh) => fresh.answer)}
+              Answer {fieldAi('answer', draft.answer, (t) => { set('answer', t); }, (fresh) => fresh.answer, answerSource)}
             </span>
             <EditableLatexValue value={draft.answer} onChange={(v) => { set('answer', v); }} placeholder="Click to add answer" />
           </div>
@@ -436,7 +448,7 @@ export function EditableQuestionCard({
 
       <div className="flex flex-col gap-1.5">
         <span className={`flex items-center gap-1.5 ${FIELD_LABEL}`}>
-          Explanation {fieldAi('explanation', draft.explanation, (t) => { set('explanation', t); }, (fresh) => fresh.explanation ?? '')}
+          Explanation {fieldAi('explanation', draft.explanation, (t) => { set('explanation', t); }, (fresh) => fresh.explanation ?? '', solutionSource)}
         </span>
         <EditableLatexValue value={draft.explanation} onChange={(v) => { set('explanation', v); }} multiline placeholder="Click to add explanation" />
       </div>

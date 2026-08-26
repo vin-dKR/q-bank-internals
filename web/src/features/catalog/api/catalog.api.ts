@@ -8,10 +8,12 @@ function toListQuery(filters: CatalogFilterState, cursor: string | null): string
   const params = new URLSearchParams();
   if (filters.exam) params.set('exam', filters.exam);
   if (filters.subject) params.set('subject', filters.subject);
+  if (filters.module) params.set('module', filters.module);
   if (filters.chapter) params.set('chapter', filters.chapter);
   if (filters.section) params.set('section', filters.section);
   if (filters.questionType) params.set('questionType', filters.questionType);
   if (filters.flagged) params.set('flagged', filters.flagged);
+  if (filters.pyq) params.set('pyq', filters.pyq);
   const keyword = filters.q.trim();
   if (keyword) params.set('q', keyword);
   if (cursor) params.set('cursor', cursor);

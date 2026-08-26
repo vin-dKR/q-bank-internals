@@ -240,7 +240,7 @@ export function createContainer(): Container {
     env.DB_DRIVER === 'mongo'
       ? new MongoBankPublisher(getPrisma())
       : new UnconfiguredBankPublisher();
-  const publishService = new PublishService(documents, questions, sessions, bankPublisher);
+  const publishService = new PublishService(documents, questions, bankPublisher);
   const bankQuestionStore =
     env.DB_DRIVER === 'mongo'
       ? new MongoBankQuestionStore(getPrisma())

@@ -62,6 +62,14 @@ export class GoogleDriveStorage implements DriveStorage {
     }
   }
 
+  async deleteFolder(folderId: string): Promise<void> {
+    try {
+      await this.drive.files.delete({ fileId: folderId, supportsAllDrives: true });
+    } catch (error) {
+      throw driveError(error);
+    }
+  }
+
   async uploadPdf(input: { name: string; bytes: Buffer; folderId: string }): Promise<DriveFile> {
     try {
       const response = await this.drive.files.create({

@@ -1,6 +1,6 @@
 import { type CSSProperties, type JSX, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { DetectedFigure, ImageCrop, Question } from '@ingest/contracts';
+import type { DetectedFigure, ImageCrop, Question, ReExtractSource } from '@ingest/contracts';
 import { DETECT_FIGURES_MAX_PAGES } from '@ingest/contracts';
 import { getCroppedBlob } from '../../../shared/lib/crop-image.js';
 import { useDocument } from '../../documents/index.js';
@@ -31,6 +31,18 @@ import {
   ToolbarHelp,
 } from '../../../shared/ui/index.js';
 import { type CardBox, type CardDrawTarget, EditableQuestionCard } from './editable-question-card.js';
+import { SourcePreviewPane } from './source-preview-pane.js';
+import { useVerifySources } from '../hooks/use-verify-sources.js';
+
+/** Which source PDFs sit beside the question page: question only, + answer, or + answer & solution. */
+type ViewMode = 'question' | 'answer' | 'solution';
+
+/** The view-toggle options. `needs` names the sibling document an option requires to be selectable. */
+const VIEW_MODES: readonly { mode: ViewMode; label: string; needs: 'answer' | 'solution' | null }[] = [
+  { mode: 'question', label: 'Question', needs: null },
+  { mode: 'answer', label: '+ Answer', needs: 'answer' },
+  { mode: 'solution', label: '+ Solution', needs: 'solution' },
+];
 
 type Box = BoxRect & {
   id: string;
@@ -385,6 +397,16 @@ export function VerifyWorkspace({
   });
 
   const [page, setPage] = useState(initialPage ?? 1);
+  // The sibling answer/solution sources for this unit, resolved for the page currently on screen so
+  // both the preview panes and the answer/explanation re-read target this topic's pages in them.
+  const sources = useVerifySources(document.data, page);
+  const [viewMode, setViewMode] = useState<ViewMode>('question');
+  const answerSource: ReExtractSource | undefined = sources.answer
+    ? { documentId: sources.answer.document.id, page: sources.answer.defaultPage }
+    : undefined;
+  const solutionSource: ReExtractSource | undefined = sources.solution
+    ? { documentId: sources.solution.document.id, page: sources.solution.defaultPage }
+    : undefined;
   const [boxes, setBoxes] = useState<Box[]>([]);
   const [size, setSize] = useState<CanvasSize | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
@@ -1329,12 +1351,55 @@ export function VerifyWorkspace({
             onBoxRelease={handleBoxRelease}
           />
         </div>
+
+        {viewMode !== 'question' && sources.answer ? (
+          <SourcePreviewPane
+            title="Answer"
+            tone="answer"
+            documentId={sources.answer.document.id}
+            fileName={sources.answer.document.fileName}
+            defaultPage={sources.answer.defaultPage}
+          />
+        ) : null}
+        {viewMode === 'solution' && sources.solution ? (
+          <SourcePreviewPane
+            title="Solution"
+            tone="solution"
+            documentId={sources.solution.document.id}
+            fileName={sources.solution.document.fileName}
+            defaultPage={sources.solution.defaultPage}
+          />
+        ) : null}
       </div>
 
       <div className="verify__panel">
         <div className="verify__pinned">
           <div className="verify__session">
             {sessionBar ? <div className="verify__session-row">{sessionBar}</div> : null}
+            <div className="verify__session-row">
+              <span className="text-sm text-ink-2">View</span>
+              <div className="segmented ml-auto" role="tablist" aria-label="Source view">
+                {VIEW_MODES.map((option) => {
+                  const missing =
+                    (option.needs === 'answer' && !sources.answer) ||
+                    (option.needs === 'solution' && !sources.solution);
+                  return (
+                    <button
+                      key={option.mode}
+                      type="button"
+                      role="tab"
+                      aria-selected={viewMode === option.mode}
+                      className={`segmented__item ${viewMode === option.mode ? 'is-active' : ''}`}
+                      title={missing ? `No ${option.needs ?? ''} PDF attached to this unit` : undefined}
+                      disabled={missing}
+                      onClick={() => { setViewMode(option.mode); }}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             <div className="verify__session-row">
               <span className="text-sm text-ink-2">
                 {drafts.dirtyIds.size > 0
@@ -1460,6 +1525,8 @@ export function VerifyWorkspace({
                 boxes={cardBoxesFor(question.id)}
                 drawTarget={cardDrawTargetFor(question.id)}
                 cropDisabled={runActive}
+                answerSource={answerSource}
+                solutionSource={solutionSource}
                 onDraftChange={(draft) => { drafts.setDraft(question.id, draft); }}
                 onSave={() => { void drafts.save([question.id]); }}
                 onDrawRegion={toggleDrawTarget}

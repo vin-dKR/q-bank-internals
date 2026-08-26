@@ -7,19 +7,18 @@ import {
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { QuestionRepository } from '../questions/index.js';
-import type { SessionRepository } from '../sessions/index.js';
 import type { BankPublisher, BankQuestion } from './bank-publisher.js';
 
 /**
  * Promotes a document's verified questions into the MAIN bank. Maps each ingest question into the
- * bank's `Question` shape (pulling exam/subject from its session), inserts them, and marks the
- * document `published`. This is the one place the temporary staging becomes real bank data.
+ * bank's `Question` shape (pulling exam/subject/PYQ provenance from the document the operator filed
+ * them under), inserts them, and marks the document `published`. This is the one place the temporary
+ * staging becomes real bank data.
  */
 export class PublishService {
   constructor(
     private readonly documents: DocumentRepository,
     private readonly questions: QuestionRepository,
-    private readonly sessions: SessionRepository,
     private readonly bank: BankPublisher,
   ) {}
 
@@ -38,10 +37,7 @@ export class PublishService {
     const questions = await this.questions.findByDocument(documentId);
     if (questions.length === 0) return { published: 0 };
 
-    const session = document.sessionId ? await this.sessions.findById(document.sessionId) : null;
-    const rows = questions.map((question, index) =>
-      toBankQuestion(question, index, document, session?.exam ?? null, session?.subject ?? null),
-    );
+    const rows = questions.map((question, index) => toBankQuestion(question, index, document));
     // Ordered: the bank write must be confirmed complete (upsertQuestions throws on any partial or
     // failed write) BEFORE status flips to `published`, so a failed write never marks a document done.
     const published = await this.bank.upsertQuestions(rows);
@@ -89,13 +85,7 @@ const PUBLISHABLE_STATUSES: ReadonlySet<Document['status']> = new Set([
 ]);
 
 /** Map one ingest question into the main bank's Question document shape. */
-function toBankQuestion(
-  question: Question,
-  index: number,
-  document: Document,
-  exam: string | null,
-  subject: string | null,
-): BankQuestion {
+function toBankQuestion(question: Question, index: number, document: Document): BankQuestion {
   return {
     question_number: index + 1,
     file_name: document.fileName,
@@ -113,8 +103,17 @@ function toBankQuestion(
     section_name: question.sectionName ?? document.sectionName ?? question.path.section,
     question_type: question.questionType ?? document.questionType ?? null,
     topic: question.topic,
-    exam_name: exam,
-    subject,
+    // Authoritative exam/subject: the operator's per-chapter pick on the document (not the session's
+    // first-write-wins backfill), so a Biology/NEET chapter never publishes as Physics/JEE.
+    exam_name: document.exam,
+    subject: document.subject,
+    // The module lives on the ingest path; stamping it onto the bank row is what lets the Questions
+    // Module filter narrow the published list (the bank had no module column before).
+    module: question.path.module,
+    // PYQ provenance so a previous-year question shows and filters as such in the Questions browse.
+    is_pyq: document.pyq,
+    pyq_exam: document.pyqExam,
+    pyq_year: document.pyqYear,
     chapter: question.path.chapter,
     // For a match question the answer is the key mirrored to text ("A-p,t; B-q,u"); else the raw answer.
     answer:

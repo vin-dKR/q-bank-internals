@@ -34,6 +34,11 @@ type DocumentRow = {
   kind: string;
   sectionName: string | null;
   questionType: string | null;
+  exam: string | null;
+  subject: string | null;
+  pyq: boolean;
+  pyqExam: string | null;
+  pyqYear: string | null;
   source: string | null;
   pageRange: PageRangeRow | null;
   topics: TopicRow[];
@@ -86,6 +91,11 @@ function toDocument(row: DocumentRow): Document {
     kind: row.kind as Document['kind'],
     sectionName: row.sectionName,
     questionType: row.questionType,
+    exam: row.exam,
+    subject: row.subject,
+    pyq: row.pyq,
+    pyqExam: row.pyqExam,
+    pyqYear: row.pyqYear,
     source: row.source,
     pageRange: row.pageRange,
     topics: toContractTopics(row.topics),
@@ -157,6 +167,11 @@ export class PrismaDocumentRepository implements DocumentRepository {
         kind: input.kind,
         sectionName: input.sectionName,
         questionType: input.questionType,
+        exam: input.exam,
+        subject: input.subject,
+        pyq: input.pyq,
+        pyqExam: input.pyqExam,
+        pyqYear: input.pyqYear,
         source: input.source,
         pageRange: input.pageRange,
         topics: toPrismaTopics(input.topics),

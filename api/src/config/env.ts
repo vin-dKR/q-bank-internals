@@ -27,9 +27,14 @@ const EnvSchema = z.object({
   GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
   GOOGLE_OAUTH_REFRESH_TOKEN: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),
-  // Vision model + key for the extraction worker (ported from the Python PDF Extractor).
+  // Vision model + key for the extraction worker (ported from the Python PDF Extractor); also drives
+  // the Verify "read the page again" re-extractor. gpt-5.4-mini rather than the older gpt-4o: the same
+  // upgrade already paid off on both sibling AI paths in this file — gpt-4o produced loose boxes in the
+  // detector and wrapped units inconsistently in the LaTeX refiner. It is a reasoning model, so this
+  // budget covers hidden reasoning before the JSON; the extractor retries at double and then fails
+  // loudly rather than persisting a silently truncated page. Override to trade quality for cost.
   OPENAI_API_KEY: z.string().optional(),
-  EXTRACTION_MODEL: z.string().default('gpt-4o'),
+  EXTRACTION_MODEL: z.string().default('gpt-5.4-mini'),
   // Per-run deadline for the extraction worker. A run that exceeds this is aborted (its in-flight
   // vision call is cancelled) and flipped to `failed` so the document can be re-extracted, instead of
   // hanging forever. Default 5 minutes; raise for very long documents, lower to fail faster.

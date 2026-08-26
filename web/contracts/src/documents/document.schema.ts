@@ -75,6 +75,16 @@ export const DocumentSchema = z.object({
   kind: ChapterKindSchema,
   sectionName: z.string().nullable(),
   questionType: QuestionTypeSchema.nullable(),
+  /** The exam this chapter's questions belong to (e.g. NEET) — the operator's per-chapter pick. Null on legacy documents. */
+  exam: z.string().nullable(),
+  /** The subject this chapter's questions belong to (e.g. Biology). Null on legacy documents. */
+  subject: z.string().nullable(),
+  /** Whether this chapter's questions are previous-year questions (PYQ), captured at cut time. */
+  pyq: z.boolean(),
+  /** The exam a PYQ chapter's questions were asked in (e.g. NEET); null unless `pyq` is set. */
+  pyqExam: z.string().nullable(),
+  /** The year a PYQ chapter's questions were asked (e.g. "2019"); null unless `pyq` is set. */
+  pyqYear: z.string().nullable(),
   /** Where the questions came from: pyq / module / textbook (open string). Null for legacy documents. */
   source: SourceSchema.nullable(),
   pageRange: PageRangeSchema.nullable(),
@@ -101,6 +111,11 @@ export const RegisterDocumentSchema = z.object({
   kind: ChapterKindSchema.default('question'),
   sectionName: z.string().min(1).nullable().optional(),
   questionType: QuestionTypeSchema.nullable().optional(),
+  exam: z.string().min(1).nullable().optional(),
+  subject: z.string().min(1).nullable().optional(),
+  pyq: z.boolean().optional(),
+  pyqExam: z.string().min(1).nullable().optional(),
+  pyqYear: z.string().min(1).nullable().optional(),
   source: SourceSchema.nullable().optional(),
   pageRange: PageRangeSchema.nullable().optional(),
   topics: z.array(ChapterTopicSchema).optional(),

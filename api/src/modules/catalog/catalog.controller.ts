@@ -12,17 +12,19 @@ export function createCatalogController(service: CatalogService): {
 } {
   return {
     list: asyncHandler(async (req, res) => {
-      const { exam, subject, chapter, section, questionType, flagged, q, cursor, limit } =
+      const { exam, subject, module, chapter, section, questionType, flagged, pyq, q, cursor, limit } =
         parseOrThrow(CatalogQuerySchema, req.query);
       // Build with only the present keys — the repo runs `exactOptionalPropertyTypes`, so an
       // optional filter field must be absent, never explicitly `undefined`.
       const filters: CatalogFilters = {
         ...(exam !== undefined && { exam }),
         ...(subject !== undefined && { subject }),
+        ...(module !== undefined && { module }),
         ...(chapter !== undefined && { chapter }),
         ...(section !== undefined && { section }),
         ...(questionType !== undefined && { questionType }),
         ...(flagged !== undefined && { flagged: flagged === 'true' }),
+        ...(pyq !== undefined && { pyq: pyq === 'true' }),
         ...(q !== undefined && { q }),
       };
       ok(res, await service.listQuestions(filters, cursor ?? null, limit));
