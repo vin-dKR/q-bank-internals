@@ -1,5 +1,5 @@
 // Public surface of the ingestion feature (§4). The page composes these; internals stay private.
-export { PdfUploader } from './components/pdf-uploader.js';
+export { PdfUploader, type LoadedPdf } from './components/pdf-uploader.js';
 export { PdfPreviewer, type PreviewView } from './components/pdf-previewer.js';
 export { PdfPagesToolbar } from './components/pdf-pages-toolbar.js';
 export { PdfModeSelector } from './components/pdf-mode-selector.js';
@@ -16,6 +16,7 @@ export { useChapterVocabulary, type ChapterVocabulary } from './hooks/use-chapte
 export { materializePages } from './lib/materialize-slice.js';
 export { setDraggedPages, readDraggedPages, isPageDrag, PAGE_DND_MIME } from './lib/page-dnd.js';
 export { assembleChapterUpload, type AssembledUpload } from './lib/assemble-chapter.js';
+export { mergePdfs } from './lib/merge-pdfs.js';
 export { leaves, resolveQuestionType } from './lib/structure-tree.js';
 export { configPageBindings, type ParsedConfig } from './lib/structure-config.js';
 export {

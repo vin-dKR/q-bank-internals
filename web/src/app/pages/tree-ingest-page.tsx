@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import type { ChapterKind, ChapterTopic, ChapterUploadMetadata } from '@ingest/contracts';
 import {
   type CutMode,
+  type LoadedPdf,
   type PreviewView,
   type ReadingOrder,
   PdfModeSelector,
@@ -19,6 +20,7 @@ import {
   deletePage,
   deletePages,
   materializePages,
+  mergePdfs,
   useChapterVocabulary,
   useReflowBlocks,
   useSplitPoints,
@@ -52,6 +54,7 @@ export function TreeIngestPage(): JSX.Element {
   const [sessionId] = useCurrentSession();
   const [pdfBytes, setPdfBytes] = useState<ArrayBuffer | Uint8Array | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [mergedSources, setMergedSources] = useState<{ name: string; from: number; to: number }[]>([]);
   const [numPages, setNumPages] = useState(0);
   const [pageWidth, setPageWidth] = useState(DEFAULT_WIDTH);
   const [cutMode, setCutMode] = useState<CutMode>('none');
@@ -96,6 +99,7 @@ export function TreeIngestPage(): JSX.Element {
   const resetDoc = useCallback((): void => {
     setPdfBytes(null);
     setFileName(null);
+    setMergedSources([]);
     setNumPages(0);
     clearSelection();
     setPageWidth(DEFAULT_WIDTH);
@@ -103,6 +107,33 @@ export function TreeIngestPage(): JSX.Element {
     reflow.clear();
     workingDoc.clear();
   }, [splitPoints, reflow, workingDoc, clearSelection]);
+
+  /**
+   * Load the selected PDFs: a single file loads as-is; several concatenate (in selection order)
+   * into one continuous document so cut/structure/upload work over the merged preview. The source
+   * order and each file's page span are kept so the operator sees where each file starts.
+   */
+  const loadFiles = useCallback(
+    async (files: LoadedPdf[]): Promise<void> => {
+      resetDoc();
+      const first = files[0];
+      if (!first) return;
+      if (files.length === 1) {
+        setPdfBytes(first.bytes);
+        setFileName(first.name);
+        workingDoc.reset(new Uint8Array(first.bytes));
+        return;
+      }
+      const merged = await mergePdfs(files.map((file) => new Uint8Array(file.bytes)));
+      setPdfBytes(merged.bytes);
+      setFileName(`${String(files.length)} PDFs merged`);
+      setMergedSources(
+        merged.spans.map((span, index) => ({ name: files[index]?.name ?? first.name, from: span.from, to: span.to })),
+      );
+      workingDoc.reset(merged.bytes);
+    },
+    [resetDoc, workingDoc],
+  );
 
   /** Materialize the mode's edits into a fresh version so modes chain. The tree is untouched. */
   const applyMode = async (): Promise<void> => {
@@ -346,12 +377,7 @@ export function TreeIngestPage(): JSX.Element {
         <div className="card stack">
           <PdfUploader
             fileName={fileName}
-            onLoad={(bytes, name) => {
-              resetDoc();
-              setPdfBytes(bytes);
-              setFileName(name);
-              workingDoc.reset(new Uint8Array(bytes));
-            }}
+            onLoad={(files) => { void loadFiles(files); }}
             onClear={resetDoc}
           />
         </div>
@@ -439,6 +465,16 @@ export function TreeIngestPage(): JSX.Element {
               </span>
             </div>
           </div>
+
+          {mergedSources.length > 0 ? (
+            <ul className="results">
+              {mergedSources.map((source, index) => (
+                <li key={index} className="note" title={source.name}>
+                  {source.name} · page{source.from === source.to ? ` ${String(source.from)}` : `s ${String(source.from)}–${String(source.to)}`}
+                </li>
+              ))}
+            </ul>
+          ) : null}
 
           {isReflow ? <ReflowBlocksPanel controller={reflow} /> : null}
 
