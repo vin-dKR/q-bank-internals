@@ -1,6 +1,12 @@
 // Public surface of the ingestion feature (§4). The page composes these; internals stay private.
 export { PdfUploader, type LoadedPdf } from './components/pdf-uploader.js';
-export { PdfPreviewer, type PreviewView } from './components/pdf-previewer.js';
+export {
+  PdfPreviewer,
+  type PreviewView,
+  MIN_GRID_COLUMNS,
+  MAX_GRID_COLUMNS,
+  DEFAULT_GRID_COLUMNS,
+} from './components/pdf-previewer.js';
 export { PdfPagesToolbar } from './components/pdf-pages-toolbar.js';
 export { PdfModeSelector } from './components/pdf-mode-selector.js';
 export { ReflowBlocksPanel } from './components/reflow-blocks-panel.js';

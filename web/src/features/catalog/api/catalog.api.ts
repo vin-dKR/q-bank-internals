@@ -1,5 +1,5 @@
-import type { BankFlagResult, CatalogFilterOptions, CatalogPage } from '@ingest/contracts';
-import { BankFlagResultSchema, CatalogFilterOptionsSchema, CatalogPageSchema } from '@ingest/contracts';
+import type { BankFlagResult, BankTextResult, CatalogFilterOptions, CatalogPage, UpdateBankText } from '@ingest/contracts';
+import { BankFlagResultSchema, BankTextResultSchema, CatalogFilterOptionsSchema, CatalogPageSchema } from '@ingest/contracts';
 import { request } from '../../../shared/api/http-client.js';
 import type { CatalogFilterState, CatalogSelection } from '../types.js';
 
@@ -51,5 +51,17 @@ export const catalogApi = {
       method: 'PATCH',
       body: { flagged },
       schema: BankFlagResultSchema,
+    }),
+
+  /**
+   * Persist an AI-fixed text field (stem/options/answer) on a published question, keyed by the bank
+   * Mongo `id` the browse card carries. The same bank write surface the flag toggle uses; the
+   * corrected value is produced client-side by {@link refineLatex} before it reaches here.
+   */
+  fixText: (id: string, patch: UpdateBankText): Promise<BankTextResult> =>
+    request(`/bank/questions/${id}/text`, {
+      method: 'PATCH',
+      body: patch,
+      schema: BankTextResultSchema,
     }),
 };

@@ -76,3 +76,31 @@ export type UpdateBankFlag = z.infer<typeof UpdateBankFlagSchema>;
 /** The echoed result of a flag toggle: the row's id and its new flag state. */
 export const BankFlagResultSchema = z.object({ id: z.string(), flagged: z.boolean() });
 export type BankFlagResult = z.infer<typeof BankFlagResultSchema>;
+
+/**
+ * Repair one or more text fields of a published bank question in place (the Questions-browse "AI
+ * fix"): overwrite the stem, options, and/or answer with an AI-cleaned value. Every field is
+ * optional so a single broken field is fixed without resending the rest, and at least one must be
+ * present. Keyed in the route by the bank Mongo `_id` (which the browse card carries as `id`), like
+ * the flag toggle, so it works even for legacy rows with no `ingest_ref`.
+ */
+export const UpdateBankTextSchema = z
+  .object({
+    questionText: z.string().optional(),
+    options: z.array(z.string()).optional(),
+    answer: z.string().nullable().optional(),
+  })
+  .refine(
+    (value) => value.questionText !== undefined || value.options !== undefined || value.answer !== undefined,
+    { message: 'At least one of questionText, options, or answer is required.' },
+  );
+export type UpdateBankText = z.infer<typeof UpdateBankTextSchema>;
+
+/** The echoed result of a text fix: the row's id and the fields now persisted. */
+export const BankTextResultSchema = z.object({
+  id: z.string(),
+  questionText: z.string().optional(),
+  options: z.array(z.string()).optional(),
+  answer: z.string().nullable().optional(),
+});
+export type BankTextResult = z.infer<typeof BankTextResultSchema>;

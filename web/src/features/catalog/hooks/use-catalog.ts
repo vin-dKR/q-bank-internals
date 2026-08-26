@@ -7,7 +7,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import type { BankFlagResult, CatalogFilterOptions, CatalogPage } from '@ingest/contracts';
+import type { BankFlagResult, BankTextResult, CatalogFilterOptions, CatalogPage, UpdateBankText } from '@ingest/contracts';
 import { useToast } from '../../../shared/ui/index.js';
 import { catalogApi } from '../api/catalog.api.js';
 import type { CatalogFilterState, CatalogSelection } from '../types.js';
@@ -74,6 +74,56 @@ export function useSetCatalogFlag(): UseMutationResult<
     onError: (err, _vars, context) => {
       for (const [key, data] of context?.previous ?? []) queryClient.setQueryData(key, data);
       error('Could not update flag', err.message);
+    },
+  });
+}
+
+/**
+ * Persist an AI-fixed text field (stem/options/answer) on a published question from the browse cards.
+ * Optimistic like {@link useSetCatalogFlag}: the corrected field is patched into every cached browse
+ * page immediately (the card already shows the AI value) and rolled back on failure. The card owns the
+ * one-deep, per-field undo — this hook is the write; undo re-runs it with the pre-AI value.
+ */
+export function useCatalogFixText(): UseMutationResult<
+  BankTextResult,
+  Error,
+  { id: string; patch: UpdateBankText },
+  { previous: [readonly unknown[], CatalogInfiniteData | undefined][] }
+> {
+  const queryClient = useQueryClient();
+  const { error } = useToast();
+  return useMutation({
+    mutationFn: ({ id, patch }) => catalogApi.fixText(id, patch),
+    onMutate: async ({ id, patch }) => {
+      await queryClient.cancelQueries({ queryKey: ['catalog'] });
+      const previous = queryClient.getQueriesData<CatalogInfiniteData>({ queryKey: ['catalog'] });
+      queryClient.setQueriesData<CatalogInfiniteData>({ queryKey: ['catalog'] }, (data) =>
+        data
+          ? {
+              ...data,
+              pages: data.pages.map((page) => ({
+                ...page,
+                // Merge only the fields the patch actually carries — spreading the whole patch would
+                // widen each column to `| undefined` under exactOptionalPropertyTypes.
+                questions: page.questions.map((q) =>
+                  q.id === id
+                    ? {
+                        ...q,
+                        ...(patch.questionText !== undefined ? { questionText: patch.questionText } : {}),
+                        ...(patch.options !== undefined ? { options: patch.options } : {}),
+                        ...(patch.answer !== undefined ? { answer: patch.answer } : {}),
+                      }
+                    : q,
+                ),
+              })),
+            }
+          : data,
+      );
+      return { previous };
+    },
+    onError: (err, _vars, context) => {
+      for (const [key, data] of context?.previous ?? []) queryClient.setQueryData(key, data);
+      error('Could not save the fix', err.message);
     },
   });
 }

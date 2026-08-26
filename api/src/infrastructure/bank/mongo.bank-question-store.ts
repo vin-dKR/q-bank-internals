@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { BankQuestion } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import { ejsonBool, ejsonNumber, escapeRegex, firstBatch, oid } from '../database/mongo-ejson.js';
-import type { BankImagePatch, BankQuestionStore } from '../../modules/bank/index.js';
+import type { BankImagePatch, BankQuestionStore, BankTextPatch } from '../../modules/bank/index.js';
 
 const RawIngestRefSchema = z
   .object({
@@ -127,6 +127,20 @@ export class MongoBankQuestionStore implements BankQuestionStore {
     const matched = ejsonNumber.catch(0).parse((reply as Record<string, unknown>).n ?? 0);
     if (matched === 0) throw errors.bankQuestionNotFound(id);
     return flagged;
+  }
+
+  async setText(id: string, patch: BankTextPatch): Promise<void> {
+    const set: Record<string, unknown> = {};
+    if (patch.questionText !== undefined) set.question_text = patch.questionText;
+    if (patch.options !== undefined) set.options = patch.options;
+    if (patch.answer !== undefined) set.answer = patch.answer;
+    const command = {
+      update: this.collection,
+      updates: [{ q: { _id: { $oid: id } }, u: { $set: set } }],
+    } as unknown as Prisma.InputJsonObject;
+    const reply = await this.prisma.$runCommandRaw(command);
+    const matched = ejsonNumber.catch(0).parse((reply as Record<string, unknown>).n ?? 0);
+    if (matched === 0) throw errors.bankQuestionNotFound(id);
   }
 
   /** Pull the `cursor.firstBatch` out of a raw `find` reply and parse each document, dropping junk. */

@@ -1,5 +1,5 @@
 import type { RequestHandler } from 'express';
-import { BankSearchQuerySchema, UpdateBankFlagSchema, UpdateBankImageSchema } from '@ingest/contracts';
+import { BankSearchQuerySchema, UpdateBankFlagSchema, UpdateBankImageSchema, UpdateBankTextSchema } from '@ingest/contracts';
 import { asyncHandler } from '../../shared/http/async-handler.js';
 import { ok } from '../../shared/http/api-response.js';
 import { parseOrThrow } from '../../shared/http/parse.js';
@@ -10,6 +10,7 @@ export function createBankController(service: BankService): {
   search: RequestHandler;
   updateImage: RequestHandler;
   setFlag: RequestHandler;
+  setText: RequestHandler;
 } {
   return {
     search: asyncHandler(async (req, res) => {
@@ -25,6 +26,11 @@ export function createBankController(service: BankService): {
     setFlag: asyncHandler(async (req, res) => {
       const { flagged } = parseOrThrow(UpdateBankFlagSchema, req.body);
       ok(res, await service.setFlag(requiredParam(req, 'id'), flagged));
+    }),
+
+    setText: asyncHandler(async (req, res) => {
+      const patch = parseOrThrow(UpdateBankTextSchema, req.body);
+      ok(res, await service.setText(requiredParam(req, 'id'), patch));
     }),
   };
 }

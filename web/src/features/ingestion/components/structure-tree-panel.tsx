@@ -418,19 +418,30 @@ type PageRangeInputProps = {
 };
 
 /**
- * A tiny text field for typing a page range (`"3-5, 8"`) straight into a binding slot. Enter parses
- * and commits; an unparseable value flags the field and holds focus instead of binding a wrong slice.
+ * A tiny text field for typing a page range (`"3-5, 8"`) straight into a binding slot. Enter *or*
+ * blurring commits; an unparseable value flags the field and holds instead of binding a wrong slice.
+ * An empty field commits nothing, so clicking away from an untouched slot never flags it.
  */
 function PageRangeInput({ maxPages, initial = '', onCommit, onCancel }: PageRangeInputProps): JSX.Element {
   const [text, setText] = useState(initial);
   const [invalid, setInvalid] = useState(false);
+  const committed = useRef(false);
+
+  const commit = (): void => {
+    if (committed.current || text.trim() === '') return;
+    const pages = parsePageRange(text, maxPages);
+    if (pages) {
+      committed.current = true;
+      onCommit(pages);
+    } else {
+      setInvalid(true);
+    }
+  };
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
     if (event.key === 'Enter') {
       event.preventDefault();
-      const pages = parsePageRange(text, maxPages);
-      if (pages) onCommit(pages);
-      else setInvalid(true);
+      commit();
     } else if (event.key === 'Escape') {
       event.preventDefault();
       onCancel?.();
@@ -447,6 +458,7 @@ function PageRangeInput({ maxPages, initial = '', onCommit, onCancel }: PageRang
       aria-invalid={invalid}
       onChange={(event) => { setText(event.target.value); setInvalid(false); }}
       onKeyDown={onKeyDown}
+      onBlur={commit}
       onDoubleClick={(event) => { event.stopPropagation(); }}
       className={`w-full rounded-md border bg-surface px-1.5 py-1 text-center text-[12px] text-ink outline-none placeholder:text-ink-3 focus-visible:ring-2 ${invalid ? 'border-bad focus-visible:ring-bad/30' : 'border-line focus-visible:ring-brand/25'}`}
     />
