@@ -1,0 +1,9 @@
+# PDF-object level: parsing, content-stream surgery, rendering
+PyMuPDF==1.25.5
+# Pixel level: the chroma-mask + levels pipeline and every crop/diff measurement
+opencv-python==4.11.0.86
+numpy==2.2.3
+# Browser review UI (optional -- the CLI needs none of these)
+fastapi==0.115.11
+uvicorn==0.34.0
+python-multipart==0.0.20
