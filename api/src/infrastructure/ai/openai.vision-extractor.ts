@@ -33,6 +33,9 @@ type RawQuestion = {
   /** Present only when the question page itself prints the answer / worked solution. */
   answer?: unknown;
   explanation?: unknown;
+  /** Present only on a PYQ segment — the source exam + year the model read off the page. */
+  pyq_exam?: unknown;
+  pyq_year?: unknown;
 };
 
 function asString(value: unknown): string {
@@ -185,6 +188,8 @@ export class OpenAiVisionExtractor implements VisionExtractor {
           sectionName: input.document.sectionName,
           questionType: input.document.questionType,
           sourcePage: page.pageNumber,
+          pyqExam: asStringOrNull(raw.pyq_exam),
+          pyqYear: asStringOrNull(raw.pyq_year),
           match: toMatchData(raw.columns, raw.match),
           passage: asStringOrNull(raw.passage),
         });

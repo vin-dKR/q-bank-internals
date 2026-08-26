@@ -126,6 +126,13 @@ export const QuestionSchema = z.object({
   // Marked on the Verify screen to distinguish a question needing later attention. Carried through to
   // the published bank row so a flagged question stays findable in the Questions browse.
   flagged: z.boolean(),
+  // Per-question PYQ provenance the model reads off the page when this question's segment is toggled
+  // PYQ: whether it is a previous-year question, plus the SOURCE exam + year it originally appeared in
+  // (e.g. "NEET" / "2019") — a separate axis from the document-level target exam/subject. `isPyq` is
+  // false and exam/year null on ordinary questions and on legacy rows (which fall back to the document).
+  isPyq: z.boolean(),
+  pyqExam: z.string().nullable(),
+  pyqYear: z.string().nullable(),
   sourceRegion: z.object({
     page: z.number().int().positive(),
     bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]),

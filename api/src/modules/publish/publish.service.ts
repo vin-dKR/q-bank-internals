@@ -111,9 +111,11 @@ function toBankQuestion(question: Question, index: number, document: Document): 
     // Module filter narrow the published list (the bank had no module column before).
     module: question.path.module,
     // PYQ provenance so a previous-year question shows and filters as such in the Questions browse.
-    is_pyq: document.pyq,
-    pyq_exam: document.pyqExam,
-    pyq_year: document.pyqYear,
+    // Sourced per-question (the model reads the source exam/year off the page for a PYQ segment),
+    // falling back to the document-level values so legacy rows extracted before per-question PYQ still read.
+    is_pyq: question.isPyq || document.pyq,
+    pyq_exam: question.pyqExam ?? document.pyqExam,
+    pyq_year: question.pyqYear ?? document.pyqYear,
     chapter: question.path.chapter,
     // For a match question the answer is the key mirrored to text ("A-p,t; B-q,u"); else the raw answer.
     answer:

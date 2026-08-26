@@ -52,6 +52,12 @@ export type StructureNode = {
   level: NodeLevel | null;
   /** Set at a `part` node (or a flat leaf); the question type descendant leaves inherit. */
   questionType?: string;
+  /**
+   * Operator's per-node previous-year-questions toggle. Set on a leaf (the segment that binds page
+   * ranges); flows to the assembled topic's `TopicTypeConfig.pyq` so extraction reads each question's
+   * source exam + year off the page. Undefined/false means an ordinary segment.
+   */
+  pyq?: boolean;
   children: StructureNode[];
   bindings?: LeafBindings;
 };
