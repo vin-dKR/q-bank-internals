@@ -967,6 +967,30 @@
   .verify__stage {
     @apply flex min-h-0 min-w-0 flex-1 p-3;
   }
+  /* A sibling answer/solution PDF preview column beside the question stage. Shares the canvas frame's
+     bounded height: its header is pinned and only the page image scrolls, so nothing detaches. */
+  .verify__source {
+    @apply flex min-h-0 min-w-0 flex-1 flex-col border-l border-line;
+  }
+  .verify__source-head {
+    @apply flex flex-none items-center gap-2 border-b border-line px-2 py-1.5;
+  }
+  .verify__source-name {
+    @apply min-w-0 flex-1 truncate text-[11px] text-ink-3;
+  }
+  .verify__source-nav {
+    @apply flex flex-none items-center gap-1;
+  }
+  .verify__source-count {
+    @apply text-center text-[11px] leading-tight text-ink-2;
+    font-variant-numeric: tabular-nums;
+  }
+  .verify__source-scroll {
+    @apply min-h-0 flex-1 overflow-auto p-3;
+  }
+  .verify__source-img {
+    @apply mx-auto max-w-full rounded-lg border border-line bg-white;
+  }
   /* Vertical tool rail on the left of the page, so the page itself owns the full frame height. */
   .verify__rail {
     @apply flex flex-none flex-col items-center gap-2 self-stretch overflow-y-auto border-r border-line bg-surface px-1.5 py-2;

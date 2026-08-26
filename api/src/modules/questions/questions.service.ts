@@ -6,6 +6,7 @@ import type {
   Question,
   QuestionBatchUpdate,
   ReExtractedQuestion,
+  ReExtractSource,
   UpdateQuestion,
 } from '@ingest/contracts';
 import { mapWithConcurrency } from '../../shared/async/map-with-concurrency.js';
@@ -150,14 +151,22 @@ export class QuestionsService {
   /**
    * Re-read one already-extracted question's source page and return its fields afresh (stem,
    * options, answer, explanation) — the verify screen's "read the page again" action. The question
-   * is resolved from its document (which also gives the page to render); answer/explanation are
-   * best-effort, since a question paper rarely prints them.
+   * is resolved from its document (which also gives its identity: number/stem/type). By default the
+   * page read is the question's own source page; `source` redirects it to another document + page —
+   * the sibling answer/solution PDF for this topic — so an answer/explanation re-read reads from that
+   * sheet, not the question paper. Answer/explanation are best-effort, since a paper rarely prints them.
    */
-  async reExtractQuestion(documentId: string, questionId: string): Promise<ReExtractedQuestion> {
+  async reExtractQuestion(
+    documentId: string,
+    questionId: string,
+    source?: ReExtractSource,
+  ): Promise<ReExtractedQuestion> {
     const questions = await this.questions.findByDocument(documentId);
     const question = questions.find((candidate) => candidate.id === questionId);
     if (!question) throw errors.questionNotFound(questionId);
-    const png = await this.pages.renderPage(documentId, question.sourceRegion.page);
+    const sourceDocumentId = source?.documentId ?? documentId;
+    const sourcePage = source?.page ?? question.sourceRegion.page;
+    const png = await this.pages.renderPage(sourceDocumentId, sourcePage);
     const { stem, options, answer, explanation, usage } = await this.reExtractor.reExtract({
       png,
       questionNumber: question.questionNumber,
