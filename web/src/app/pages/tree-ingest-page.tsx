@@ -56,6 +56,7 @@ export function TreeIngestPage(): JSX.Element {
   const [pageWidth, setPageWidth] = useState(DEFAULT_WIDTH);
   const [cutMode, setCutMode] = useState<CutMode>('none');
   const [readingOrder, setReadingOrder] = useState<ReadingOrder>('column');
+  const [reflowFragmentFirst, setReflowFragmentFirst] = useState(false);
   const [applying, setApplying] = useState(false);
   const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
   const [anchorPage, setAnchorPage] = useState<number | null>(null);
@@ -78,6 +79,12 @@ export function TreeIngestPage(): JSX.Element {
   const isReflow = cutMode === 'reflow';
   const activeBytes: ArrayBuffer | Uint8Array | null = workingDoc.current ?? pdfBytes;
   const pendingCount = isReflow ? reflow.totalCrops : splitPoints.totalSplits;
+
+  // The lowest-numbered page carrying cut lines is the source "Apply to all pages" replicates from
+  // (numeric keys iterate ascending), so a single-page setup fans out to the whole document.
+  const sourceCutPage = Object.entries(splitPoints.splitPoints).find(
+    ([, splits]) => splits.length > 0,
+  )?.[0];
 
   /** Drop the whole page selection (and its range anchor) — used after any edit that repaginates. */
   const clearSelection = useCallback((): void => {
@@ -104,7 +111,7 @@ export function TreeIngestPage(): JSX.Element {
     setApplying(true);
     try {
       const next = isReflow
-        ? await applyReflow(activeBytes, reflow.blocks)
+        ? await applyReflow(activeBytes, reflow.blocks, reflowFragmentFirst)
         : await applyGridSplit(activeBytes, splitPoints.splitPoints, readingOrder);
       workingDoc.apply(next, isReflow ? 'reflow' : `${cutMode} cut`);
       splitPoints.reset();
@@ -365,6 +372,12 @@ export function TreeIngestPage(): JSX.Element {
             onNewBlock={reflow.newBlock}
             order={readingOrder}
             onOrderChange={setReadingOrder}
+            onApplyToAllPages={() => {
+              if (sourceCutPage !== undefined) splitPoints.applyToAllPages(Number(sourceCutPage), numPages);
+            }}
+            canApplyToAllPages={sourceCutPage !== undefined && numPages > 1}
+            cutFragmentFirst={reflowFragmentFirst}
+            onCutFragmentFirstChange={setReflowFragmentFirst}
             applying={applying}
             steps={workingDoc.steps}
             stepIndex={workingDoc.stepIndex}

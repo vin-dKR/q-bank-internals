@@ -51,6 +51,7 @@ function reducer(state: HistoryState, action: Action): HistoryState {
 export type SplitPointsController = {
   splitPoints: SplitPointsByPage;
   addSplit: (pageNumber: number, position: number, orientation: SplitOrientation) => void;
+  applyToAllPages: (sourcePage: number, pageCount: number) => void;
   beginMove: () => void;
   moveSplit: (splitId: string, newPosition: number) => void;
   removeSplit: (splitId: string) => void;
@@ -81,6 +82,20 @@ export function useSplitPoints(): SplitPointsController {
           [pageNumber]: [...(present[pageNumber] ?? []), { id: makeId(), position, orientation }],
         },
       });
+    },
+    [present],
+  );
+
+  /** Clone the source page's cut lines onto every page 1..pageCount, minting fresh ids so each
+   *  cloned line stays unique. One commit, so undo/redo restores the prior per-page cuts in one step. */
+  const applyToAllPages = useCallback(
+    (sourcePage: number, pageCount: number): void => {
+      const source = present[sourcePage] ?? [];
+      const next: SplitPointsByPage = {};
+      for (let page = 1; page <= pageCount; page += 1) {
+        next[page] = source.map((split) => ({ ...split, id: makeId() }));
+      }
+      dispatch({ type: 'commit', next });
     },
     [present],
   );
@@ -141,6 +156,7 @@ export function useSplitPoints(): SplitPointsController {
   return {
     splitPoints: present,
     addSplit,
+    applyToAllPages,
     beginMove,
     moveSplit,
     removeSplit,

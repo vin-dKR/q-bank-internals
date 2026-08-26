@@ -47,8 +47,16 @@ async function stackBlockPage(
  * twice, and each block's stacked page is inserted right after the last page it spans. This pulls a
  * question and the options that spilled onto the next page onto one clean page while leaving the rest
  * of the paper intact.
+ *
+ * `cutFragmentFirst` flips the per-page emission order: the stacked cut block(s) come out before
+ * their source page instead of after, so the reflowed fragment leads and the whited-out original
+ * follows.
  */
-export async function applyReflow(pdfBytes: PdfInput, blocks: ReflowBlock[]): Promise<Uint8Array> {
+export async function applyReflow(
+  pdfBytes: PdfInput,
+  blocks: ReflowBlock[],
+  cutFragmentFirst = false,
+): Promise<Uint8Array> {
   const src = await PDFDocument.load(pdfBytes.slice(0));
   const out = await PDFDocument.create();
   const pageCount = src.getPageCount();
@@ -67,25 +75,37 @@ export async function applyReflow(pdfBytes: PdfInput, blocks: ReflowBlock[]): Pr
     for (const crop of block.crops) push(painted, crop.page, crop);
   }
 
-  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+  const addSourcePage = async (pageNumber: number): Promise<void> => {
     const [copied] = await out.copyPages(src, [pageNumber - 1]);
-    if (copied) {
-      out.addPage(copied);
-      const { width, height } = copied.getSize();
-      for (const crop of painted.get(pageNumber) ?? []) {
-        // PDF origin is bottom-left, so a top-fraction crop maps to y = height·(1 − bottomFraction).
-        copied.drawRectangle({
-          x: width * crop.x0,
-          y: height * (1 - crop.y1),
-          width: width * (crop.x1 - crop.x0),
-          height: height * (crop.y1 - crop.y0),
-          color: WHITE,
-          borderWidth: 0,
-        });
-      }
+    if (!copied) return;
+    out.addPage(copied);
+    const { width, height } = copied.getSize();
+    for (const crop of painted.get(pageNumber) ?? []) {
+      // PDF origin is bottom-left, so a top-fraction crop maps to y = height·(1 − bottomFraction).
+      copied.drawRectangle({
+        x: width * crop.x0,
+        y: height * (1 - crop.y1),
+        width: width * (crop.x1 - crop.x0),
+        height: height * (crop.y1 - crop.y0),
+        color: WHITE,
+        borderWidth: 0,
+      });
     }
+  };
+
+  const addBlockPages = async (pageNumber: number): Promise<void> => {
     for (const block of anchored.get(pageNumber) ?? []) {
       await stackBlockPage(out, src, block);
+    }
+  };
+
+  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+    if (cutFragmentFirst) {
+      await addBlockPages(pageNumber);
+      await addSourcePage(pageNumber);
+    } else {
+      await addSourcePage(pageNumber);
+      await addBlockPages(pageNumber);
     }
   }
 

@@ -35,6 +35,10 @@ type PdfModeSelectorProps = {
   onNewBlock: () => void;
   order: ReadingOrder;
   onOrderChange: (order: ReadingOrder) => void;
+  onApplyToAllPages: () => void;
+  canApplyToAllPages: boolean;
+  cutFragmentFirst: boolean;
+  onCutFragmentFirstChange: (value: boolean) => void;
   applying: boolean;
   steps: string[];
   stepIndex: number;
@@ -57,6 +61,10 @@ export function PdfModeSelector({
   onNewBlock,
   order,
   onOrderChange,
+  onApplyToAllPages,
+  canApplyToAllPages,
+  cutFragmentFirst,
+  onCutFragmentFirstChange,
   applying,
   steps,
   stepIndex,
@@ -98,26 +106,49 @@ export function PdfModeSelector({
 
           <ToolbarGroup>
             {isReflow ? (
-              <button
-                type="button"
-                className="btn btn--ghost btn--xs"
-                disabled={applying}
-                onClick={onNewBlock}
-                title="Start a new block — crops you draw next join this question"
-              >
-                <IconPlus /> New block
-              </button>
-            ) : (
-              <label className="tbar__order" title="Order the split cells become pages">
-                Order
-                <select
-                  value={order}
-                  onChange={(event) => { onOrderChange(event.target.value as ReadingOrder); }}
+              <>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--xs"
+                  disabled={applying}
+                  onClick={onNewBlock}
+                  title="Start a new block — crops you draw next join this question"
                 >
-                  <option value="column">Column-major</option>
-                  <option value="row">Row-major</option>
-                </select>
-              </label>
+                  <IconPlus /> New block
+                </button>
+                <label className="switch" title="Emit each block's stacked fragment before its source page">
+                  <input
+                    type="checkbox"
+                    checked={cutFragmentFirst}
+                    disabled={applying}
+                    onChange={(event) => { onCutFragmentFirstChange(event.target.checked); }}
+                  />
+                  <span className="switch__track" />
+                  <span>Fragment first</span>
+                </label>
+              </>
+            ) : (
+              <>
+                <label className="tbar__order" title="Order the split cells become pages">
+                  Order
+                  <select
+                    value={order}
+                    onChange={(event) => { onOrderChange(event.target.value as ReadingOrder); }}
+                  >
+                    <option value="column">Column-major</option>
+                    <option value="row">Row-major</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--xs"
+                  disabled={!canApplyToAllPages || applying}
+                  onClick={onApplyToAllPages}
+                  title="Replicate this page's cut lines onto every page"
+                >
+                  Apply to all pages
+                </button>
+              </>
             )}
             <button
               type="button"
