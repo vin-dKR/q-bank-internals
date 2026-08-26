@@ -1,4 +1,5 @@
-import type { CreateFolder, DriveFile, DriveFolder } from '@ingest/contracts';
+import type { CreateFolder, DeleteFolderResult, DriveFile, DriveFolder } from '@ingest/contracts';
+import { errors } from '../../shared/errors/error-catalog.js';
 import type { DriveStorage } from './drive.storage.js';
 
 /**
@@ -23,6 +24,24 @@ export class DriveService {
   /** Create a folder under `parentId`, defaulting to the configured root when omitted. */
   createFolder(input: CreateFolder): Promise<DriveFolder> {
     return this.storage.createFolder(input.name, input.parentId ?? this.rootFolderId);
+  }
+
+  /**
+   * Delete a folder by id. Guards against silent data loss: a folder that still holds sub-folders
+   * or PDFs is only removed when the caller explicitly opts in with `force`.
+   */
+  async deleteFolder(id: string, force: boolean): Promise<DeleteFolderResult> {
+    if (!force) {
+      const [folders, files] = await Promise.all([
+        this.storage.listFolders(id),
+        this.storage.listPdfs(id),
+      ]);
+      if (folders.length > 0 || files.length > 0) {
+        throw errors.driveFolderNotEmpty(id);
+      }
+    }
+    await this.storage.deleteFolder(id);
+    return { id };
   }
 
   uploadPdf(input: { name: string; bytes: Buffer; folderId: string }): Promise<DriveFile> {

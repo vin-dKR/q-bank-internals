@@ -1,5 +1,10 @@
 import type { RequestHandler } from 'express';
-import { CreateFolderSchema, ListFoldersQuerySchema } from '@ingest/contracts';
+import {
+  CreateFolderSchema,
+  DeleteFolderParamsSchema,
+  DeleteFolderQuerySchema,
+  ListFoldersQuerySchema,
+} from '@ingest/contracts';
 import { asyncHandler } from '../../shared/http/async-handler.js';
 import { ok } from '../../shared/http/api-response.js';
 import { parseOrThrow } from '../../shared/http/parse.js';
@@ -9,6 +14,7 @@ export function createDriveController(service: DriveService): {
   listFiles: RequestHandler;
   listFolders: RequestHandler;
   createFolder: RequestHandler;
+  deleteFolder: RequestHandler;
 } {
   return {
     listFiles: asyncHandler(async (_req, res) => {
@@ -23,6 +29,12 @@ export function createDriveController(service: DriveService): {
     createFolder: asyncHandler(async (req, res) => {
       const body = parseOrThrow(CreateFolderSchema, req.body);
       ok(res, await service.createFolder(body), 201);
+    }),
+
+    deleteFolder: asyncHandler(async (req, res) => {
+      const { id } = parseOrThrow(DeleteFolderParamsSchema, req.params);
+      const { force } = parseOrThrow(DeleteFolderQuerySchema, req.query);
+      ok(res, await service.deleteFolder(id, force));
     }),
   };
 }
