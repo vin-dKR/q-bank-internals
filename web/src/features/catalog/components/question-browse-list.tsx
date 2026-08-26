@@ -1,5 +1,5 @@
 import type { JSX } from 'react';
-import type { CatalogPage } from '@ingest/contracts';
+import type { CatalogPage, UpdateBankText } from '@ingest/contracts';
 import type { UseInfiniteQueryResult } from '@tanstack/react-query';
 import { Button, EmptyState, IconFileText, Skeleton } from '../../../shared/ui/index.js';
 import { QuestionCard } from './question-card.js';
@@ -30,13 +30,19 @@ function LoadingSkeletons(): JSX.Element {
 export function QuestionBrowseList({
   query,
   onToggleFlag,
+  onFixText,
   flagPendingId,
+  fixPendingId,
 }: {
   query: UseInfiniteQueryResult<{ pages: CatalogPage[] }>;
   /** Toggle one question's flag by its bank id. */
   onToggleFlag: (id: string, flagged: boolean) => void;
+  /** Persist an AI-fixed text field on one question by its bank id. */
+  onFixText: (id: string, patch: UpdateBankText) => void;
   /** The id whose flag write is currently in flight (disables just that card's button). */
   flagPendingId: string | null;
+  /** The id whose text-fix write is currently in flight (disables just that card's AI buttons). */
+  fixPendingId: string | null;
 }): JSX.Element {
   if (query.isPending) return <LoadingSkeletons />;
 
@@ -67,7 +73,9 @@ export function QuestionBrowseList({
           key={question.id}
           question={question}
           onToggleFlag={(flagged) => { onToggleFlag(question.id, flagged); }}
+          onFixText={(patch) => { onFixText(question.id, patch); }}
           flagPending={flagPendingId === question.id}
+          fixPending={fixPendingId === question.id}
         />
       ))}
 

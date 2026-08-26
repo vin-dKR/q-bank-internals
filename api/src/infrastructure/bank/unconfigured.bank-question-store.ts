@@ -26,4 +26,10 @@ export class UnconfiguredBankQuestionStore implements BankQuestionStore {
       new AppError('BANK_UNAVAILABLE', 400, 'The question bank requires DB_DRIVER=mongo + DATABASE_URL.'),
     );
   }
+
+  setText(): Promise<void> {
+    return Promise.reject(
+      new AppError('BANK_UNAVAILABLE', 400, 'The question bank requires DB_DRIVER=mongo + DATABASE_URL.'),
+    );
+  }
 }

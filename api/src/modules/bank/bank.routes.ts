@@ -7,9 +7,10 @@ import { createBankController } from './bank.controller.js';
  *   GET   /questions?q=&limit=            — search published questions in the main bank
  *   PATCH /questions/:questionId/image    — re-point one question/option image at a new cropped URL
  *   PATCH /questions/:id/flag             — set/clear the flag on a published question
+ *   PATCH /questions/:id/text             — overwrite the stem/options/answer text (AI fix)
  *
- * `:questionId` (image) is the ingest question id stamped on the bank row's `ingest_ref`. `:id` (flag)
- * is the bank Mongo `_id` the browse card carries, so flagging works even for rows with no `ingest_ref`.
+ * `:questionId` (image) is the ingest question id stamped on the bank row's `ingest_ref`. `:id` (flag,
+ * text) is the bank Mongo `_id` the browse card carries, so both work even for rows with no `ingest_ref`.
  */
 export function createBankRouter(service: BankService): Router {
   const controller = createBankController(service);
@@ -17,5 +18,6 @@ export function createBankRouter(service: BankService): Router {
   router.get('/questions', controller.search);
   router.patch('/questions/:questionId/image', controller.updateImage);
   router.patch('/questions/:id/flag', controller.setFlag);
+  router.patch('/questions/:id/text', controller.setText);
   return router;
 }

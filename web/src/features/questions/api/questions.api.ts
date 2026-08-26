@@ -16,11 +16,11 @@ import {
   PublishResultSchema,
   QuestionSchema,
   ReExtractedQuestionSchema,
-  RefinedLatexSchema,
 } from '@ingest/contracts';
 import { request } from '../../../shared/api/http-client.js';
 import { uploadCrop } from '../../../shared/api/upload-crop.js';
 import { fetchPageCount, pageImageUrl } from '../../../shared/api/pages.js';
+import { refineLatex } from '../../../shared/api/refine.js';
 
 const QuestionListSchema = z.array(QuestionSchema);
 
@@ -72,14 +72,7 @@ export const questionsApi = {
   },
 
   /** One-click AI "Fix LaTeX": returns the text with math wrapped in \(...\). */
-  refine: async (text: string): Promise<string> => {
-    const result = await request('/questions/refine', {
-      method: 'POST',
-      body: { text },
-      schema: RefinedLatexSchema,
-    });
-    return result.text;
-  },
+  refine: (text: string): Promise<string> => refineLatex(text),
 
   /**
    * AI "read the page again": re-extract one question's fields (stem, options, answer, explanation)

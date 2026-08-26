@@ -9,6 +9,17 @@ export type BankImagePatch = {
 };
 
 /**
+ * The text columns the AI-fix flow may overwrite on a published bank question (any subset). Each is
+ * explicitly `| undefined` so the zod-inferred `UpdateBankText` (whose optional fields carry undefined)
+ * flows straight in under `exactOptionalPropertyTypes`; the store applies only the fields that are set.
+ */
+export type BankTextPatch = {
+  questionText?: string | undefined;
+  options?: string[] | undefined;
+  answer?: string | null | undefined;
+};
+
+/**
  * PORT (§3) for reading and lightly patching the MAIN bank's already-published `Question` collection
  * — the read/fix counterpart to publish's write-only {@link BankPublisher}. Keyed by the ingest
  * `questionId` (the stable id stamped on `ingest_ref` at publish), never the Mongo `_id`. Implemented
@@ -27,4 +38,10 @@ export interface BankQuestionStore {
    * persisted flag state.
    */
   setFlag(id: string, flagged: boolean): Promise<boolean>;
+  /**
+   * Overwrite the stem/options/answer text on a published question, keyed by its bank Mongo `_id`
+   * (what the browse card carries), so it works for legacy rows with no `ingest_ref`. Throws when no
+   * row matches; the caller has already validated the patch carries at least one field.
+   */
+  setText(id: string, patch: BankTextPatch): Promise<void>;
 }
