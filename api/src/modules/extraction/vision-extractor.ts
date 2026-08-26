@@ -19,6 +19,13 @@ export type ExtractedQuestion = {
   questionType: string | null;
   sourcePage: number;
   /**
+   * The SOURCE exam + year the model read off the page for a PYQ segment (e.g. "NEET" / "2019"), or
+   * null when the segment is not PYQ or the page did not print them. Distinct from the target
+   * exam/subject; stamped onto the persisted question by {@link toNewQuestion}.
+   */
+  pyqExam: string | null;
+  pyqYear: string | null;
+  /**
    * Structured match-the-column data (columns + best-effort key) when the model read this as a MATRIX
    * MATCH question; null otherwise. When set, {@link toNewQuestion} persists it and mirrors the key
    * into the flat `answer` — the stem stays the bare instruction and `options` stays empty.

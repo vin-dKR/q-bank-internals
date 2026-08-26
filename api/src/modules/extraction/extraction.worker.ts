@@ -68,6 +68,16 @@ function normalizeAnswerLabel(
 function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestion {
   const binding = topicBindingForPage(document.topics, draft.sourcePage);
 
+  // PYQ is the segment's per-node toggle (else the legacy document-level flag). When on, the source
+  // exam/year come from what the model read on the page, falling back to the document for legacy rows;
+  // when off, the question carries no PYQ provenance.
+  const isPyq = binding?.pyq ?? document.pyq;
+  const pyq = {
+    isPyq,
+    pyqExam: isPyq ? draft.pyqExam ?? document.pyqExam : null,
+    pyqYear: isPyq ? draft.pyqYear ?? document.pyqYear : null,
+  };
+
   // A match-the-column question persists its structured columns instead of options: the stem is the
   // bare instruction, options stays empty, and the flat `answer` mirrors the match key. The question
   // page rarely prints the matching, so back-fill an empty key from the merged answer sheet string.
@@ -89,6 +99,7 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
       questionType: binding?.questionType ?? document.questionType,
       sectionName: document.sectionName ?? document.path.section,
       topic: binding?.topicName ?? null,
+      ...pyq,
       sourceRegion: { page: draft.sourcePage, bbox: [0, 0, 1, 1] },
     };
   }
@@ -112,6 +123,7 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
     questionType: binding?.questionType ?? document.questionType,
     sectionName: binding?.sectionName ?? document.sectionName ?? document.path.section,
     topic: binding?.topicName ?? null,
+    ...pyq,
     sourceRegion: { page: draft.sourcePage, bbox: [0, 0, 1, 1] },
   };
 }

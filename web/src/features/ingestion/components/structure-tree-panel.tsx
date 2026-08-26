@@ -122,21 +122,6 @@ export function StructureTreePanel({
           <MetaField label="Module" value={tree.metadata.module} options={vocabulary.modulesFor(tree.metadata.subject)} placeholder="e.g. Resonance" onChange={(v) => { controller.setMetadata(cascadeMetadata('module', v, tree.metadata, vocabulary)); }} />
           <MetaField label="Chapter" value={tree.metadata.chapter} options={vocabulary.chaptersFor(tree.metadata.module)} placeholder="e.g. Gravitation" onChange={(v) => { controller.setMetadata(cascadeMetadata('chapter', v, tree.metadata, vocabulary)); }} />
         </div>
-        <label className="flex items-center gap-2 text-[13px] font-medium text-ink-2">
-          <input
-            type="checkbox"
-            className="size-4 accent-brand"
-            checked={tree.metadata.pyq}
-            onChange={(event) => { controller.setMetadata({ pyq: event.target.checked }); }}
-          />
-          <span>Previous-year questions (PYQ)</span>
-        </label>
-        {tree.metadata.pyq ? (
-          <div className="grid grid-cols-2 gap-2">
-            <MetaField label="PYQ exam" value={tree.metadata.pyqExam} options={vocabulary.exams} placeholder="e.g. NEET" onChange={(v) => { controller.setMetadata({ pyqExam: v }); }} />
-            <MetaField label="PYQ year" value={tree.metadata.pyqYear} options={[]} placeholder="e.g. 2019" onChange={(v) => { controller.setMetadata({ pyqYear: v }); }} />
-          </div>
-        ) : null}
       </section>
 
       <section className="flex flex-col gap-2">
@@ -284,6 +269,18 @@ function TreeNodeRow({ node, depth, controller, vocabulary, onBindPages, binding
             />
           </div>
         </div>
+      ) : null}
+
+      {!isCollapsed && leaf ? (
+        <label className="mt-2 flex w-fit items-center gap-2 text-[12px] font-medium text-ink-2">
+          <input
+            type="checkbox"
+            className="size-4 accent-brand"
+            checked={node.pyq ?? false}
+            onChange={(event) => { controller.setNodePyq(node.id, event.target.checked); }}
+          />
+          <span>PYQ — previous-year questions (AI reads each question&rsquo;s source exam &amp; year)</span>
+        </label>
       ) : null}
 
       {!isCollapsed && leaf ? (

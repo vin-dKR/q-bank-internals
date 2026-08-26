@@ -33,12 +33,18 @@ export type PageRange = z.infer<typeof PageRangeSchema>;
  * PDFs. When present (v2 assembled uploads), the extractor reads this topic's answers/explanations
  * from exactly those pages and binds them to this topic's questions — the operator's drag decides the
  * association, not a section-name-and-number guess. Absent for legacy uploads (behaviour unchanged).
+ *
+ * `pyq` is the operator's per-node previous-year-questions toggle for this segment. When set,
+ * extraction asks the model to read each question's SOURCE exam + year printed on the page
+ * (`question.pyqExam`/`pyqYear`, e.g. "NEET 2019") — a separate axis from the document-level target
+ * exam/subject. Absent/false on ordinary segments and on legacy uploads.
  */
 export const TopicTypeConfigSchema = z.object({
   questionType: QuestionTypeSchema,
   pageRange: PageRangeSchema,
   answerPageRange: PageRangeSchema.optional(),
   solutionPageRange: PageRangeSchema.optional(),
+  pyq: z.boolean().optional(),
 });
 export type TopicTypeConfig = z.infer<typeof TopicTypeConfigSchema>;
 
