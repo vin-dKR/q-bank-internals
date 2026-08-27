@@ -7,7 +7,7 @@ import type { CatalogFilterOptionSets, CatalogQuestionPage, CatalogStore } from 
  */
 export class UnconfiguredCatalogStore implements CatalogStore {
   listQuestions(): Promise<CatalogQuestionPage> {
-    return Promise.resolve({ questions: [], nextCursor: null });
+    return Promise.resolve({ questions: [], nextCursor: null, total: 0 });
   }
 
   filterOptions(): Promise<CatalogFilterOptionSets> {

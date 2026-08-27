@@ -13,10 +13,14 @@ export type CatalogFilters = {
   q?: string;
 };
 
-/** One page of browse results: the rows plus the id-cursor for the next page (null at the end). */
+/**
+ * One page of browse results: the rows, the id-cursor for the next page (null at the end), and
+ * `total` — the count of all questions matching the filters, independent of the page window.
+ */
 export type CatalogQuestionPage = {
   questions: CatalogQuestion[];
   nextCursor: string | null;
+  total: number;
 };
 
 /** The current selection the filter-options aggregation cascades against. */
