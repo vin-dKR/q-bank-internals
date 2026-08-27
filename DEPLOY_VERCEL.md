@@ -1,7 +1,8 @@
-# Deploying to Vercel — two independent projects
+# Deploying to Vercel — three independent projects
 
-`api/` and `web/` are independent apps (no workspace). Create **two Vercel projects from the same
-GitHub repo**, each with its own Root Directory. Deploy the API first, then the web app.
+`api/`, `web/` and `pdf-watermark-remover/` are independent apps (no workspace). Create **a Vercel
+project per app from the same GitHub repo**, each with its own Root Directory. Deploy the API first,
+then the web app. The watermark remover is standalone and can be deployed at any time.
 
 ---
 
@@ -79,3 +80,50 @@ cd api && npm run typecheck             # covers src/ AND the api/index.ts funct
 # web
 cd web && npm run build                 # the exact Vite build Vercel runs
 ```
+
+
+---
+
+## Project 3 — watermark remover (`pdf-watermark-remover/`)
+
+- **Import** the repo, set **Root Directory = `pdf-watermark-remover`**. Leave the framework preset
+  alone: Vercel detects FastAPI from `requirements.txt` and runs `app.py` (which defines a top-level
+  `app`) as a Python function. `vercel.json` only sets `maxDuration` and trims the bundle.
+- **Environment variables — all three are required:**
+  - `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_BUCKET`
+
+  The app refuses to start on Vercel without them rather than falling back to local disk, because
+  that fallback appears to work for exactly one request and then loses the session.
+
+### Why it cannot be a normal upload
+
+A Vercel function may not receive **or return** a body larger than **4.5 MB**. A real watermarked PDF
+is tens of megabytes, so the file never travels through the function:
+
+- `POST /api/upload-url` returns a signed URL; the **browser** PUTs the PDF straight to Supabase.
+- `POST /api/analyze-uploaded` then studies it by token.
+- `GET /api/download/{token}` answers **307** to a signed storage URL instead of streaming bytes.
+
+Locally none of this applies: with no Supabase variables set the app uses a temp directory, the
+browser posts the file to the app as before, and `/api/download` streams it. `/api/version` reports
+which mode is in force and the UI follows it — there is no flag to set by hand.
+
+### Why sessions live in storage
+
+A function is frozen the moment it answers and `/tmp` is not shared between instances, so the same
+session's next request may land somewhere that has never seen the file. Everything a session needs —
+the PDF, and the findings as `session.json` — lives under `excise/{token}/` in the bucket. The
+instance keeps a local copy of the PDF only as a cache; a miss costs a re-download, never a wrong
+answer. This was verified by serving one session from two separate processes.
+
+### Bundle size
+
+Python functions get **500 MB uncompressed** (not the 250 MB other runtimes get), and the
+dependencies come to roughly 220 MB. `opencv-python-headless` is deliberate: the GUI build pulls
+X11/Qt libraries that do not exist on the host and is about twice the size. Cold starts are a few
+seconds because of the native dependencies.
+
+### What this costs
+
+Uploads now leave the machine — they go to your Supabase bucket. The UI's copy was changed to say so.
+Watermarked exam PDFs are copyrighted; keep the bucket private and the retention short.

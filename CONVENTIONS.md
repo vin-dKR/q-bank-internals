@@ -20,7 +20,7 @@ Everything below is a consequence of that sentence.
 
 ## 1. Repository shape
 
-This repo holds **two independent apps** — no npm workspace. Each installs, builds, runs, and deploys
+This repo holds **three independent apps** — no npm workspace. Each installs, builds, runs, and deploys
 on its own, from its own directory:
 
 ```
@@ -29,7 +29,8 @@ ingest/
 │   └── contracts/   vendored copy of @ingest/contracts, installed via "file:./contracts".
 ├── web/     Vite + React frontend. Deploys as its own Vercel project (Root Directory: web).
 │   └── contracts/   vendored copy of @ingest/contracts, installed via "file:./contracts".
-└── tools/   Standalone operator tools. Not apps: not deployed, not imported, run by hand.
+└── pdf-watermark-remover/   Python + FastAPI. Finds and removes watermark objects from a PDF.
+                         Deploys as its own Vercel project (Root Directory: pdf-watermark-remover).
 ```
 
 **The API boundary is `@ingest/contracts`** — zod schemas + inferred DTO types, the single source of
@@ -43,34 +44,28 @@ into each app**. The rule that replaces "apps → packages":
   copies). Keep them identical.
 - The two apps **never** import from each other. Anything shared crosses only through `@ingest/contracts`.
 
-### `tools/` — standalone operator tools
+### A third app, and in another language
 
-`api/` and `web/` remain the only **apps**. `tools/` holds programs an operator runs by hand
-against files, not services the product calls. A directory earns a place here only if all four
-hold, and it stays out of `api/` and `web/` because of them:
+`pdf-watermark-remover/` is an app by the same test as the other two: it installs, builds, runs and
+deploys on its own, from its own directory, with its own entry point. It is **not** a shared package
+and nothing imports it.
 
-1. **Nothing imports it.** No app depends on it; deleting it cannot break a build.
-2. **It is not deployed.** No Vercel project points at it. Putting it inside `api/` would drag
-   non-Node files into that project's Root Directory for no reason.
-3. **It is run against files, by a person**, with its own entry point.
-4. **Its language is chosen by the problem, not by the repo.** Where a tool needs a library that
-   only exists well outside Node, it may be written in that language.
+It is Python because the problem is: the content-stream surgery and the pixel fallback rest on
+PyMuPDF and OpenCV, which have no equivalent in Node. Choosing the repo's language here would have
+meant reimplementing a PDF lexer and an image pipeline to avoid a directory.
 
-Consequences, so this does not become a loophole:
+What that costs, and the rules that keep the cost contained:
 
-- A tool that grows a caller inside the product stops being a tool. Move it behind
-  `@ingest/contracts` as a real API surface at that point — do not let apps shell out to `tools/`.
-- **Section 2's kebab-case rule binds directory names, not source files whose own language
-  mandates otherwise.** `tools/pdf-watermark-remover/` is kebab-case; the Python inside it is
-  `snake_case` because PEP 8 says so, and fighting a language's own convention to satisfy ours
-  produces code no Python reader trusts.
-- Every tool carries a `README.md` saying what it does and how to run it, and pins its
-  dependencies. Sample inputs and generated output are gitignored — this repo does not carry
-  binaries that git history can never release.
-
-**Current tools:** `pdf-watermark-remover` — finds and removes watermark objects from a PDF at the
-content-stream level, with a browser review step. Python: the content-stream surgery and the pixel
-fallback rest on PyMuPDF and OpenCV, which have no equivalent in Node.
+- **It does not cross the `@ingest/contracts` boundary.** `api` and `web` do not call it and must not.
+  If the product ever needs watermark removal as a feature, that is a new API surface in `api/` —
+  not `api` shelling out to a Python app.
+- **Section 2's kebab-case rule binds directory names, not source files whose own language mandates
+  otherwise.** The directory is kebab-case; the Python inside is `snake_case` because PEP 8 says so.
+  Fighting a language's own convention to satisfy ours produces code no Python reader trusts.
+- **Nothing it produces is committed.** Sample PDFs and generated output are gitignored; this repo
+  does not carry binaries that git history can never release.
+- **A fourth app in a fourth language needs a better reason than convenience.** The bar is the one
+  cleared here: a required library that genuinely does not exist for Node.
 
 ---
 

@@ -668,7 +668,7 @@ pre.snip .op{color:var(--cut)}
   <section id="stage-load">
     <div class="hero">
       <div>
-        <p class="eyebrow">Watermark removal, on this machine only</p>
+        <p class="eyebrow">Watermark removal, with the proof in front of you</p>
         <h1>See what leaves<br>before it <em>leaves</em>.</h1>
         <p class="lede">Excise finds every watermark object in a PDF and shows you
           <b>the exact pixels it would delete</b> — before it deletes anything. You confirm.
@@ -684,7 +684,7 @@ pre.snip .op{color:var(--cut)}
         </div>
 
         <div class="assure">
-          <span><i>●</i>Never uploaded anywhere</span>
+          <span><i>●</i>Private to you</span>
           <span><i>●</i>Deleted after 6 hours</span>
           <span><i>●</i>Original file untouched</span>
         </div>
@@ -926,7 +926,8 @@ let S = {
   busy:false, raster:false, params:null,
   scan:[], sweeping:false, step:1, gridview:'grid', thumbz:100,
   excluded:new Set(), lastPick:null, proofView:'one',
-  ready:null, readyKey:null,     // the finished file, and the choices that produced it
+  ready:null, readyKey:null,            // the finished file, and the choices that made it
+  directUpload:false, maxUploadMb:300,  // told to us by /api/version
 };
 
 /* This page reloads from disk on every visit; the server's Python does not.
@@ -940,6 +941,8 @@ let S = {
       return;
     }
     const d = await r.json();
+    S.directUpload = !!d.direct_upload;          // hosted: the file bypasses the function
+    if(d.max_upload_mb) S.maxUploadMb = d.max_upload_mb;
     if(d.stale) showStale(`Server is running older code — ${esc(d.changed.join(', '))} changed since it `
       + 'started. Stop it with <code>Ctrl+C</code> and run <code>python app.py</code> again.');
   }catch(e){ /* offline or pre-version build; the scan handler reports specifics */ }
@@ -1044,7 +1047,8 @@ async function analyze(file){
   showStage('loading');
   $('#ld-err').classList.add('hidden');
   $('#ld-name').textContent = file.name;
-  $('#ld-size').textContent = kb(file.size) + ' · reading on this machine only';
+  $('#ld-size').textContent = kb(file.size)
+    + (S.directUpload ? ' · sent to your own storage' : ' · read on this machine only');
   if(!/\.pdf$/i.test(file.name)){
     failLoad('Excise reads PDFs. Pick a file ending in .pdf.');
     return;
@@ -1060,7 +1064,7 @@ async function analyze(file){
   }, 250);
 
   try{
-    const d = await postFile(file, pct => {
+    const d = await sendFile(file, pct => {
       $('#ld-fill').style.width = pct + '%';
       if(pct >= 100){
         $('#ld-track').classList.add('idle'); setPhase(1);
@@ -1080,6 +1084,48 @@ function failLoad(msg){
   setPhase(-1);
   $('#ld-errmsg').textContent = msg;
   $('#ld-err').classList.remove('hidden');
+}
+
+/* How the file reaches the server depends on where the server is. Hosted, a
+   function may not receive more than 4.5 MB, so the browser sends the PDF
+   straight to storage and the server only ever sees the token. Locally there is
+   no such cap and the file is posted to the app as before. Decided by the
+   server, not guessed here. */
+async function sendFile(file, onProgress){
+  if(!S.directUpload) return postFile(file, onProgress);
+
+  const r = await fetch('/api/upload-url', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({filename:file.name, size:file.size})
+  });
+  const slot = await r.json();
+  if(!r.ok) throw new Error(slot.detail || 'The server would not accept an upload just now.');
+
+  await putDirect(slot.url, file, onProgress);
+
+  const done = await fetch('/api/analyze-uploaded', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({token:slot.token, filename:file.name, size:file.size})
+  });
+  const d = await done.json();
+  if(!done.ok) throw new Error(d.detail || 'The file uploaded but could not be read.');
+  return d;
+}
+
+/* the upload itself, so the progress bar still means something */
+function putDirect(url, file, onProgress){
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url);
+    xhr.setRequestHeader('Content-Type', 'application/pdf');
+    xhr.upload.onprogress = e => { if(e.lengthComputable) onProgress(Math.round(e.loaded / e.total * 100)); };
+    xhr.upload.onload = () => onProgress(100);
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300)
+      ? resolve()
+      : reject(new Error(`Storage refused the upload (${xhr.status}).`));
+    xhr.onerror = () => reject(new Error('The upload connection dropped.'));
+    xhr.send(file);
+  });
 }
 
 /* XHR, not fetch: a 300 MB file deserves a real progress bar rather than a spinner */

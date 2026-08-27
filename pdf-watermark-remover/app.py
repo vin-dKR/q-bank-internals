@@ -32,15 +32,18 @@ import cv2
 import fitz
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 import dewatermark as dw
 import pdf_dewatermark as pw
+import storage as store
 
 HERE = Path(__file__).parent
-SESSIONS = Path(tempfile.gettempdir()) / "pdf_dewatermark_sessions"
-SESSION_TTL = 6 * 3600
+SESSION_TTL = store.SESSION_TTL
+# Where this instance keeps a working copy of a session's PDF. On serverless it
+# is scratch space that may vanish between requests, never the source of truth.
+WORK = Path(tempfile.gettempdir()) / "excise-work"
 MAX_UPLOAD = 300 * 1024 * 1024
 PREVIEW_DPI = 96
 CROP_DPI = 130
@@ -75,7 +78,12 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Excise", lifespan=lifespan)
-STATE: dict[str, dict[str, Any]] = {}
+STORAGE: store.Storage = store.make_storage()
+SESSIONS = store.SessionStore(STORAGE)
+
+# A session's PDF, already downloaded onto this instance. Only ever a cache:
+# a miss costs a re-download, never a wrong answer.
+_PDF_CACHE: dict[str, Path] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -84,22 +92,41 @@ STATE: dict[str, dict[str, Any]] = {}
 
 
 def _sweep() -> None:
-    if not SESSIONS.exists():
-        return
-    cutoff = time.time() - SESSION_TTL
-    for d in SESSIONS.iterdir():
-        try:
-            if d.is_dir() and d.stat().st_mtime < cutoff:
-                shutil.rmtree(d, ignore_errors=True)
-                STATE.pop(d.name, None)
-        except OSError:
-            pass
+    if isinstance(STORAGE, store.LocalStorage):
+        STORAGE.sweep(SESSION_TTL)
+
+
+def _local_pdf(token: str) -> Path:
+    """This instance's copy of the session PDF, fetched from storage if absent."""
+    cached = _PDF_CACHE.get(token)
+    if cached and cached.exists():
+        return cached
+    try:
+        data = STORAGE.get(store.session_key(token, "input.pdf"))
+    except store.StorageError as exc:
+        raise HTTPException(404, f"That session's file is gone. Upload it again. ({exc})") from exc
+    d = WORK / token
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / "input.pdf"
+    path.write_bytes(data)
+    _PDF_CACHE[token] = path
+    return path
 
 
 def _session(token: str) -> dict[str, Any]:
-    if token not in STATE or not str(token).isalnum():
+    if not str(token).isalnum():
         raise HTTPException(404, "Session expired. Upload the PDF again.")
-    return STATE[token]
+    data = SESSIONS.load(token)
+    if not data:
+        raise HTTPException(404, "Session expired. Upload the PDF again.")
+    src = _local_pdf(token)
+    return {**data, "src": src, "dir": src.parent, "token": token}
+
+
+def _save_session(st: dict[str, Any]) -> None:
+    """Persist only what survives a JSON round trip; src/dir are per-instance."""
+    SESSIONS.save(st["token"], {k: v for k, v in st.items()
+                                if k not in ("src", "dir", "token")})
 
 
 # ---------------------------------------------------------------------------
@@ -552,7 +579,14 @@ def api_version():
                 changed.append(name)
         except OSError:
             pass
-    return {"stale": bool(changed), "changed": changed}
+    return {
+        "stale": bool(changed),
+        "changed": changed,
+        # the browser needs to know whether it may post the file to us at all
+        "storage": STORAGE.kind,
+        "direct_upload": STORAGE.kind != "local",
+        "max_upload_mb": MAX_UPLOAD // 1024 // 1024,
+    }
 
 
 @app.post("/api/analyze")
@@ -575,18 +609,22 @@ async def api_analyze(file: UploadFile = File(...)):
     blob = b"".join(chunks)
 
     token = uuid.uuid4().hex
-    sdir = SESSIONS / token
-    sdir.mkdir(parents=True, exist_ok=True)
-    src = sdir / "input.pdf"
-    src.write_bytes(blob)
+    try:
+        STORAGE.put(store.session_key(token, "input.pdf"), blob, "application/pdf")
+    except store.StorageError as exc:
+        raise HTTPException(502, f"Could not store the upload: {exc}") from exc
+    return _study(token, file.filename, len(blob))
 
+
+def _study(token: str, filename: str, size: int) -> JSONResponse:
+    """Everything after the bytes are in storage. Shared by both upload paths."""
+    src = _local_pdf(token)
     doc = fitz.open(src)
     if doc.is_encrypted and not doc.authenticate(""):
-        shutil.rmtree(sdir, ignore_errors=True)
+        doc.close(); SESSIONS.drop(token)
         raise HTTPException(400, "This PDF is password protected. Decrypt it first.")
     if doc.page_count < 1:
-        doc.close()
-        shutil.rmtree(sdir, ignore_errors=True)
+        doc.close(); SESSIONS.drop(token)
         raise HTTPException(400, "This PDF has no pages.")
 
     sample = min(doc.page_count, 60) if doc.page_count > 120 else None
@@ -613,14 +651,15 @@ async def api_analyze(file: UploadFile = File(...)):
     candidates = [c for c in candidates
                   if not (c["exhibit"].get("blanks_page") and c["confidence"] != "declared")]
 
-    STATE[token] = {"dir": sdir, "src": src, "name": file.filename, "candidates": candidates,
-                    "report": report, "size": len(blob)}
+    st = {"name": filename, "candidates": candidates, "size": size,
+          "page_count": report["page_count"], "token": token}
+    _save_session(st)
 
     return JSONResponse(
         {
             "token": token,
-            "filename": file.filename,
-            "size": len(blob),
+            "filename": filename,
+            "size": size,
             "pages": report["page_count"],
             "sampled": report["sampled"],
             "text_pages": report["text_pages"],
@@ -813,7 +852,9 @@ def api_pick(req: PickReq):
             c["snippet"] = ""
 
     fresh = [c for c in found if c["id"] not in known]
-    st["candidates"] = st["candidates"] + fresh
+    if fresh:
+        st["candidates"] = st["candidates"] + fresh
+        _save_session(st)          # a picked candidate must survive the next request
     return {"found": found, "added": [c["id"] for c in fresh]}
 
 
@@ -865,7 +906,7 @@ def api_raster_preview(req: RasterReq):
     cleaned = dw.remove_watermark(np.ascontiguousarray(rgb[:, :, ::-1]), **_raster_params(req))
     return {
         "page": page_index,
-        "pages": st["report"]["page_count"],
+        "pages": st["page_count"],
         "before": _png_b64(rgb),
         "after": _png_b64(cv2.cvtColor(cleaned, cv2.COLOR_GRAY2RGB)),
         "ink_pct": round(100.0 * (cleaned < 128).mean(), 2),
@@ -886,7 +927,7 @@ def api_clean_raster(req: RasterReq):
     out = st["dir"] / (Path(st["name"]).stem + "_pixels.pdf")
     out_doc.save(str(out), garbage=4, deflate=True)
     out_doc.close()
-    st["out"] = out
+    _publish(st, out)
     return {
         "download": f"/api/download/{req.token}",
         "filename": out.name,
@@ -901,6 +942,48 @@ def api_clean_raster(req: RasterReq):
         "raster": True,
         "dpi": dpi,
     }
+
+
+class UploadUrlReq(BaseModel):
+    filename: str
+    size: int = 0
+
+
+@app.post("/api/upload-url")
+def api_upload_url(req: UploadUrlReq):
+    """Hand the browser a URL it can send the PDF straight to.
+
+    Vercel caps a function's request body at 4.5 MB, so a real PDF can never
+    arrive through the function. The browser uploads to storage itself and then
+    calls /api/analyze-uploaded with the token.
+    """
+    if not req.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "That is not a PDF.")
+    if req.size and req.size > MAX_UPLOAD:
+        raise HTTPException(413, f"PDF is larger than {MAX_UPLOAD // 1024 // 1024} MB.")
+    _sweep()
+    token = uuid.uuid4().hex
+    try:
+        target = STORAGE.signed_put(store.session_key(token, "input.pdf"), "application/pdf", 900)
+    except store.StorageError as exc:
+        raise HTTPException(502, f"Storage would not sign the upload: {exc}") from exc
+    return {"token": token, **target}
+
+
+class AnalyzeUploadedReq(BaseModel):
+    token: str
+    filename: str
+    size: int = 0
+
+
+@app.post("/api/analyze-uploaded")
+def api_analyze_uploaded(req: AnalyzeUploadedReq):
+    """Study a PDF the browser has already put in storage."""
+    if not req.token.isalnum():
+        raise HTTPException(400, "Bad session token.")
+    if not STORAGE.exists(store.session_key(req.token, "input.pdf")):
+        raise HTTPException(404, "That upload never arrived. Try again.")
+    return _study(req.token, req.filename, req.size)
 
 
 class PreviewReq(BaseModel):
@@ -926,7 +1009,7 @@ def api_preview(req: PreviewReq):
     _, mask = _diff_bbox(before, after)
     return {
         "page": page_index,
-        "pages": st["report"]["page_count"],
+        "pages": st["page_count"],
         "before": _png_b64(before),
         "after": _png_b64(after),
         "changed_pct": round(100.0 * mask.mean(), 2),
@@ -960,7 +1043,7 @@ def api_clean(req: CleanReq):
     doc.close()
 
     text_intact, text_checked = _text_check(src, out)
-    st["out"] = out
+    _publish(st, out)
     return {
         "download": f"/api/download/{req.token}",
         "filename": out.name,
@@ -981,13 +1064,38 @@ def api_clean(req: CleanReq):
     }
 
 
+def _publish(st: dict, out: Path) -> None:
+    """Put the finished file in storage and record it on the session."""
+    try:
+        STORAGE.put(store.session_key(st["token"], "output.pdf"),
+                    out.read_bytes(), "application/pdf")
+    except store.StorageError as exc:
+        raise HTTPException(502, f"Could not store the cleaned file: {exc}") from exc
+    st["out_name"] = out.name
+    st["out_size"] = out.stat().st_size
+    _save_session(st)
+
+
 @app.get("/api/download/{token}")
 def api_download(token: str):
     st = _session(token)
-    out = st.get("out")
-    if not out or not Path(out).exists():
+    name = st.get("out_name")
+    if not name:
         raise HTTPException(404, "Nothing cleaned yet.")
-    return FileResponse(str(out), media_type="application/pdf", filename=Path(out).name)
+    key = store.session_key(token, "output.pdf")
+
+    # A cleaned PDF is routinely larger than the 4.5 MB a function may return, so
+    # send the browser to storage instead of trying to carry the bytes ourselves.
+    if STORAGE.kind != "local":
+        try:
+            return RedirectResponse(STORAGE.signed_get(key, 900), status_code=307)
+        except store.StorageError as exc:
+            raise HTTPException(502, f"Could not sign the download: {exc}") from exc
+
+    local = st["dir"] / name
+    if not local.exists():
+        local.write_bytes(STORAGE.get(key))
+    return FileResponse(str(local), media_type="application/pdf", filename=name)
 
 
 def _free_port(host: str, start: int, tries: int = 12) -> int | None:
@@ -1032,8 +1140,9 @@ if __name__ == "__main__":
         with contextlib.suppress(AttributeError, DeprecationWarning):
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    SESSIONS.mkdir(parents=True, exist_ok=True)
+    WORK.mkdir(parents=True, exist_ok=True)
     print(f"Excise - http://{cli.host}:{port}")
+    print(f"storage: {STORAGE.kind}")
     print("Stop it with Ctrl+C.")
     try:
         uvicorn.run(app, host=cli.host, port=port, log_level="warning")

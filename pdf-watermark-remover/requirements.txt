@@ -1,0 +1,12 @@
+# PDF-object level: parsing, content-stream surgery, rendering
+PyMuPDF==1.25.5
+# Pixel level: the chroma-mask + levels pipeline and every crop/diff measurement.
+# headless, not opencv-python: the GUI build pulls X11/Qt libraries that do not
+# exist on a serverless host, and it is roughly twice the size for no benefit.
+opencv-python-headless==4.11.0.86
+numpy==2.2.3
+# The review UI. Vercel detects FastAPI from this line and runs app.py as a function.
+fastapi==0.115.11
+python-multipart==0.0.20
+# Local only -- Vercel provides its own server, but `python app.py` needs one.
+uvicorn==0.34.0
