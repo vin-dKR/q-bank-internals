@@ -87,6 +87,10 @@ const PUBLISHABLE_STATUSES: ReadonlySet<Document['status']> = new Set([
 /** Map one ingest question into the main bank's Question document shape. */
 function toBankQuestion(question: Question, index: number, document: Document): BankQuestion {
   return {
+    // The shared admin bank: ingest publishes for every org to read. eduents' tenancy read filter
+    // (`{ organizationId: null }`) matches a row only when the field EXISTS and is null — a row that
+    // OMITS the field is invisible to every org. So stamp an EXPLICIT null; never leave it absent.
+    organizationId: null,
     question_number: index + 1,
     file_name: document.fileName,
     question_text: question.stem,
