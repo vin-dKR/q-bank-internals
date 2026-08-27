@@ -54,6 +54,8 @@ export function QuestionsBrowse(): JSX.Element {
   const fixMutation = useCatalogFixText();
 
   const loaded = listQuery.data?.pages.flatMap((page) => page.questions).length ?? 0;
+  // `total` is the full filtered count (constant across pages); take it off the first page.
+  const total = listQuery.data?.pages[0]?.total ?? 0;
 
   return (
     <div className="grid grid-cols-[280px_minmax(0,1fr)] items-start gap-6 max-[900px]:grid-cols-1">
@@ -73,9 +75,9 @@ export function QuestionsBrowse(): JSX.Element {
         <SearchBar value={filters.q} onChange={(q) => { setFilters((prev) => ({ ...prev, q })); }} />
         {!listQuery.isPending && !listQuery.isError ? (
           <p className="m-0 text-xs text-ink-3">
-            {loaded === 0
+            {total === 0
               ? 'No questions'
-              : `Showing ${String(loaded)}${listQuery.hasNextPage ? '+' : ''} question${loaded === 1 ? '' : 's'}`}
+              : `Showing ${String(loaded)} of ${total.toLocaleString()} published question${total === 1 ? '' : 's'}`}
           </p>
         ) : null}
         <QuestionBrowseList

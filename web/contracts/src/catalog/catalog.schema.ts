@@ -57,10 +57,15 @@ export const CatalogQuerySchema = z.object({
 });
 export type CatalogQuery = z.infer<typeof CatalogQuerySchema>;
 
-/** One page of browse results: the rows plus the cursor to fetch the next page (null at the end). */
+/**
+ * One page of browse results: the rows, the cursor to fetch the next page (null at the end), and
+ * `total` — the count of ALL published questions matching the current filters, independent of
+ * pagination, so the browse header can show "Showing X of N" (N is the grand total when unfiltered).
+ */
 export const CatalogPageSchema = z.object({
   questions: z.array(CatalogQuestionSchema),
   nextCursor: z.string().nullable(),
+  total: z.number().int().nonnegative(),
 });
 export type CatalogPage = z.infer<typeof CatalogPageSchema>;
 
