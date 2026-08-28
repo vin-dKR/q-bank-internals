@@ -217,7 +217,9 @@ type TreeNodeRowProps = {
 
 function TreeNodeRow({ node, depth, controller, vocabulary, onBindPages, bindingSlot, maxPages, collapsed, onToggleCollapse }: TreeNodeRowProps): JSX.Element {
   const leaf = isLeaf(node);
-  const showQuestionType = leaf || node.level === 'part';
+  // The question type is chosen only on the leaf (the last node in a branch) — never on an
+  // organizing parent. Each leaf carries its own type; there is no inheritance to configure.
+  const showQuestionType = leaf;
   const hasBindings = node.bindings !== undefined && Object.keys(node.bindings).length > 0;
   const collapsible = node.children.length > 0 || hasBindings;
   const isCollapsed = collapsed.has(node.id);
@@ -264,7 +266,7 @@ function TreeNodeRow({ node, depth, controller, vocabulary, onBindPages, binding
             <Combobox
               value={node.questionType ?? ''}
               options={vocabulary.questionTypes}
-              placeholder={node.level === 'part' ? 'inherited by topics below' : 'e.g. single_correct'}
+              placeholder="e.g. single_correct"
               onChange={(value) => { controller.setQuestionType(node.id, value); }}
             />
           </div>

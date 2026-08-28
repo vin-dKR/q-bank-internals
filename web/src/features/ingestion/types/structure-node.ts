@@ -3,11 +3,11 @@ import type { ChapterMetadataDraft } from './chapter-group.js';
 
 /**
  * The optional structural levels between a chapter and its leaves, matching the source material:
- * `Chapter → Section → Part (question type) → Topic → questions`. Every level is optional — a deep
+ * `Chapter → Section → Part → Topic → questions`. Every level is optional — a deep
  * Resonance PDF uses all of them, a flat NEET DPP uses none (one leaf directly under the chapter).
  * The `Section` level mirrors the main app's "Section" filter (which lists exercises like
  * `EXERCISE (JM)`); the `Topic` leaf is the fine-grained topic (e.g. `Kinematics`); `Part` only
- * organizes and carries the question type — it is never published.
+ * organizes — it is never published. The question type is chosen on the leaf, never on a parent.
  */
 export type NodeLevel = 'section' | 'part' | 'topic';
 
@@ -44,13 +44,13 @@ export type LeafBindings = Partial<Record<ChapterKind, MaterializedArtifact>>;
 /**
  * One node of the durable structure tree. The tree is the source of truth; PDF slices attach to its
  * leaves as materialized artifacts. A node is a *leaf* when it has no children — only leaves carry
- * bindings. `questionType` is meaningful at a `part` node and inherited by its descendant leaves.
+ * bindings. `questionType` is chosen on the leaf (the last node in a branch), never on a parent.
  */
 export type StructureNode = {
   id: string;
   label: string;
   level: NodeLevel | null;
-  /** Set at a `part` node (or a flat leaf); the question type descendant leaves inherit. */
+  /** The question type for this leaf's questions. Set only on a leaf (never on a parent node). */
   questionType?: string;
   /**
    * Operator's per-node previous-year-questions toggle. Set on a leaf (the segment that binds page

@@ -164,6 +164,8 @@ export const UpdateQuestionSchema = QuestionSchema.pick({
   questionType: true,
   sectionName: true,
   topic: true,
+  pyqExam: true,
+  pyqYear: true,
   flagged: true,
 }).partial();
 export type UpdateQuestion = z.infer<typeof UpdateQuestionSchema>;

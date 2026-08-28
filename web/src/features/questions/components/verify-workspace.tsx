@@ -394,6 +394,8 @@ export function VerifyWorkspace({
   const drafts = useQuestionDrafts(documentId, questions.data, {
     questionType: document.data?.questionType ?? null,
     sectionName: document.data?.sectionName ?? null,
+    pyqExam: document.data?.pyqExam ?? null,
+    pyqYear: document.data?.pyqYear ?? null,
   });
 
   const [page, setPage] = useState(initialPage ?? 1);

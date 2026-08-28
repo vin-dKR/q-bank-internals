@@ -69,6 +69,8 @@ export class InMemoryQuestionRepository implements QuestionRepository {
         ...(patch.questionType !== undefined ? { questionType: patch.questionType } : {}),
         ...(patch.sectionName !== undefined ? { sectionName: patch.sectionName } : {}),
         ...(patch.topic !== undefined ? { topic: patch.topic } : {}),
+        ...(patch.pyqExam !== undefined ? { pyqExam: patch.pyqExam } : {}),
+        ...(patch.pyqYear !== undefined ? { pyqYear: patch.pyqYear } : {}),
         ...(patch.flagged !== undefined ? { flagged: patch.flagged } : {}),
         updatedAt: new Date().toISOString(),
       };

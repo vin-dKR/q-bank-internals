@@ -1444,6 +1444,49 @@
   background: color-mix(in srgb, var(--color-brand) 10%, transparent);
   pointer-events: none;
 }
+.reflow-draft {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--color-brand);
+  background: color-mix(in srgb, var(--color-brand) 12%, transparent);
+  cursor: move;
+}
+.reflow-handle {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  box-sizing: border-box;
+  background: #fff;
+  border: 2px solid var(--color-brand);
+  border-radius: 2px;
+  transform: translate(-50%, -50%);
+}
+.reflow-draft__actions {
+  position: absolute;
+  top: -8px;
+  right: 0;
+  transform: translateY(-100%);
+  display: flex;
+  gap: 4px;
+}
+.reflow-draft__btn {
+  width: 22px;
+  height: 22px;
+  line-height: 20px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.reflow-draft__btn--ok {
+  background: var(--color-brand);
+}
+.reflow-draft__btn--cancel {
+  background: var(--color-bad);
+}
 .slice-band {
   position: absolute;
   left: 0;

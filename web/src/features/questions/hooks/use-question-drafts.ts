@@ -11,13 +11,21 @@ export type QuestionDraft = {
   questionType: string;
   sectionName: string;
   topic: string;
+  /** Per-question PYQ exam/year (blank on a non-PYQ chapter); edited on a PYQ chapter's verify card. */
+  pyqExam: string;
+  pyqYear: string;
   options: QuestionOption[];
   /** Structured match-the-column data (columns + key) for MATRIX questions; null for every other. */
   match: MatchData | null;
 };
 
 /** Document-level fallbacks shown (and saved on first edit) when the question's own field is blank. */
-type DraftFallbacks = { questionType: string | null; sectionName: string | null };
+type DraftFallbacks = {
+  questionType: string | null;
+  sectionName: string | null;
+  pyqExam: string | null;
+  pyqYear: string | null;
+};
 
 function toQuestionDraft(question: Question, fallbacks: DraftFallbacks): QuestionDraft {
   return {
@@ -27,6 +35,8 @@ function toQuestionDraft(question: Question, fallbacks: DraftFallbacks): Questio
     questionType: question.questionType ?? fallbacks.questionType ?? '',
     sectionName: question.sectionName ?? fallbacks.sectionName ?? '',
     topic: question.topic ?? '',
+    pyqExam: question.pyqExam ?? fallbacks.pyqExam ?? '',
+    pyqYear: question.pyqYear ?? fallbacks.pyqYear ?? '',
     options: question.options.map((option) => ({ ...option })),
     match: question.match,
   };
@@ -50,6 +60,8 @@ function draftEquals(a: QuestionDraft, b: QuestionDraft): boolean {
     a.questionType === b.questionType &&
     a.sectionName === b.sectionName &&
     a.topic === b.topic &&
+    a.pyqExam === b.pyqExam &&
+    a.pyqYear === b.pyqYear &&
     matchEquals(a.match, b.match) &&
     a.options.length === b.options.length &&
     a.options.every((option, i) => {
@@ -69,6 +81,8 @@ function draftToPatch(draft: QuestionDraft): UpdateQuestion {
     questionType: draft.questionType || null,
     sectionName: draft.sectionName || null,
     topic: draft.topic || null,
+    pyqExam: draft.pyqExam || null,
+    pyqYear: draft.pyqYear || null,
   };
 }
 
@@ -109,14 +123,14 @@ export function useQuestionDrafts(
     setSavingIds(new Set());
   }
 
-  const { questionType, sectionName } = fallbacks;
+  const { questionType, sectionName, pyqExam, pyqYear } = fallbacks;
   const serverDrafts = useMemo(() => {
     const map = new Map<string, QuestionDraft>();
     for (const question of questions ?? []) {
-      map.set(question.id, toQuestionDraft(question, { questionType, sectionName }));
+      map.set(question.id, toQuestionDraft(question, { questionType, sectionName, pyqExam, pyqYear }));
     }
     return map;
-  }, [questions, questionType, sectionName]);
+  }, [questions, questionType, sectionName, pyqExam, pyqYear]);
 
   const dirtyIds = useMemo(() => {
     const ids = new Set<string>();
@@ -130,7 +144,7 @@ export function useQuestionDrafts(
   const draftFor = (question: Question): QuestionDraft =>
     drafts.get(question.id) ??
     serverDrafts.get(question.id) ??
-    toQuestionDraft(question, { questionType, sectionName });
+    toQuestionDraft(question, { questionType, sectionName, pyqExam, pyqYear });
 
   const setDraft = (questionId: string, draft: QuestionDraft): void => {
     setDrafts((prev) => new Map(prev).set(questionId, draft));
