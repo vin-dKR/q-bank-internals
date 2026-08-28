@@ -89,6 +89,7 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
       questionType: binding?.questionType ?? document.questionType,
       sectionName: document.sectionName ?? document.path.section,
       topic: binding?.topicName ?? null,
+      ...pyqProvenance(document, draft),
       sourceRegion: { page: draft.sourcePage, bbox: [0, 0, 1, 1] },
     };
   }
@@ -112,7 +113,25 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
     questionType: binding?.questionType ?? document.questionType,
     sectionName: binding?.sectionName ?? document.sectionName ?? document.path.section,
     topic: binding?.topicName ?? null,
+    ...pyqProvenance(document, draft),
     sourceRegion: { page: draft.sourcePage, bbox: [0, 0, 1, 1] },
+  };
+}
+
+/**
+ * The PYQ exam/year stamped on a persisted question. Null on a non-PYQ chapter. On a PYQ chapter the
+ * per-question tag the model read from the page wins; a field the page did not print falls back to the
+ * operator's chapter-level PYQ exam/year — so an untagged question in a PYQ compilation still carries
+ * the chapter's provenance, while a "[NEET 2019]" next to a specific question overrides it.
+ */
+function pyqProvenance(
+  document: Document,
+  draft: ExtractedQuestion,
+): { pyqExam: string | null; pyqYear: string | null } {
+  if (!document.pyq) return { pyqExam: null, pyqYear: null };
+  return {
+    pyqExam: draft.pyqExam ?? document.pyqExam,
+    pyqYear: draft.pyqYear ?? document.pyqYear,
   };
 }
 

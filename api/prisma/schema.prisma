@@ -166,6 +166,10 @@ model Question {
   questionType    String?
   sectionName     String?
   topic           String?
+  // Per-question previous-year provenance. On a PYQ chapter the extractor reads the exam/year printed
+  // with each question; either falls back to the chapter-level PYQ exam/year at publish. Null otherwise.
+  pyqExam         String?
+  pyqYear         String?
   // Marked on the Verify screen to flag a question for later attention; carried to the bank on publish.
   flagged         Boolean          @default(false)
   sourceRegion    SourceRegion

@@ -35,6 +35,8 @@ type Props = {
   /** Session-level context, surfaced read-only so the operator sees where this question is filed. */
   exam?: string | null;
   subject?: string | null;
+  /** True on a PYQ chapter — shows the per-question PYQ exam/year fields (AI-extracted, editable here). */
+  isPyq?: boolean;
   /** Suggestions for the creatable dropdowns (existing sections / chapters across the workspace). */
   sectionOptions?: readonly string[];
   topicOptions?: readonly string[];
@@ -149,6 +151,7 @@ export function EditableQuestionCard({
   cropDisabled = false,
   exam,
   subject,
+  isPyq = false,
   sectionOptions = [],
   topicOptions = [],
   answerSource,
@@ -557,6 +560,29 @@ export function EditableQuestionCard({
           />
         </label>
       </div>
+
+      {isPyq ? (
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+          <label className="flex flex-col gap-1.5">
+            <span className={FIELD_LABEL}>PYQ exam</span>
+            <Combobox
+              value={draft.pyqExam}
+              options={[]}
+              placeholder="e.g. NEET"
+              onChange={(v) => { set('pyqExam', v); }}
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className={FIELD_LABEL}>PYQ year</span>
+            <Combobox
+              value={draft.pyqYear}
+              options={[]}
+              placeholder="e.g. 2019"
+              onChange={(v) => { set('pyqYear', v); }}
+            />
+          </label>
+        </div>
+      ) : null}
 
       {question.isOptionImage ? (
         <div className="flex flex-col gap-2 rounded-lg border border-dashed border-line-strong bg-surface-2 p-2.5">

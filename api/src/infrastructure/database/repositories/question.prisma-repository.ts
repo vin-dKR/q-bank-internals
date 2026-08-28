@@ -32,6 +32,8 @@ type QuestionRow = {
   questionType: string | null;
   sectionName: string | null;
   topic: string | null;
+  pyqExam: string | null;
+  pyqYear: string | null;
   flagged: boolean;
   sourceRegion: { page: number; bbox: number[] };
   createdAt: Date;
@@ -73,6 +75,8 @@ function toQuestion(row: QuestionRow): Question {
     questionType: row.questionType,
     sectionName: row.sectionName,
     topic: row.topic,
+    pyqExam: row.pyqExam,
+    pyqYear: row.pyqYear,
     flagged: row.flagged,
     sourceRegion: { page: row.sourceRegion.page, bbox: [x0 ?? 0, y0 ?? 0, x1 ?? 0, y1 ?? 0] },
     createdAt: row.createdAt.toISOString(),
@@ -104,6 +108,8 @@ export class PrismaQuestionRepository implements QuestionRepository {
         questionType: question.questionType,
         sectionName: question.sectionName,
         topic: question.topic,
+        pyqExam: question.pyqExam,
+        pyqYear: question.pyqYear,
         sourceRegion: question.sourceRegion,
       })),
     });
@@ -141,6 +147,8 @@ export class PrismaQuestionRepository implements QuestionRepository {
         ...(patch.questionType !== undefined ? { questionType: patch.questionType } : {}),
         ...(patch.sectionName !== undefined ? { sectionName: patch.sectionName } : {}),
         ...(patch.topic !== undefined ? { topic: patch.topic } : {}),
+        ...(patch.pyqExam !== undefined ? { pyqExam: patch.pyqExam } : {}),
+        ...(patch.pyqYear !== undefined ? { pyqYear: patch.pyqYear } : {}),
         ...(patch.flagged !== undefined ? { flagged: patch.flagged } : {}),
       },
     });

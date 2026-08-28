@@ -21,6 +21,8 @@ export type NewQuestion = {
   questionType: string | null;
   sectionName: string | null;
   topic: string | null;
+  pyqExam: string | null;
+  pyqYear: string | null;
   sourceRegion: { page: number; bbox: [number, number, number, number] };
 };
 

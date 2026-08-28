@@ -38,6 +38,21 @@ EXTRACTION RULES:
 9. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.
 `;
 
+/**
+ * Appended only for a PYQ (previous-year) chapter: such papers print the source exam and/or year next
+ * to each question (e.g. "[NEET 2019]", "(JEE Main 2021)"). Read them PER QUESTION so a compilation
+ * mixing exams/years keeps each question's own tag; omit whichever is not printed (never guess).
+ */
+const PYQ_RULE = `
+PYQ (PREVIOUS-YEAR) RULE:
+This is a previous-year-questions paper. Many questions print the exam they came from and/or its year
+next to the question (e.g. "[NEET 2019]", "(JEE Main 2021)", "AIIMS 2018"). For EACH question, when
+such a tag is printed, add:
+- "pyq_exam": the exam name only, without the year (e.g. "NEET", "JEE Main", "AIIMS").
+- "pyq_year": the year only, as printed (e.g. "2019").
+Include only the field(s) actually printed for that question; OMIT a field when its value is not shown,
+and never guess or infer a value that is not printed.`;
+
 const TYPE_RULES: Record<string, string> = {
   single_correct:
     'This is a SINGLE CORRECT type: exactly four options (A)(B)(C)(D), exactly one correct.',
@@ -113,6 +128,7 @@ export function questionPrompt(document: Document, pageNumber: number): string {
     bindingNote,
     BASE_RULES.trim(),
     typeRule ? `TYPE-SPECIFIC RULE:\n${typeRule}` : '',
+    document.pyq ? PYQ_RULE.trim() : '',
   ]
     .filter(Boolean)
     .join('\n\n');

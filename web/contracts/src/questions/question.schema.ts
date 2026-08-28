@@ -123,6 +123,12 @@ export const QuestionSchema = z.object({
   questionType: z.string().nullable(),
   sectionName: z.string().nullable(),
   topic: z.string().nullable(),
+  // Per-question previous-year provenance. On a PYQ chapter the extractor reads the exam/year printed
+  // WITH each question (e.g. "[NEET 2019]"), so a compilation of mixed years/exams keeps each
+  // question's own tag; either may be null when the page prints none, and then falls back to the
+  // chapter-level PYQ exam/year at publish. Null on a non-PYQ chapter. Editable in Verify.
+  pyqExam: z.string().nullable(),
+  pyqYear: z.string().nullable(),
   // Marked on the Verify screen to distinguish a question needing later attention. Carried through to
   // the published bank row so a flagged question stays findable in the Questions browse.
   flagged: z.boolean(),
@@ -157,6 +163,8 @@ export const UpdateQuestionSchema = QuestionSchema.pick({
   questionType: true,
   sectionName: true,
   topic: true,
+  pyqExam: true,
+  pyqYear: true,
   flagged: true,
 }).partial();
 export type UpdateQuestion = z.infer<typeof UpdateQuestionSchema>;

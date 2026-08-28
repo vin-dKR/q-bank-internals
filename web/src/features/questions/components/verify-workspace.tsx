@@ -394,6 +394,8 @@ export function VerifyWorkspace({
   const drafts = useQuestionDrafts(documentId, questions.data, {
     questionType: document.data?.questionType ?? null,
     sectionName: document.data?.sectionName ?? null,
+    pyqExam: document.data?.pyqExam ?? null,
+    pyqYear: document.data?.pyqYear ?? null,
   });
 
   const [page, setPage] = useState(initialPage ?? 1);
@@ -1525,6 +1527,7 @@ export function VerifyWorkspace({
                 boxes={cardBoxesFor(question.id)}
                 drawTarget={cardDrawTargetFor(question.id)}
                 cropDisabled={runActive}
+                isPyq={document.data?.pyq ?? false}
                 answerSource={answerSource}
                 solutionSource={solutionSource}
                 onDraftChange={(draft) => { drafts.setDraft(question.id, draft); }}

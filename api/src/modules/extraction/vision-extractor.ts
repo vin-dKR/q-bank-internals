@@ -17,6 +17,13 @@ export type ExtractedQuestion = {
   explanation: string | null;
   sectionName: string | null;
   questionType: string | null;
+  /**
+   * Previous-year exam/year printed WITH this question (e.g. "[NEET 2019]"), read only when the
+   * chapter is a PYQ chapter — null otherwise, or when the page prints none. The worker fills a null
+   * from the chapter-level PYQ exam/year, so a mixed-exam PYQ compilation keeps each question's own tag.
+   */
+  pyqExam: string | null;
+  pyqYear: string | null;
   sourcePage: number;
   /**
    * Structured match-the-column data (columns + best-effort key) when the model read this as a MATRIX
