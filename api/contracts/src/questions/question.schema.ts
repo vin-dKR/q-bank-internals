@@ -123,15 +123,16 @@ export const QuestionSchema = z.object({
   questionType: z.string().nullable(),
   sectionName: z.string().nullable(),
   topic: z.string().nullable(),
-  // Per-question previous-year provenance. On a PYQ chapter the extractor reads the exam/year printed
-  // WITH each question (e.g. "[NEET 2019]"), so a compilation of mixed years/exams keeps each
-  // question's own tag; either may be null when the page prints none, and then falls back to the
-  // chapter-level PYQ exam/year at publish. Null on a non-PYQ chapter. Editable in Verify.
-  pyqExam: z.string().nullable(),
-  pyqYear: z.string().nullable(),
   // Marked on the Verify screen to distinguish a question needing later attention. Carried through to
   // the published bank row so a flagged question stays findable in the Questions browse.
   flagged: z.boolean(),
+  // Per-question PYQ provenance the model reads off the page when this question's segment is toggled
+  // PYQ: whether it is a previous-year question, plus the SOURCE exam + year it originally appeared in
+  // (e.g. "NEET" / "2019") — a separate axis from the document-level target exam/subject. `isPyq` is
+  // false and exam/year null on ordinary questions and on legacy rows (which fall back to the document).
+  isPyq: z.boolean(),
+  pyqExam: z.string().nullable(),
+  pyqYear: z.string().nullable(),
   sourceRegion: z.object({
     page: z.number().int().positive(),
     bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]),

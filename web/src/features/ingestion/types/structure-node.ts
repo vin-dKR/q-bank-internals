@@ -52,6 +52,12 @@ export type StructureNode = {
   level: NodeLevel | null;
   /** The question type for this leaf's questions. Set only on a leaf (never on a parent node). */
   questionType?: string;
+  /**
+   * Operator's per-node previous-year-questions toggle. Set on a leaf (the segment that binds page
+   * ranges); flows to the assembled topic's `TopicTypeConfig.pyq` so extraction reads each question's
+   * source exam + year off the page. Undefined/false means an ordinary segment.
+   */
+  pyq?: boolean;
   children: StructureNode[];
   bindings?: LeafBindings;
 };

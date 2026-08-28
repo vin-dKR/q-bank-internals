@@ -78,10 +78,11 @@ function combineGroup(group: ExtractedQuestion[]): ExtractedQuestion {
     explanation: explanations.length > 0 ? explanations.join('\n\n') : null,
     sectionName: first.sectionName,
     questionType: first.questionType,
-    // Sub-questions of one comprehension block share a page, so they share the PYQ tag — keep the first.
+    sourcePage: first.sourcePage,
+    // The whole passage shares one segment, so its PYQ source exam/year is the same on every
+    // sub-question — carry the first's onto the combined question.
     pyqExam: first.pyqExam,
     pyqYear: first.pyqYear,
-    sourcePage: first.sourcePage,
     // A comprehension block is never a match question.
     match: null,
     // Collapsed already — clear the passage so it is never re-grouped.

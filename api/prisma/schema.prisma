@@ -52,6 +52,9 @@ type TopicTypeConfig {
   // extractor reads this topic's key from exactly its own pages instead of guessing by name/number.
   answerPageRange   PageRange?
   solutionPageRange PageRange?
+  // Operator's per-node PYQ toggle for this segment: when set, extraction reads each question's source
+  // exam + year off the page. Absent/false on ordinary segments and legacy uploads.
+  pyq               Boolean?
 }
 
 // One topic inside a chapter PDF (Chapter -> Section -> Part -> Topic -> Questions). `name` is the
@@ -166,12 +169,14 @@ model Question {
   questionType    String?
   sectionName     String?
   topic           String?
-  // Per-question previous-year provenance. On a PYQ chapter the extractor reads the exam/year printed
-  // with each question; either falls back to the chapter-level PYQ exam/year at publish. Null otherwise.
-  pyqExam         String?
-  pyqYear         String?
   // Marked on the Verify screen to flag a question for later attention; carried to the bank on publish.
   flagged         Boolean          @default(false)
+  // Per-question PYQ provenance the model read off the page when this question's segment is PYQ: the
+  // flag plus the SOURCE exam + year it originally appeared in. Separate from the document-level target
+  // exam/subject. Defaults/null on ordinary questions and legacy rows (publish falls back to document).
+  isPyq           Boolean          @default(false)
+  pyqExam         String?
+  pyqYear         String?
   sourceRegion    SourceRegion
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt

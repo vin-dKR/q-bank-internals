@@ -54,6 +54,7 @@ function cloneStructure(node: StructureNode): StructureNode {
     label: node.label,
     level: node.level,
     ...(node.questionType !== undefined ? { questionType: node.questionType } : {}),
+    ...(node.pyq !== undefined ? { pyq: node.pyq } : {}),
     children: node.children.map(cloneStructure),
   };
 }

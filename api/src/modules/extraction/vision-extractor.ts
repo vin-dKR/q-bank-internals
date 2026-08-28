@@ -17,14 +17,14 @@ export type ExtractedQuestion = {
   explanation: string | null;
   sectionName: string | null;
   questionType: string | null;
+  sourcePage: number;
   /**
-   * Previous-year exam/year printed WITH this question (e.g. "[NEET 2019]"), read only when the
-   * chapter is a PYQ chapter — null otherwise, or when the page prints none. The worker fills a null
-   * from the chapter-level PYQ exam/year, so a mixed-exam PYQ compilation keeps each question's own tag.
+   * The SOURCE exam + year the model read off the page for a PYQ segment (e.g. "NEET" / "2019"), or
+   * null when the segment is not PYQ or the page did not print them. Distinct from the target
+   * exam/subject; stamped onto the persisted question by {@link toNewQuestion}.
    */
   pyqExam: string | null;
   pyqYear: string | null;
-  sourcePage: number;
   /**
    * Structured match-the-column data (columns + best-effort key) when the model read this as a MATRIX
    * MATCH question; null otherwise. When set, {@link toNewQuestion} persists it and mirrors the key

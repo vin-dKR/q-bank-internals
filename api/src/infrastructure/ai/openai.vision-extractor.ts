@@ -33,7 +33,7 @@ type RawQuestion = {
   /** Present only when the question page itself prints the answer / worked solution. */
   answer?: unknown;
   explanation?: unknown;
-  /** Present only on a PYQ chapter — the exam / year printed with this question ("[NEET 2019]"). */
+  /** Present only on a PYQ segment — the source exam + year the model read off the page. */
   pyq_exam?: unknown;
   pyq_year?: unknown;
 };
@@ -187,11 +187,9 @@ export class OpenAiVisionExtractor implements VisionExtractor {
           explanation: asStringOrNull(raw.explanation),
           sectionName: input.document.sectionName,
           questionType: input.document.questionType,
-          // Per-question PYQ tag read from the page, only on a PYQ chapter; the worker back-fills a
-          // null from the chapter-level exam/year so an untagged question still publishes as PYQ.
-          pyqExam: input.document.pyq ? asStringOrNull(raw.pyq_exam) : null,
-          pyqYear: input.document.pyq ? asStringOrNull(raw.pyq_year) : null,
           sourcePage: page.pageNumber,
+          pyqExam: asStringOrNull(raw.pyq_exam),
+          pyqYear: asStringOrNull(raw.pyq_year),
           match: toMatchData(raw.columns, raw.match),
           passage: asStringOrNull(raw.passage),
         });

@@ -1527,7 +1527,6 @@ export function VerifyWorkspace({
                 boxes={cardBoxesFor(question.id)}
                 drawTarget={cardDrawTargetFor(question.id)}
                 cropDisabled={runActive}
-                isPyq={document.data?.pyq ?? false}
                 answerSource={answerSource}
                 solutionSource={solutionSource}
                 onDraftChange={(draft) => { drafts.setDraft(question.id, draft); }}

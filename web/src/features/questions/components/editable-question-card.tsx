@@ -35,8 +35,6 @@ type Props = {
   /** Session-level context, surfaced read-only so the operator sees where this question is filed. */
   exam?: string | null;
   subject?: string | null;
-  /** True on a PYQ chapter — shows the per-question PYQ exam/year fields (AI-extracted, editable here). */
-  isPyq?: boolean;
   /** Suggestions for the creatable dropdowns (existing sections / chapters across the workspace). */
   sectionOptions?: readonly string[];
   topicOptions?: readonly string[];
@@ -151,7 +149,6 @@ export function EditableQuestionCard({
   cropDisabled = false,
   exam,
   subject,
-  isPyq = false,
   sectionOptions = [],
   topicOptions = [],
   answerSource,
@@ -561,7 +558,7 @@ export function EditableQuestionCard({
         </label>
       </div>
 
-      {isPyq ? (
+      {question.isPyq ? (
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
           <label className="flex flex-col gap-1.5">
             <span className={FIELD_LABEL}>PYQ exam</span>

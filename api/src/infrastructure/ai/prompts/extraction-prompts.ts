@@ -38,21 +38,6 @@ EXTRACTION RULES:
 9. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.
 `;
 
-/**
- * Appended only for a PYQ (previous-year) chapter: such papers print the source exam and/or year next
- * to each question (e.g. "[NEET 2019]", "(JEE Main 2021)"). Read them PER QUESTION so a compilation
- * mixing exams/years keeps each question's own tag; omit whichever is not printed (never guess).
- */
-const PYQ_RULE = `
-PYQ (PREVIOUS-YEAR) RULE:
-This is a previous-year-questions paper. Many questions print the exam they came from and/or its year
-next to the question (e.g. "[NEET 2019]", "(JEE Main 2021)", "AIIMS 2018"). For EACH question, when
-such a tag is printed, add:
-- "pyq_exam": the exam name only, without the year (e.g. "NEET", "JEE Main", "AIIMS").
-- "pyq_year": the year only, as printed (e.g. "2019").
-Include only the field(s) actually printed for that question; OMIT a field when its value is not shown,
-and never guess or infer a value that is not printed.`;
-
 const TYPE_RULES: Record<string, string> = {
   single_correct:
     'This is a SINGLE CORRECT type: exactly four options (A)(B)(C)(D), exactly one correct.',
@@ -111,6 +96,27 @@ function resolveQuestionType(document: Document, pageNumber: number): string | n
 }
 
 /**
+ * Extra rule appended when a page's segment is marked PYQ. Asks the model to read each question's
+ * SOURCE exam + year printed on the page (distinct from the target exam/subject in the context line)
+ * and return them per-question, never guessed. The worker stamps these onto `question.pyqExam`/`pyqYear`.
+ */
+const PYQ_RULE = `
+PREVIOUS-YEAR QUESTION (PYQ) RULE:
+These are previous-year exam questions. For EACH question, read the SOURCE exam and year printed on the page — usually shown beside the question, e.g. "[NEET 2019]", "(JEE Main 2021)", "AIEEE 2011" — and add these two fields to that question object:
+- "pyq_exam": the exam the question originally appeared in (e.g. "NEET", "JEE Main"). Omit when the page does not print it.
+- "pyq_year": the year as printed (e.g. "2019"). Omit when the page does not print it.
+This SOURCE exam/year is distinct from the target exam/subject in the context above. Never guess; omit any field the page does not actually show.
+`;
+
+/**
+ * Whether the questions on a page should be extracted as PYQ: the segment's per-node toggle when the
+ * page is covered by a block, else the document-level PYQ flag (legacy whole-chapter PYQ uploads).
+ */
+function resolvePyq(document: Document, binding: ReturnType<typeof topicBindingForPage>): boolean {
+  return binding?.pyq ?? document.pyq;
+}
+
+/**
  * The question-extraction prompt for one page of a document. The question type comes from the
  * operator's topic config when the page is covered by a block (stated as fixed so the model cannot
  * re-classify), else from the document-level question type — exactly mirroring how the worker stamps
@@ -128,7 +134,7 @@ export function questionPrompt(document: Document, pageNumber: number): string {
     bindingNote,
     BASE_RULES.trim(),
     typeRule ? `TYPE-SPECIFIC RULE:\n${typeRule}` : '',
-    document.pyq ? PYQ_RULE.trim() : '',
+    resolvePyq(document, binding) ? PYQ_RULE.trim() : '',
   ]
     .filter(Boolean)
     .join('\n\n');

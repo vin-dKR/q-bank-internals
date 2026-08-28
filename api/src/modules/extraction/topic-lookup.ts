@@ -6,12 +6,15 @@ import type { ChapterTopic, QuestionType } from '@ingest/contracts';
  * `sectionName` / `topicName` are the split display identity the operator built in the v2 tree; they
  * become the question's `sectionName` / `topic` (→ bank `section_name` / `topic`). Both are absent for
  * legacy uploads and branches lacking that level, so the worker falls back to document-level values.
+ * `pyq` is the segment's per-node previous-year-questions toggle — when set, the prompt asks the model
+ * for each question's source exam + year, and the worker stamps the question as PYQ.
  */
 export type TopicBinding = {
   matchKey: string;
   questionType: QuestionType;
   sectionName?: string;
   topicName?: string;
+  pyq: boolean;
 };
 
 /**
@@ -29,6 +32,7 @@ export function topicBindingForPage(topics: ChapterTopic[], pageNumber: number):
           questionType: block.questionType,
           ...(topic.sectionName ? { sectionName: topic.sectionName } : {}),
           ...(topic.topicName ? { topicName: topic.topicName } : {}),
+          pyq: block.pyq ?? false,
         };
       }
     }

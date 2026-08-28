@@ -99,21 +99,30 @@ export class MongoCatalogStore implements CatalogStore {
     cursor: string | null,
     limit: number,
   ): Promise<CatalogQuestionPage> {
+    // `total` counts the whole filtered set (no cursor), so it stays constant across pages; the page
+    // window is the cursor-bounded `find`. Both share the same filter and run concurrently.
     const filter = this.buildFilter(filters);
-    if (cursor) filter._id = { $gt: { $oid: cursor } };
-    const command = {
+    const pageFilter = cursor ? { ...filter, _id: { $gt: { $oid: cursor } } } : filter;
+    const findCommand = {
       find: this.collection,
-      filter,
+      filter: pageFilter,
       sort: { _id: 1 },
       // Over-fetch by one to detect (and produce the cursor for) a next page.
       limit: limit + 1,
     } as unknown as Prisma.InputJsonObject;
+    const countCommand = { count: this.collection, query: filter } as unknown as Prisma.InputJsonObject;
 
-    const rows = this.readBatch(await this.prisma.$runCommandRaw(command));
+    const [findReply, countReply] = await Promise.all([
+      this.prisma.$runCommandRaw(findCommand),
+      this.prisma.$runCommandRaw(countCommand),
+    ]);
+
+    const rows = this.readBatch(findReply);
     const hasMore = rows.length > limit;
     const questions = hasMore ? rows.slice(0, limit) : rows;
     const nextCursor = hasMore ? (questions[questions.length - 1]?.id ?? null) : null;
-    return { questions, nextCursor };
+    const total = ejsonNumber.catch(0).parse((countReply as Record<string, unknown>).n ?? 0);
+    return { questions, nextCursor, total };
   }
 
   async filterOptions(selection: CatalogFilterSelection): Promise<CatalogFilterOptionSets> {

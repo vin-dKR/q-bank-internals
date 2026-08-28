@@ -115,6 +115,7 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
               pageRange: { from, to },
               ...(a ? { answerPageRange: { from: a.from, to: a.to } } : {}),
               ...(s ? { solutionPageRange: { from: s.from, to: s.to } } : {}),
+              ...(leaf.node.pyq ? { pyq: true } : {}),
             },
           ],
           ...(sectionName ? { sectionName } : {}),

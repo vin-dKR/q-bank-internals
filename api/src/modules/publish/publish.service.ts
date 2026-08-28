@@ -87,6 +87,10 @@ const PUBLISHABLE_STATUSES: ReadonlySet<Document['status']> = new Set([
 /** Map one ingest question into the main bank's Question document shape. */
 function toBankQuestion(question: Question, index: number, document: Document): BankQuestion {
   return {
+    // The shared admin bank: ingest publishes for every org to read. eduents' tenancy read filter
+    // (`{ organizationId: null }`) matches a row only when the field EXISTS and is null — a row that
+    // OMITS the field is invisible to every org. So stamp an EXPLICIT null; never leave it absent.
+    organizationId: null,
     question_number: index + 1,
     file_name: document.fileName,
     question_text: question.stem,
@@ -111,9 +115,9 @@ function toBankQuestion(question: Question, index: number, document: Document): 
     // Module filter narrow the published list (the bank had no module column before).
     module: question.path.module,
     // PYQ provenance so a previous-year question shows and filters as such in the Questions browse.
-    // `is_pyq` is a whole-chapter fact; the exam/year are per-question (the extractor reads each
-    // question's printed "[NEET 2019]" tag), falling back to the chapter-level values the operator set.
-    is_pyq: document.pyq,
+    // Sourced per-question (the model reads the source exam/year off the page for a PYQ segment),
+    // falling back to the document-level values so legacy rows extracted before per-question PYQ still read.
+    is_pyq: question.isPyq || document.pyq,
     pyq_exam: question.pyqExam ?? document.pyqExam,
     pyq_year: question.pyqYear ?? document.pyqYear,
     chapter: question.path.chapter,

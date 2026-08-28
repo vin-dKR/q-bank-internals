@@ -32,9 +32,10 @@ type QuestionRow = {
   questionType: string | null;
   sectionName: string | null;
   topic: string | null;
+  flagged: boolean;
+  isPyq: boolean;
   pyqExam: string | null;
   pyqYear: string | null;
-  flagged: boolean;
   sourceRegion: { page: number; bbox: number[] };
   createdAt: Date;
   updatedAt: Date;
@@ -75,9 +76,10 @@ function toQuestion(row: QuestionRow): Question {
     questionType: row.questionType,
     sectionName: row.sectionName,
     topic: row.topic,
+    flagged: row.flagged,
+    isPyq: row.isPyq,
     pyqExam: row.pyqExam,
     pyqYear: row.pyqYear,
-    flagged: row.flagged,
     sourceRegion: { page: row.sourceRegion.page, bbox: [x0 ?? 0, y0 ?? 0, x1 ?? 0, y1 ?? 0] },
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -108,6 +110,7 @@ export class PrismaQuestionRepository implements QuestionRepository {
         questionType: question.questionType,
         sectionName: question.sectionName,
         topic: question.topic,
+        isPyq: question.isPyq,
         pyqExam: question.pyqExam,
         pyqYear: question.pyqYear,
         sourceRegion: question.sourceRegion,
