@@ -225,6 +225,11 @@ export const ReExtractQuestionSchema = z.object({
   documentId: z.string().min(1),
   questionId: z.string().min(1),
   source: ReExtractSourceSchema.optional(),
+  // Optional question-type override for the re-read: the verify screen sends the type the operator
+  // has just selected (before saving the draft) so the model re-extracts with the RIGHT config —
+  // e.g. switching a mis-typed question to "matrix" and re-reading yields the match columns, not
+  // garbled options. Omitted ⇒ the server uses the question's stored type.
+  questionType: z.string().min(1).nullable().optional(),
 });
 export type ReExtractQuestion = z.infer<typeof ReExtractQuestionSchema>;
 

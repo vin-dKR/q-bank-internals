@@ -72,6 +72,9 @@ function labelsToAnswer(labels: Iterable<string>): string {
 
 const FIELD_LABEL = 'text-[13px] font-medium text-ink-2';
 
+/** `reading` sentinel for the whole-question re-extract (distinct from the per-field keys). */
+const WHOLE_REEXTRACT = 'whole';
+
 /**
  * The click-to-mark-correct control on an option in Verify: radio-like for single_correct (round),
  * checkbox-like for multi_correct (square). The correct state reuses the green answer treatment
@@ -224,10 +227,47 @@ export function EditableQuestionCard({
   ): Promise<void> => {
     setReading(field);
     try {
-      apply(await questionsApi.reExtract(question.documentId, question.id, source));
+      // Pass the type the operator currently has selected (the local draft), so a re-read honours a
+      // just-changed type before the draft is saved — not the stale stored type.
+      apply(await questionsApi.reExtract(question.documentId, question.id, source, draft.questionType));
     } catch (error) {
       // The page read failed (empty/truncated model reply, network, etc.). Surface it instead of
       // silently doing nothing — and critically, never touch the field, so the current value survives.
+      toast.error(
+        'Could not re-read the page',
+        error instanceof Error ? error.message : 'Please try again.',
+      );
+    } finally {
+      setReading(null);
+    }
+  };
+
+  // Re-read the WHOLE question from its page using the type the operator has selected, and replace the
+  // structure at once — the fix for "a matrix/comprehension hidden in a same-type batch". Switch the
+  // type in the dropdown, click this, and the model re-extracts with that type's config: a matrix
+  // rebuilds its columns/match table (not garbled options); a plain type rebuilds its options. Non-empty
+  // reads win; an empty answer/explanation is kept, so a question paper that prints neither never wipes.
+  const reExtractWhole = async (): Promise<void> => {
+    setReading(WHOLE_REEXTRACT);
+    try {
+      const fresh = await questionsApi.reExtract(question.documentId, question.id, undefined, draft.questionType);
+      const next: QuestionDraft = { ...draft };
+      if (fresh.stem.trim() !== '') next.stem = fresh.stem;
+      if (fresh.match) {
+        next.match = fresh.match;
+        next.options = [];
+        if (Object.keys(fresh.match.key).length > 0) next.answer = matchKeyToAnswer(fresh.match.key);
+      } else if (fresh.options.length > 0) {
+        next.match = null;
+        next.options = fresh.options;
+        if (fresh.answer.trim() !== '') next.answer = fresh.answer;
+      } else if (fresh.answer.trim() !== '') {
+        next.answer = fresh.answer;
+      }
+      if (fresh.explanation && fresh.explanation.trim() !== '') next.explanation = fresh.explanation;
+      onDraftChange(next);
+      toast.toast({ tone: 'success', title: 'Re-extracted from the page', description: 'Review the updated fields, then Update to save.' });
+    } catch (error) {
       toast.error(
         'Could not re-read the page',
         error instanceof Error ? error.message : 'Please try again.',
@@ -537,6 +577,15 @@ export function EditableQuestionCard({
             placeholder="Select type…"
             onChange={(v) => { set('questionType', v); }}
           />
+          <Button
+            variant="ghost"
+            size="xs"
+            disabled={reading !== null || fixing !== null}
+            title="Re-read this question from the page using the selected type — rebuilds its options or match table"
+            onClick={() => { void reExtractWhole(); }}
+          >
+            {reading === WHOLE_REEXTRACT ? '…' : <><IconScan /> Re-extract with this type</>}
+          </Button>
         </label>
         <label className="flex flex-col gap-1.5">
           <span className={FIELD_LABEL}>Section</span>
