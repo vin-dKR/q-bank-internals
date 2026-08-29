@@ -90,6 +90,12 @@ export type QuestionDrafts = {
   /** The question's working copy: the local draft when one exists, else the server truth. */
   draftFor: (question: Question) => QuestionDraft;
   setDraft: (questionId: string, draft: QuestionDraft) => void;
+  /**
+   * Apply a change computed from the LATEST draft (local edit else server truth), never a stale
+   * snapshot. The card's field writes go through this so two AI re-reads resolving out of order can
+   * no longer clobber each other — each folds onto the freshest state instead of a captured closure.
+   */
+  updateDraft: (questionId: string, updater: (prev: QuestionDraft) => QuestionDraft) => void;
   /** Questions whose draft differs from the server — the only ones a save ever sends. */
   dirtyIds: ReadonlySet<string>;
   savingIds: ReadonlySet<string>;
@@ -150,6 +156,16 @@ export function useQuestionDrafts(
     setDrafts((prev) => new Map(prev).set(questionId, draft));
   };
 
+  const updateDraft = (questionId: string, updater: (prev: QuestionDraft) => QuestionDraft): void => {
+    setDrafts((prev) => {
+      // Base on the freshest state: an in-flight local draft if any, else the server truth. Computed
+      // inside the functional update so it can never read a stale render-time snapshot.
+      const base = prev.get(questionId) ?? serverDrafts.get(questionId);
+      if (!base) return prev;
+      return new Map(prev).set(questionId, updater(base));
+    });
+  };
+
   const save = async (questionIds: readonly string[]): Promise<void> => {
     const sent = new Map<string, QuestionDraft>();
     const updates: QuestionBatchUpdate[] = [];
@@ -193,5 +209,5 @@ export function useQuestionDrafts(
     }
   };
 
-  return { draftFor, setDraft, dirtyIds, savingIds, isSaving: batch.isPending, save };
+  return { draftFor, setDraft, updateDraft, dirtyIds, savingIds, isSaving: batch.isPending, save };
 }
