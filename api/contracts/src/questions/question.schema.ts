@@ -238,6 +238,10 @@ export const ReExtractedQuestionSchema = z.object({
   options: z.array(QuestionOptionSchema),
   answer: z.string(),
   explanation: z.string().nullable(),
+  // Structured match-the-column data when the re-read question is a MATRIX MATCH type (columns +
+  // correct matching); null for every other type. Mirrors {@link QuestionSchema.match} so a matrix
+  // re-extraction can drop straight into the verify card's match table instead of garbling `options`.
+  match: MatchDataSchema.nullable(),
 });
 export type ReExtractedQuestion = z.infer<typeof ReExtractedQuestionSchema>;
 

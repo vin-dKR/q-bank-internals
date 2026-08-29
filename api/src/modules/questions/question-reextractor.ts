@@ -1,4 +1,4 @@
-import type { QuestionOption } from '@ingest/contracts';
+import type { MatchData, QuestionOption } from '@ingest/contracts';
 import type { AiTokenUsage } from '../usage/index.js';
 
 /** One rendered page image plus the identity of the question to re-read from it. */
@@ -18,6 +18,8 @@ export type QuestionReExtraction = {
   options: QuestionOption[];
   answer: string;
   explanation: string | null;
+  /** Structured columns + matching for a MATRIX MATCH re-read; null for every other type. */
+  match: MatchData | null;
   usage: AiTokenUsage;
 };
 

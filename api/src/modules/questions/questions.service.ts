@@ -167,7 +167,7 @@ export class QuestionsService {
     const sourceDocumentId = source?.documentId ?? documentId;
     const sourcePage = source?.page ?? question.sourceRegion.page;
     const png = await this.pages.renderPage(sourceDocumentId, sourcePage);
-    const { stem, options, answer, explanation, usage } = await this.reExtractor.reExtract({
+    const { stem, options, answer, explanation, match, usage } = await this.reExtractor.reExtract({
       png,
       questionNumber: question.questionNumber,
       stemHint: question.stem,
@@ -179,7 +179,7 @@ export class QuestionsService {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn({ err: message }, 'Failed to record question re-extract token usage');
     }
-    return { stem, options, answer, explanation };
+    return { stem, options, answer, explanation, match };
   }
 
   /** One-click "Fix LaTeX": wrap the math in `\(...\)`. Empty text is returned unchanged. */
