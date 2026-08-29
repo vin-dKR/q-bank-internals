@@ -13,6 +13,7 @@ type State = {
 type Action =
   | { type: 'newBlock' }
   | { type: 'addCrop'; crop: CropRect }
+  | { type: 'updateCrop'; blockId: string; index: number; crop: CropRect }
   | { type: 'removeCrop'; blockId: string; index: number }
   | { type: 'removeBlock'; blockId: string }
   | { type: 'moveBlock'; blockId: string; dir: -1 | 1 }
@@ -37,6 +38,16 @@ function reducer(state: State, action: Action): State {
       }
       const next = blocks.map((b) => (b.id === target.id ? { ...b, crops: [...b.crops, action.crop] } : b));
       return { blocks: next, activeId };
+    }
+    case 'updateCrop': {
+      // Replace a finalized crop's rectangle in place — keeps it in its own block and never drops the
+      // block (unlike remove+re-add), so re-editing a single-crop block can't move or delete it.
+      const blocks = state.blocks.map((b) =>
+        b.id === action.blockId
+          ? { ...b, crops: b.crops.map((c, i) => (i === action.index ? action.crop : c)) }
+          : b,
+      );
+      return { ...state, blocks };
     }
     case 'removeCrop': {
       const blocks = state.blocks
@@ -81,6 +92,7 @@ export type ReflowController = {
   activeId: string | null;
   newBlock: () => void;
   addCrop: (crop: CropRect) => void;
+  updateCrop: (blockId: string, index: number, crop: CropRect) => void;
   removeCrop: (blockId: string, index: number) => void;
   removeBlock: (blockId: string) => void;
   moveBlock: (blockId: string, dir: -1 | 1) => void;
@@ -99,6 +111,9 @@ export function useReflowBlocks(): ReflowController {
 
   const newBlock = useCallback((): void => { dispatch({ type: 'newBlock' }); }, []);
   const addCrop = useCallback((crop: CropRect): void => { dispatch({ type: 'addCrop', crop }); }, []);
+  const updateCrop = useCallback((blockId: string, index: number, crop: CropRect): void => {
+    dispatch({ type: 'updateCrop', blockId, index, crop });
+  }, []);
   const removeCrop = useCallback((blockId: string, index: number): void => {
     dispatch({ type: 'removeCrop', blockId, index });
   }, []);
@@ -116,6 +131,7 @@ export function useReflowBlocks(): ReflowController {
     activeId: state.activeId,
     newBlock,
     addCrop,
+    updateCrop,
     removeCrop,
     removeBlock,
     moveBlock,
