@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
-import { IconEdit, IconFileText, IconImage, IconLayers, IconScan } from '../../shared/ui/index.js';
+import { IconDroplet, IconEdit, IconFileText, IconImage, IconLayers, IconScan } from '../../shared/ui/index.js';
 
 /** localStorage key remembering whether the operator collapsed the sidebar. */
 const SIDEBAR_KEY = 'ingest:sidebarCollapsed';
@@ -125,6 +125,37 @@ function NavItem({ to, end = false, icon, label, collapsed }: NavItemProps): JSX
   );
 }
 
+/**
+ * A sidebar entry that points to an EXTERNAL site, opening in a new tab. `NavItem`/`NavLink` only
+ * handle in-app routes, so this renders a plain anchor styled to match. Used for tools that live on
+ * another site (e.g. the watermark remover) — the app just links out, all work happens there.
+ */
+function ExternalNavItem({
+  href,
+  icon,
+  label,
+  collapsed,
+}: {
+  href: string;
+  icon: JSX.Element;
+  label: string;
+  collapsed: boolean;
+}): JSX.Element {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={navClass(collapsed)({ isActive: false })}
+      title={collapsed ? label : `${label} — opens in a new tab`}
+      aria-label={`${label} — opens in a new tab`}
+    >
+      {icon}
+      {!collapsed && <span className="truncate">{label}</span>}
+    </a>
+  );
+}
+
 /** A group heading: uppercase caption expanded, a short centered rule in the collapsed rail. */
 function SectionCaption({ label, collapsed }: { label: string; collapsed: boolean }): JSX.Element {
   if (collapsed) {
@@ -211,6 +242,12 @@ export function AppLayout(): JSX.Element {
           <NavItem to="/tools/qna" icon={<IconScan />} label="QnA PDF Generator" collapsed={collapsed} />
           <NavItem to="/tools/rename" icon={<IconImage />} label="Image Renamer" collapsed={collapsed} />
           <NavItem to="/tools/edit" icon={<IconEdit />} label="Pdf Editor" collapsed={collapsed} />
+          <ExternalNavItem
+            href="https://pdf-watermark-remover-black.vercel.app/"
+            icon={<IconDroplet />}
+            label="Watermark Remover"
+            collapsed={collapsed}
+          />
         </nav>
 
         <div className="flex-1 max-[820px]:hidden" />

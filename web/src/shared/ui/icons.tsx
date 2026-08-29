@@ -52,6 +52,14 @@ export function IconImage(props: IconProps): JSX.Element {
   );
 }
 
+export function IconDroplet(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <path d="M12 2.7S5.5 9.2 5.5 14a6.5 6.5 0 0 0 13 0C18.5 9.2 12 2.7 12 2.7Z" />
+    </svg>
+  );
+}
+
 export function IconEdit(props: IconProps): JSX.Element {
   return (
     <svg {...base(props)}>
