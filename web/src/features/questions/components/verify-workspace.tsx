@@ -1529,7 +1529,7 @@ export function VerifyWorkspace({
                 cropDisabled={runActive}
                 answerSource={answerSource}
                 solutionSource={solutionSource}
-                onDraftChange={(draft) => { drafts.setDraft(question.id, draft); }}
+                onDraftUpdate={(updater) => { drafts.updateDraft(question.id, updater); }}
                 onSave={() => { void drafts.save([question.id]); }}
                 onDrawRegion={toggleDrawTarget}
                 onSaveBox={(boxId) => { void requestSave(boxId); }}

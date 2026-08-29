@@ -45,7 +45,12 @@ type Props = {
    */
   answerSource?: ReExtractSource | undefined;
   solutionSource?: ReExtractSource | undefined;
-  onDraftChange: (draft: QuestionDraft) => void;
+  /**
+   * Apply a change to this question's draft, computed from the LATEST state (not a captured snapshot).
+   * Every field write folds through here so two AI re-reads finishing out of order can't clobber each
+   * other — each applies onto the freshest draft the store holds.
+   */
+  onDraftUpdate: (updater: (prev: QuestionDraft) => QuestionDraft) => void;
   onSave: () => void;
   /** Arm (or, on the armed target, cancel) draw mode — the drawn crop then saves automatically. */
   onDrawRegion: (question: Question, type: 'question' | 'option', optionIndex?: number) => void;
@@ -156,7 +161,7 @@ export function EditableQuestionCard({
   topicOptions = [],
   answerSource,
   solutionSource,
-  onDraftChange,
+  onDraftUpdate,
   onSave,
   onDrawRegion,
   onSaveBox,
@@ -173,21 +178,21 @@ export function EditableQuestionCard({
   const [preAi, setPreAi] = useState<Record<string, string>>({});
 
   const set = <K extends keyof QuestionDraft>(key: K, value: QuestionDraft[K]): void => {
-    onDraftChange({ ...draft, [key]: value });
+    onDraftUpdate((prev) => ({ ...prev, [key]: value }));
   };
   const setOption = (i: number, body: string): void => {
-    onDraftChange({
-      ...draft,
-      options: draft.options.map((o, j) => (j === i ? { ...o, body } : o)),
-    });
+    onDraftUpdate((prev) => ({
+      ...prev,
+      options: prev.options.map((o, j) => (j === i ? { ...o, body } : o)),
+    }));
   };
   // A match question edits through the structured table; the flat answer always mirrors its key.
   const setMatch = (next: MatchData): void => {
-    onDraftChange({
-      ...draft,
+    onDraftUpdate((prev) => ({
+      ...prev,
       match: next,
-      answer: Object.keys(next.key).length > 0 ? matchKeyToAnswer(next.key) : draft.answer,
-    });
+      answer: Object.keys(next.key).length > 0 ? matchKeyToAnswer(next.key) : prev.answer,
+    }));
   };
   const seedMatch = (): void => {
     setMatch({ columns: [{ title: 'Column I', entries: [] }, { title: 'Column II', entries: [] }], key: {} });
@@ -251,21 +256,25 @@ export function EditableQuestionCard({
     setReading(WHOLE_REEXTRACT);
     try {
       const fresh = await questionsApi.reExtract(question.documentId, question.id, undefined, draft.questionType);
-      const next: QuestionDraft = { ...draft };
-      if (fresh.stem.trim() !== '') next.stem = fresh.stem;
-      if (fresh.match) {
-        next.match = fresh.match;
-        next.options = [];
-        if (Object.keys(fresh.match.key).length > 0) next.answer = matchKeyToAnswer(fresh.match.key);
-      } else if (fresh.options.length > 0) {
-        next.match = null;
-        next.options = fresh.options;
-        if (fresh.answer.trim() !== '') next.answer = fresh.answer;
-      } else if (fresh.answer.trim() !== '') {
-        next.answer = fresh.answer;
-      }
-      if (fresh.explanation && fresh.explanation.trim() !== '') next.explanation = fresh.explanation;
-      onDraftChange(next);
+      // Fold the fresh read onto the LATEST draft (not this closure's snapshot), so it survives a
+      // concurrent per-field re-read finishing around the same time.
+      onDraftUpdate((prev) => {
+        const next: QuestionDraft = { ...prev };
+        if (fresh.stem.trim() !== '') next.stem = fresh.stem;
+        if (fresh.match) {
+          next.match = fresh.match;
+          next.options = [];
+          if (Object.keys(fresh.match.key).length > 0) next.answer = matchKeyToAnswer(fresh.match.key);
+        } else if (fresh.options.length > 0) {
+          next.match = null;
+          next.options = fresh.options;
+          if (fresh.answer.trim() !== '') next.answer = fresh.answer;
+        } else if (fresh.answer.trim() !== '') {
+          next.answer = fresh.answer;
+        }
+        if (fresh.explanation && fresh.explanation.trim() !== '') next.explanation = fresh.explanation;
+        return next;
+      });
       toast.toast({ tone: 'success', title: 'Re-extracted from the page', description: 'Review the updated fields, then Update to save.' });
     } catch (error) {
       toast.error(
@@ -476,7 +485,7 @@ export function EditableQuestionCard({
                 variant="ghost"
                 size="xs"
                 title="Switch this question back to plain options"
-                onClick={() => { onDraftChange({ ...draft, match: null }); }}
+                onClick={() => { onDraftUpdate((prev) => ({ ...prev, match: null })); }}
               >
                 Remove match table
               </Button>
