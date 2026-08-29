@@ -160,6 +160,7 @@ export class QuestionsService {
     documentId: string,
     questionId: string,
     source?: ReExtractSource,
+    questionTypeOverride?: string | null,
   ): Promise<ReExtractedQuestion> {
     const questions = await this.questions.findByDocument(documentId);
     const question = questions.find((candidate) => candidate.id === questionId);
@@ -167,11 +168,14 @@ export class QuestionsService {
     const sourceDocumentId = source?.documentId ?? documentId;
     const sourcePage = source?.page ?? question.sourceRegion.page;
     const png = await this.pages.renderPage(sourceDocumentId, sourcePage);
+    // When the operator has changed the type in verify (not yet saved), honour that choice so the
+    // model extracts the right shape for it; otherwise fall back to the question's stored type.
+    const questionType = questionTypeOverride ?? question.questionType;
     const { stem, options, answer, explanation, match, usage } = await this.reExtractor.reExtract({
       png,
       questionNumber: question.questionNumber,
       stemHint: question.stem,
-      questionType: question.questionType,
+      questionType,
     });
     try {
       await this.usage.recordUsage({ source: 'reextract', documentId, ...usage });

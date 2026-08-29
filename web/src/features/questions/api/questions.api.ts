@@ -84,10 +84,16 @@ export const questionsApi = {
     documentId: string,
     questionId: string,
     source?: ReExtractSource,
+    questionType?: string | null,
   ): Promise<ReExtractedQuestion> => {
     return request('/questions/re-extract', {
       method: 'POST',
-      body: { documentId, questionId, ...(source ? { source } : {}) },
+      body: {
+        documentId,
+        questionId,
+        ...(source ? { source } : {}),
+        ...(questionType ? { questionType } : {}),
+      },
       schema: ReExtractedQuestionSchema,
     });
   },
