@@ -173,12 +173,12 @@ export function reExtractQuestionPrompt(target: {
 1. Extract ONLY the target question — ignore every other question on the page.
 2. options: one entry per printed choice. The "label" MUST be exactly one of "A","B","C","D" in printed order (normalize (1)(2)(3)(4) to A/B/C/D). NEVER emit any other label, never repeat a label, never merge labels (no "AAPB", no column labels like "p"/"q"). Set is_correct true only when the page marks that choice as correct, else false.
 3. For a question with no options, use an empty array [].
-4. columns/match: leave "columns" as [] and OMIT "match" UNLESS this is a MATRIX MATCH question (see the type-specific rule); a matrix question uses columns/match and leaves options as [].
+4. columns/match: leave "columns" as [] and OMIT "match" UNLESS this is a MATRIX MATCH question (see the type-specific rule).
 5. answer: use "" when the page does not indicate the correct answer (question papers usually do not).
 6. explanation: use null when no worked solution is printed on this page.
 7. Preserve all math as LaTeX. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`,
     isMatrix
-      ? 'MATRIX MATCH: put ONLY the instruction/stem in "stem", set "options" to [], and fill "columns" — an array of EVERY printed column in order (usually two, sometimes three), each { "title": the heading, "entries": [ { "label": the printed label e.g. "A"/"p"/"t", "body": that entry\'s text with math as LaTeX } ] }. If the page prints the matching, add "match" mapping each first-column label to the labels it matches, e.g. { "A": ["p","t"], "B": ["q"] }; omit "match" when the answer is not shown.'
+      ? 'MATRIX MATCH: put ONLY the instruction/stem in "stem" — do NOT copy the columns into it. Fill "columns" — an array of EVERY printed column in order (usually two, sometimes three), each { "title": the heading, "entries": [ { "label": the printed label e.g. "A"/"p"/"t", "body": that entry\'s text with math as LaTeX } ] }. ALSO fill "options" with the printed multiple-choice ANSWERS (usually four), each { "label": one of "A"–"D" in printed order (normalize (1)(2)(3)(4)), "body": that choice\'s FULL matching text EXACTLY as printed, e.g. "A-i, B-ii, C-iii, D-iv, E-v", "is_correct": true only for the choice the page marks correct else false }. When the page prints the matching (or marks the correct option), add "match" mapping each first-column label to the labels it matches, e.g. { "A": ["iv"], "B": ["v"] }; omit "match" when no answer is shown.'
       : (typeRule ? `TYPE-SPECIFIC RULE:\n${typeRule}` : ''),
   ]
     .filter(Boolean)

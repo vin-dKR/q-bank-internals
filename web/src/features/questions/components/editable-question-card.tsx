@@ -70,6 +70,38 @@ function correctLabelsFromAnswer(answer: string): Set<string> {
   return new Set(answer.toUpperCase().match(/[A-Z]/g) ?? []);
 }
 
+/**
+ * Parse a matrix question's printed answer option ("A–i, B–ii, C–iii, D–iv, E–v") into a match key
+ * { A:['i'], B:['ii'], … }. Pairs split on comma/semicolon; each is "<col-I label><dash><col-II label>".
+ * Unparseable segments are skipped, so a stray token never poisons the whole option.
+ */
+function parseOptionMatching(body: string): Record<string, string[]> {
+  const key: Record<string, string[]> = {};
+  for (const segment of body.split(/[;,]/)) {
+    const match = /^\s*([A-Za-z])\s*[-–—>:→=.)]+\s*([A-Za-z0-9]+)\s*$/.exec(segment.trim());
+    if (!match) continue;
+    const label = (match[1] ?? '').toUpperCase();
+    const target = (match[2] ?? '').toLowerCase();
+    if (label && target) key[label] = [target];
+  }
+  return key;
+}
+
+/** Order-independent signature of a match key, so two equal matchings compare equal regardless of order. */
+function keySignature(key: Record<string, readonly string[]>): string {
+  return Object.keys(key)
+    .sort()
+    .map((label) => `${label}:${[...(key[label] ?? [])].sort().join(',')}`)
+    .join('|');
+}
+
+/** True when a printed option's matching equals the current match key (marks it as the chosen option). */
+function optionMatchesKey(body: string, key: Record<string, readonly string[]>): boolean {
+  const parsed = parseOptionMatching(body);
+  if (Object.keys(parsed).length === 0) return false;
+  return keySignature(parsed) === keySignature(key);
+}
+
 /** Serialise correct option letters to the stored multi-correct form: sorted, joined, no separator. */
 function labelsToAnswer(labels: Iterable<string>): string {
   return [...labels].sort().join('');
@@ -197,6 +229,17 @@ export function EditableQuestionCard({
   const seedMatch = (): void => {
     setMatch({ columns: [{ title: 'Column I', entries: [] }, { title: 'Column II', entries: [] }], key: {} });
   };
+  // Click a matrix question's printed answer option to set the correct matching from it (e.g. picking
+  // "A–iv, B–v, …" fills the grid A→iv, B→v, …). The flat answer mirrors the key as usual.
+  const applyOptionMatching = (body: string): void => {
+    const parsed = parseOptionMatching(body);
+    if (Object.keys(parsed).length === 0) return;
+    onDraftUpdate((prev) =>
+      prev.match
+        ? { ...prev, match: { columns: prev.match.columns, key: parsed }, answer: matchKeyToAnswer(parsed) }
+        : prev,
+    );
+  };
 
   /** Apply an AI-produced value to a field, remembering the previous value so it can be undone. */
   const applyAi = (key: string, previous: string, next: string, apply: (t: string) => void): void => {
@@ -263,7 +306,8 @@ export function EditableQuestionCard({
         if (fresh.stem.trim() !== '') next.stem = fresh.stem;
         if (fresh.match) {
           next.match = fresh.match;
-          next.options = [];
+          // A matrix question keeps its printed multiple-choice options too (clickable to fill the grid).
+          next.options = fresh.options;
           if (Object.keys(fresh.match.key).length > 0) next.answer = matchKeyToAnswer(fresh.match.key);
         } else if (fresh.options.length > 0) {
           next.match = null;
@@ -478,6 +522,47 @@ export function EditableQuestionCard({
       {draft.match ? (
         <>
           <MatchTableEditor value={draft.match} onChange={setMatch} disabled={saving} />
+
+          {draft.options.length > 0 ? (
+            <div className="flex flex-col gap-1.5">
+              <span className={FIELD_LABEL}>Printed options — click the correct one to set the matching</span>
+              {draft.options.map((option, i) => {
+                const selected = draft.match !== null && optionMatchesKey(option.body, draft.match.key);
+                return (
+                  <div key={i} className="flex items-center gap-2">
+                    <OptionCorrectToggle
+                      label={option.label}
+                      correct={selected}
+                      multi={false}
+                      onToggle={() => { applyOptionMatching(option.body); }}
+                    />
+                    <strong className={selected ? 'text-ok' : undefined}>{option.label}.</strong>
+                    <div className="flex-1">
+                      <EditableLatexValue value={option.body} onChange={(v) => { setOption(i, v); }} placeholder="Click to edit option" />
+                    </div>
+                    <IconButton
+                      icon={<IconX />}
+                      label="Remove option"
+                      size="sm"
+                      onClick={() => { set('options', draft.options.filter((_, j) => j !== i)); }}
+                    />
+                  </div>
+                );
+              })}
+              <div>
+                <Button
+                  size="xs"
+                  onClick={() => {
+                    const nextLabel = String.fromCharCode(65 + draft.options.length);
+                    set('options', [...draft.options, { label: nextLabel, body: '', isCorrect: false }]);
+                  }}
+                >
+                  <IconPlus /> Add option
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between">
               <span className={FIELD_LABEL}>Answer key</span>

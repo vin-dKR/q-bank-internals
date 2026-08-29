@@ -112,6 +112,22 @@ function toMatchData(rawColumns: unknown, rawMatch: unknown): MatchData | null {
 }
 
 /**
+ * For a matrix question the columns live in the structured table, so strip any column DUMP the model
+ * also pasted into the stem (the reported duplication: the same Column-I/Column-II lists showing both
+ * in the question text and the match table). We keep only the instruction that precedes the first line
+ * that is a column HEADING — a line whose trimmed text starts with "Column" (e.g. "Column–I",
+ * "Column II (Velocity)"). The instruction itself ("Match the column-I with column-II …") is one line
+ * and never starts with "Column", so it survives. If no heading line is found, or the stem starts with
+ * one (no instruction to keep), the stem is returned unchanged rather than risk emptying it.
+ */
+function stripMatchColumnsFromStem(stem: string): string {
+  const lines = stem.split('\n');
+  const headingIndex = lines.findIndex((line) => /^\s*column\b/i.test(line));
+  if (headingIndex <= 0) return stem.trim();
+  return lines.slice(0, headingIndex).join('\n').trim();
+}
+
+/**
  * {@link QuestionReExtractor} backed by an OpenAI vision model — one call re-reads a single question's
  * page image and returns its fields. Mirrors {@link OpenAiVisionExtractor}'s call shape
  * (`max_completion_tokens`, `response_format: json_object`) so the same code runs on gpt-4o and the
@@ -189,8 +205,14 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     // present clear options so the flat option array is never cluttered with leaked column entries
     // (the "1 4 1 2 3 4 / same value four times" garbage). Non-matrix replies leave match null.
     const match = toMatchData(parsed.columns, parsed.match);
-    const options = match ? [] : toOptions(parsed.options);
-    const stem = asString(parsed.stem).trim();
+    // A matrix question keeps BOTH: the structured columns/key AND the printed multiple-choice options
+    // (each a full matching like "A-i, B-ii, …"), so the operator can click a printed option to fill the
+    // grid. Labels are still forced to A/B/C/D by toOptions, so a leaked column label can't survive.
+    const options = toOptions(parsed.options);
+    // When the columns are stored structurally, remove any duplicate column dump the model left in the
+    // stem so the same lists don't appear twice (question text + match table).
+    const rawStem = asString(parsed.stem).trim();
+    const stem = match ? stripMatchColumnsFromStem(rawStem) : rawStem;
     const answer = asString(parsed.answer).trim();
     const explanation = asStringOrNull(parsed.explanation);
     // A genuine question always has a stem, options, or a match table; a reply with none means the read
