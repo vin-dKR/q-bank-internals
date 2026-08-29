@@ -2,9 +2,9 @@ import type { JSX } from 'react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { CatalogQuestion, UpdateBankText } from '@ingest/contracts';
-import { RenderLatex } from '../../../shared/lib/latex.js';
+import { EditableLatexValue, RenderLatex } from '../../../shared/lib/latex.js';
 import { refineLatex } from '../../../shared/api/refine.js';
-import { Badge, Button, IconEdit, IconFlag, IconSparkle, IconUndo, Spinner, useToast } from '../../../shared/ui/index.js';
+import { Badge, Button, IconCheck, IconEdit, IconFlag, IconPlus, IconSparkle, IconTrash, IconUndo, IconX, Spinner, useToast } from '../../../shared/ui/index.js';
 
 /** A/B/C… label for the option at `index`. */
 function optionLabel(index: number): string {
@@ -66,6 +66,15 @@ export function QuestionCard({
   // its last AI fix — a one-deep, per-field undo, matching Verify. Keyed by 'stem' | 'answer' | 'opt{i}'.
   const [refining, setRefining] = useState<string | null>(null);
   const [preAi, setPreAi] = useState<Record<string, string>>({});
+  // Inline hand-edit mode: a local draft of the text fields (stem, options, answer), edited through
+  // EditableLatexValue (same widget as Verify, so the equation editor is available), saved back to the
+  // bank via the existing text-update pipeline (onFixText → PATCH /bank/questions/:id/text).
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<{ questionText: string; options: string[]; answer: string }>({
+    questionText: question.questionText,
+    options: question.options,
+    answer: question.answer ?? '',
+  });
   const correct = correctTokens(question.answer);
   const questionImage = question.isQuestionImage && question.questionImage
     ? imageUrl(question.questionImage)
@@ -95,6 +104,30 @@ export function QuestionCard({
     if (previous === undefined) return;
     onFixText(toPatch(previous));
     setPreAi((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => k !== key)));
+  };
+
+  /** Enter hand-edit mode, seeding the draft from the current question. */
+  const startEdit = (): void => {
+    setDraft({ questionText: question.questionText, options: question.options, answer: question.answer ?? '' });
+    setEditing(true);
+  };
+
+  /** Persist only the fields that actually changed, then leave edit mode (optimistic cache shows them). */
+  const saveEdit = (): void => {
+    const patch: UpdateBankText = {};
+    if (draft.questionText !== question.questionText) patch.questionText = draft.questionText;
+    if (JSON.stringify(draft.options) !== JSON.stringify(question.options)) patch.options = draft.options;
+    if (draft.answer !== (question.answer ?? '')) patch.answer = draft.answer;
+    if (Object.keys(patch).length > 0) onFixText(patch);
+    setEditing(false);
+  };
+
+  const setOption = (index: number, value: string): void => {
+    setDraft((prev) => ({ ...prev, options: prev.options.map((o, j) => (j === index ? value : o)) }));
+  };
+  const addOption = (): void => { setDraft((prev) => ({ ...prev, options: [...prev.options, ''] })); };
+  const removeOption = (index: number): void => {
+    setDraft((prev) => ({ ...prev, options: prev.options.filter((_, j) => j !== index) }));
   };
 
   /** The sparkle (fix this field's LaTeX) + undo (restore the pre-AI value) pair a text field carries. */
@@ -137,41 +170,76 @@ export function QuestionCard({
         {question.isPyq ? <Badge tone="progress" dot={false}>{pyqLabel(question)}</Badge> : null}
         {question.flagged ? <Badge tone="danger">Flagged</Badge> : null}
         <span className="flex-1" />
-        {question.documentId ? (
-          <Button
-            size="xs"
-            variant="ghost"
-            title="Open this question's source in Verify to edit it"
-            onClick={() => { void navigate(`/verify?documentId=${encodeURIComponent(question.documentId as string)}&restore=1`); }}
-          >
-            <IconEdit /> Edit
-          </Button>
+        {editing ? (
+          <>
+            <Button
+              size="xs"
+              variant="primary"
+              disabled={fixPending}
+              title="Save your edits to the bank"
+              onClick={saveEdit}
+            >
+              <IconCheck /> {fixPending ? 'Saving…' : 'Save'}
+            </Button>
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={fixPending}
+              title="Discard your edits"
+              onClick={() => { setEditing(false); }}
+            >
+              <IconX /> Cancel
+            </Button>
+          </>
         ) : (
-          <span
-            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-ink-3"
-            title="This question isn't linked to an ingest session (published before source tracking, or created outside ingest), so it can't be reopened in Verify."
-          >
-            <IconEdit /> Not from a session
-          </span>
+          <>
+            <Button
+              size="xs"
+              variant="ghost"
+              title="Edit this question's text here by hand (with the equation editor)"
+              onClick={startEdit}
+            >
+              <IconEdit /> Edit
+            </Button>
+            {question.documentId ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                title="Open this question's source in Verify (crop images, re-read the page, etc.)"
+                onClick={() => { void navigate(`/verify?documentId=${encodeURIComponent(question.documentId as string)}&restore=1`); }}
+              >
+                Open in Verify
+              </Button>
+            ) : null}
+            <Button
+              size="xs"
+              variant={question.flagged ? 'primary' : 'ghost'}
+              disabled={flagPending}
+              title={question.flagged ? 'Remove the flag' : 'Flag this question to edit later'}
+              onClick={() => { onToggleFlag(!question.flagged); }}
+            >
+              <IconFlag /> {question.flagged ? 'Flagged' : 'Flag'}
+            </Button>
+          </>
         )}
-        <Button
-          size="xs"
-          variant={question.flagged ? 'primary' : 'ghost'}
-          disabled={flagPending}
-          title={question.flagged ? 'Remove the flag' : 'Flag this question to edit later'}
-          onClick={() => { onToggleFlag(!question.flagged); }}
-        >
-          <IconFlag /> {question.flagged ? 'Flagged' : 'Flag'}
-        </Button>
       </div>
 
       <div className="flex flex-col gap-1.5">
         <span className={FIELD_LABEL}>
-          Question {fieldAi('stem', question.questionText, (value) => ({ questionText: value }))}
+          Question {editing ? null : fieldAi('stem', question.questionText, (value) => ({ questionText: value }))}
         </span>
-        <div className="text-sm leading-relaxed text-ink">
-          <RenderLatex text={question.questionText} />
-        </div>
+        {editing ? (
+          <EditableLatexValue
+            value={draft.questionText}
+            onChange={(v) => { setDraft((prev) => ({ ...prev, questionText: v })); }}
+            multiline
+            placeholder="Click to write the question"
+          />
+        ) : (
+          <div className="text-sm leading-relaxed text-ink">
+            <RenderLatex text={question.questionText} />
+          </div>
+        )}
       </div>
 
       {questionImage ? (
@@ -198,6 +266,29 @@ export function QuestionCard({
             ) : null;
           })}
         </div>
+      ) : editing ? (
+        <div className="flex flex-col gap-1.5">
+          {draft.options.map((option, index) => (
+            <div key={index} className="flex items-center gap-2">
+              <span className="font-semibold">{optionLabel(index)}.</span>
+              <div className="min-w-0 flex-1">
+                <EditableLatexValue
+                  value={option}
+                  onChange={(v) => { setOption(index, v); }}
+                  placeholder="Click to edit option"
+                />
+              </div>
+              <Button variant="ghost" size="xs" title="Remove this option" onClick={() => { removeOption(index); }}>
+                <IconTrash />
+              </Button>
+            </div>
+          ))}
+          <div>
+            <Button size="xs" variant="ghost" onClick={addOption}>
+              <IconPlus /> Add option
+            </Button>
+          </div>
+        </div>
       ) : question.options.length > 0 ? (
         <ul className="flex flex-col gap-1.5">
           {question.options.map((option, index) => (
@@ -223,7 +314,16 @@ export function QuestionCard({
         </ul>
       ) : null}
 
-      {question.answer ? (
+      {editing ? (
+        <div className="flex flex-col gap-1.5">
+          <span className={FIELD_LABEL}>Answer</span>
+          <EditableLatexValue
+            value={draft.answer}
+            onChange={(v) => { setDraft((prev) => ({ ...prev, answer: v })); }}
+            placeholder="Click to set the answer (e.g. A, or AC)"
+          />
+        </div>
+      ) : question.answer ? (
         <div className="flex items-center gap-1.5">
           <Badge tone="success">
             Answer:&nbsp;<RenderLatex text={question.answer} />
