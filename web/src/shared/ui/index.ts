@@ -21,6 +21,7 @@ export {
   IconTrash,
   IconScissors,
   IconImage,
+  IconDroplet,
   IconEdit,
   IconFlag,
   IconSparkle,
