@@ -61,14 +61,18 @@ function applyDrag(mode: DragMode, start: Rect, dx: number, dy: number): Rect {
  * Reflow layer over a page: drag a rubber-band box to sketch a crop, then adjust it — drag the box
  * to move it, drag a corner/edge grip to resize — and confirm (✓ or Enter) to add it to the active
  * block, or cancel (✕ or Esc). A drawn box is never finalized on the first release; it stays editable
- * until confirmed. Existing crops are drawn as colour-coded, numbered boxes and can be removed. Crops
- * on several pages that share a block stack onto one page when applied.
+ * until confirmed. Existing crops are drawn as colour-coded, numbered boxes; click one to reopen it as
+ * the editable draft (move/resize, then save in place) or use its × to remove it. Crops on several
+ * pages that share a block stack onto one page when applied.
  */
 export function PdfReflowOverlay({ pageNumber, controller }: PdfReflowOverlayProps): JSX.Element {
-  const { blocks, activeId, addCrop, removeCrop } = controller;
+  const { blocks, activeId, addCrop, updateCrop, removeCrop, setActive } = controller;
   const containerRef = useRef<HTMLDivElement>(null);
   const [rubber, setRubber] = useState<Rect | null>(null);
   const [draft, setDraft] = useState<Rect | null>(null);
+  // Which finalized crop the draft is re-editing (null when the draft is a freshly drawn box). Set by
+  // clicking an existing crop; on commit the draft replaces that crop in place instead of adding a new one.
+  const [editing, setEditing] = useState<{ blockId: string; index: number } | null>(null);
   const [drag, setDrag] = useState<{ mode: DragMode; startX: number; startY: number; start: Rect } | null>(null);
   const startRef = useRef<{ x: number; y: number } | null>(null);
 
@@ -82,11 +86,33 @@ export function PdfReflowOverlay({ pageNumber, controller }: PdfReflowOverlayPro
   };
 
   const commitDraft = (box: Rect | null): void => {
+    const target = editing;
     setDraft(null);
+    setEditing(null);
     if (!box) return;
     const n = normalize(box);
-    if (n.x1 - n.x0 < MIN_CROP || n.y1 - n.y0 < MIN_CROP) return; // too small to keep
-    addCrop({ page: pageNumber, x0: n.x0, y0: n.y0, x1: n.x1, y1: n.y1 });
+    // Too small to keep. When re-editing, the original crop was never removed, so discarding just
+    // leaves it as it was; a fresh draw is simply dropped.
+    if (n.x1 - n.x0 < MIN_CROP || n.y1 - n.y0 < MIN_CROP) return;
+    const crop = { page: pageNumber, x0: n.x0, y0: n.y0, x1: n.x1, y1: n.y1 };
+    if (target) updateCrop(target.blockId, target.index, crop);
+    else addCrop(crop);
+  };
+
+  // Reopen a finalized crop as the editable draft — click it to move/resize it with the same grips a
+  // fresh box has, then ✓/Enter to save it back in place (or ✕/Esc to leave it unchanged).
+  const beginEdit = (
+    event: MouseEvent<HTMLDivElement>,
+    blockId: string,
+    index: number,
+    crop: { x0: number; y0: number; x1: number; y1: number },
+  ): void => {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    commitDraft(draft); // save any box currently under edit before switching to this one
+    setActive(blockId);
+    setEditing({ blockId, index });
+    setDraft({ x0: crop.x0, y0: crop.y0, x1: crop.x1, y1: crop.y1 });
   };
 
   const handleDown = (event: MouseEvent<HTMLDivElement>): void => {
@@ -148,7 +174,7 @@ export function PdfReflowOverlay({ pageNumber, controller }: PdfReflowOverlayPro
     if (!draft) return;
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Enter') { event.preventDefault(); commitDraft(draft); }
-      else if (event.key === 'Escape') { event.preventDefault(); setDraft(null); }
+      else if (event.key === 'Escape') { event.preventDefault(); setDraft(null); setEditing(null); }
     };
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); };
@@ -168,6 +194,8 @@ export function PdfReflowOverlay({ pageNumber, controller }: PdfReflowOverlayPro
       {blocks.map((block, bi) =>
         block.crops.map((crop, ci) => {
           if (crop.page !== pageNumber) return null;
+          // The crop being re-edited is shown as the draft box (below) instead, so skip it here.
+          if (editing && editing.blockId === block.id && editing.index === ci) return null;
           const style: CSSProperties = {
             left: `${String(crop.x0 * 100)}%`,
             top: `${String(crop.y0 * 100)}%`,
@@ -181,7 +209,9 @@ export function PdfReflowOverlay({ pageNumber, controller }: PdfReflowOverlayPro
             <div
               key={`${block.id}:${String(ci)}`}
               className={`reflow-crop ${block.id === activeId ? 'is-active' : ''}`}
-              style={style}
+              style={{ ...style, cursor: 'move' }}
+              title="Click to edit this crop"
+              onMouseDown={(e) => { beginEdit(e, block.id, ci, crop); }}
             >
               <span className="reflow-crop__tag" style={{ background: blockColor(bi) }}>
                 {bi + 1}
@@ -237,7 +267,7 @@ export function PdfReflowOverlay({ pageNumber, controller }: PdfReflowOverlayPro
               type="button"
               className="reflow-draft__btn reflow-draft__btn--cancel"
               title="Discard (Esc)"
-              onClick={() => { setDraft(null); }}
+              onClick={() => { setDraft(null); setEditing(null); }}
             >
               ×
             </button>
