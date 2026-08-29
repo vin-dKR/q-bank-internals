@@ -153,6 +153,7 @@ export function reExtractQuestionPrompt(target: {
 }): string {
   const hint = target.stemHint.replace(/\s+/g, ' ').trim().slice(0, 120);
   const typeRule = target.questionType ? TYPE_RULES[target.questionType] : undefined;
+  const isMatrix = target.questionType === 'matrix';
   return [
     'You are given an image of one page from an exam question paper.',
     `Re-read the SINGLE question printed as number ${
@@ -163,17 +164,22 @@ export function reExtractQuestionPrompt(target: {
 {
   "stem": "the full question text, math as LaTeX like \\\\( \\\\sqrt{3} \\\\)",
   "options": [ { "label": "A", "body": "…", "is_correct": false } ],
+  "columns": [ { "title": "Column I", "entries": [ { "label": "A", "body": "…" } ] } ],
+  "match": { "A": ["p"], "B": ["q","s"] },
   "answer": "the correct option label(s) e.g. \\"A\\" or \\"AC\\", a numeric/text answer, or \\"\\" if the page does not state it",
   "explanation": "the worked solution if the page prints one, else null"
 }`,
     `RE-EXTRACT RULES:
 1. Extract ONLY the target question — ignore every other question on the page.
-2. options: one entry per printed choice; normalize labels (1)(2)(3)(4) to (A)(B)(C)(D). Set is_correct true only when the page marks that choice as correct, else false.
+2. options: one entry per printed choice. The "label" MUST be exactly one of "A","B","C","D" in printed order (normalize (1)(2)(3)(4) to A/B/C/D). NEVER emit any other label, never repeat a label, never merge labels (no "AAPB", no column labels like "p"/"q"). Set is_correct true only when the page marks that choice as correct, else false.
 3. For a question with no options, use an empty array [].
-4. answer: use "" when the page does not indicate the correct answer (question papers usually do not).
-5. explanation: use null when no worked solution is printed on this page.
-6. Preserve all math as LaTeX. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`,
-    typeRule ? `TYPE-SPECIFIC RULE:\n${typeRule}` : '',
+4. columns/match: leave "columns" as [] and OMIT "match" UNLESS this is a MATRIX MATCH question (see the type-specific rule); a matrix question uses columns/match and leaves options as [].
+5. answer: use "" when the page does not indicate the correct answer (question papers usually do not).
+6. explanation: use null when no worked solution is printed on this page.
+7. Preserve all math as LaTeX. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`,
+    isMatrix
+      ? 'MATRIX MATCH: put ONLY the instruction/stem in "stem", set "options" to [], and fill "columns" — an array of EVERY printed column in order (usually two, sometimes three), each { "title": the heading, "entries": [ { "label": the printed label e.g. "A"/"p"/"t", "body": that entry\'s text with math as LaTeX } ] }. If the page prints the matching, add "match" mapping each first-column label to the labels it matches, e.g. { "A": ["p","t"], "B": ["q"] }; omit "match" when the answer is not shown.'
+      : (typeRule ? `TYPE-SPECIFIC RULE:\n${typeRule}` : ''),
   ]
     .filter(Boolean)
     .join('\n\n');

@@ -1,5 +1,5 @@
 import { OpenAI } from 'openai';
-import type { QuestionOption } from '@ingest/contracts';
+import type { MatchData, QuestionOption } from '@ingest/contracts';
 import type {
   QuestionReExtraction,
   QuestionReExtractor,
@@ -18,10 +18,30 @@ const MAX_TOKENS = 16000;
 
 /** Shape the re-extract prompt asks the model to return, before we normalise each field. */
 type RawOption = { label?: unknown; body?: unknown; is_correct?: unknown };
-type RawReExtract = { stem?: unknown; options?: unknown; answer?: unknown; explanation?: unknown };
+type RawReExtract = {
+  stem?: unknown;
+  options?: unknown;
+  answer?: unknown;
+  explanation?: unknown;
+  columns?: unknown;
+  match?: unknown;
+};
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+/**
+ * Coerce a model-supplied option label to a canonical A/B/C/D, labelling by position as a fallback.
+ * Matches the batch path's `parseOption` (extraction.worker): only a bare A–D / 1–4 token is trusted;
+ * anything else (a leaked match-column label like "p", a run-on like "AAPB") falls back to the
+ * positional letter, so re-read options can never come back with garbage labels.
+ */
+function normalizeLabel(raw: unknown, index: number): string {
+  const token = asString(raw).trim().replace(/[()[\].]/g, '');
+  if (/^[A-Da-d]$/.test(token)) return token.toUpperCase();
+  if (/^[1-4]$/.test(token)) return String.fromCharCode(64 + Number(token));
+  return String.fromCharCode(65 + index); // A, B, C, D by position
 }
 
 /** Non-empty trimmed string, or null — keeps a blank explanation an explicit absence. */
@@ -46,14 +66,49 @@ function parseReply(content: string): RawReExtract {
   }
 }
 
-/** Normalise the raw `options` array into the contract shape, labelling by position as a fallback. */
+/** Normalise the raw `options` array into the contract shape, forcing A/B/C/D labels. */
 function toOptions(raw: unknown): QuestionOption[] {
   if (!Array.isArray(raw)) return [];
   return (raw as RawOption[]).map((item, index) => ({
-    label: asString(item.label).trim() || String.fromCharCode(65 + index),
+    label: normalizeLabel(item.label, index),
     body: asString(item.body).trim(),
     isCorrect: item.is_correct === true,
   }));
+}
+
+/**
+ * Build structured match-the-column data from a matrix question's raw `columns`/`match`, mirroring
+ * {@link OpenAiVisionExtractor}'s batch-path `toMatchData`. Returns null unless at least two
+ * well-formed columns are present, so a non-matrix (or malformed) reply simply falls back to the
+ * ordinary option path rather than persisting a half-built table. The key keeps only string→string[].
+ */
+function toMatchData(rawColumns: unknown, rawMatch: unknown): MatchData | null {
+  if (!Array.isArray(rawColumns)) return null;
+  const columns: MatchData['columns'] = [];
+  for (const rawColumn of rawColumns) {
+    const record = rawColumn as { title?: unknown; entries?: unknown };
+    const entries = Array.isArray(record.entries)
+      ? record.entries
+          .map((rawEntry) => {
+            const entry = rawEntry as { label?: unknown; body?: unknown };
+            return { label: asString(entry.label).trim(), body: asString(entry.body) };
+          })
+          .filter((entry) => entry.label.length > 0)
+      : [];
+    if (entries.length > 0) columns.push({ title: asString(record.title), entries });
+  }
+  if (columns.length < 2) return null;
+
+  const key: Record<string, string[]> = {};
+  if (rawMatch && typeof rawMatch === 'object') {
+    for (const [label, targets] of Object.entries(rawMatch as Record<string, unknown>)) {
+      const list = Array.isArray(targets)
+        ? targets.map(asString).map((t) => t.trim()).filter(Boolean)
+        : [];
+      if (list.length > 0) key[label.trim()] = list;
+    }
+  }
+  return { columns, key };
 }
 
 /**
@@ -130,22 +185,26 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     }
 
     const parsed = parseReply(content);
-    const options = toOptions(parsed.options);
+    // A MATRIX MATCH question stores structured columns instead of options — parse them first, and when
+    // present clear options so the flat option array is never cluttered with leaked column entries
+    // (the "1 4 1 2 3 4 / same value four times" garbage). Non-matrix replies leave match null.
+    const match = toMatchData(parsed.columns, parsed.match);
+    const options = match ? [] : toOptions(parsed.options);
     const stem = asString(parsed.stem).trim();
     const answer = asString(parsed.answer).trim();
     const explanation = asStringOrNull(parsed.explanation);
-    // A genuine question always has a stem and/or options; a reply with neither means the read failed
-    // (bad JSON, wrong page, refusal) rather than a truly blank question — don't hand back an empty wipe.
-    if (!stem && options.length === 0 && !answer && !explanation) {
+    // A genuine question always has a stem, options, or a match table; a reply with none means the read
+    // failed (bad JSON, wrong page, refusal) rather than a truly blank question — don't hand back a wipe.
+    if (!stem && options.length === 0 && !match && !answer && !explanation) {
       throw errors.extractionFailed(
         'The model could not read this question from the page. Please try again or edit the field manually.',
       );
     }
     const usage: AiTokenUsage = { model: this.model, promptTokens, completionTokens, totalTokens, callCount };
     logger.info(
-      { questionNumber: input.questionNumber, options: options.length },
+      { questionNumber: input.questionNumber, options: options.length, match: match !== null },
       'question re-extract done',
     );
-    return { stem, options, answer, explanation, usage };
+    return { stem, options, answer, explanation, match, usage };
   }
 }
