@@ -2,6 +2,7 @@ import { type CSSProperties, type JSX, type MouseEvent as ReactMouseEvent, useCa
 import { type BoxRect, DraggableBox } from './draggable-box.js';
 import { IconButton } from './icon-button.js';
 import { IconX } from './icons.js';
+import { Spinner } from './spinner.js';
 
 export type CanvasBox = BoxRect & {
   id: string;
@@ -71,6 +72,11 @@ export function CropCanvas({
   const imgRef = useRef<HTMLImageElement>(null);
   const [natural, setNatural] = useState<{ width: number; height: number } | null>(null);
   const [frame, setFrame] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+  // The page image is fetched from Drive (via the API proxy) and can take a beat; show a loader until
+  // it resolves. The same <img> element is reused across page changes, so reset on every src change —
+  // `onLoad` only fires for the new load.
+  const [loading, setLoading] = useState(true);
+  useEffect(() => { setLoading(true); }, [imageSrc]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -85,7 +91,10 @@ export function CropCanvas({
   const onLoad = (): void => {
     const el = imgRef.current;
     if (el) setNatural({ width: el.naturalWidth, height: el.naturalHeight });
+    setLoading(false);
   };
+  // A failed load must still clear the loader, or the spinner would spin forever on a broken page.
+  const onError = (): void => { setLoading(false); };
 
   // Contain-fit: the largest uniform scale that keeps the whole page inside the frame.
   const scale =
@@ -171,6 +180,12 @@ export function CropCanvas({
 
   return (
     <div ref={containerRef} className={draw ? 'crop-canvas crop-canvas--draw' : 'crop-canvas'}>
+      {loading ? (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 text-ink-3" role="status">
+          <Spinner className="text-2xl" />
+          <span className="text-sm">Loading page…</span>
+        </div>
+      ) : null}
       {draw ? (
         <div className="crop-canvas__hint" role="status">
           <span>
@@ -190,6 +205,7 @@ export function CropCanvas({
           draggable={false}
           className="crop-canvas__img"
           onLoad={onLoad}
+          onError={onError}
         />
         {boxes.map((box) => (
           <DraggableBox

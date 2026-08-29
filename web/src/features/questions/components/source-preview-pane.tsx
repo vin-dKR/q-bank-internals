@@ -1,5 +1,5 @@
 import { type JSX, useEffect, useState } from 'react';
-import { IconButton, IconChevronLeft, IconChevronRight } from '../../../shared/ui/index.js';
+import { IconButton, IconChevronLeft, IconChevronRight, Spinner } from '../../../shared/ui/index.js';
 import { questionsApi } from '../api/questions.api.js';
 import { usePageCount } from '../hooks/use-questions.js';
 
@@ -26,6 +26,10 @@ export function SourcePreviewPane({
   useEffect(() => { setPage(defaultPage); }, [defaultPage]);
   const pageCount = usePageCount(documentId);
   const totalPages = pageCount.data ?? 1;
+  // Loader for the previewed page image (fetched from Drive via the API proxy). The <img> is reused
+  // across page changes, so reset on every page change — `onLoad` fires only for the new load.
+  const [loading, setLoading] = useState(true);
+  useEffect(() => { setLoading(true); }, [page, documentId]);
 
   return (
     <div className="verify__source">
@@ -50,11 +54,19 @@ export function SourcePreviewPane({
           />
         </div>
       </div>
-      <div className="verify__source-scroll">
+      <div className="verify__source-scroll" style={{ position: 'relative' }}>
+        {loading ? (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 text-ink-3" role="status">
+            <Spinner className="text-2xl" />
+            <span className="text-sm">Loading page…</span>
+          </div>
+        ) : null}
         <img
           src={questionsApi.pageImageUrl(documentId, page)}
           alt={`${title} page ${String(page)}`}
           className="verify__source-img"
+          onLoad={() => { setLoading(false); }}
+          onError={() => { setLoading(false); }}
         />
       </div>
     </div>
