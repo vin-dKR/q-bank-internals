@@ -44,5 +44,6 @@ export {
   IconScan,
   IconGrid,
   IconList,
+  IconSigma,
   IconGripVertical,
 } from './icons.js';

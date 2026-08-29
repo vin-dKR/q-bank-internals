@@ -259,6 +259,15 @@ export function IconList(props: IconProps): JSX.Element {
   );
 }
 
+/** A summation sign — the "insert equation / math" affordance. */
+export function IconSigma(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <path d="M18 4H6l6 8-6 8h12" />
+    </svg>
+  );
+}
+
 export function IconGripVertical(props: IconProps): JSX.Element {
   return (
     <svg {...base(props)}>
