@@ -16,6 +16,22 @@ export type DocumentUnit = {
   supporting: Document[];
 };
 
+/**
+ * How a unit reads in the picker. Ordinary units are `module › chapter · section`. PYQ uploads
+ * aren't organized by module/chapter (those come back empty), so they get their own shape built from
+ * exam + printed PYQ provenance instead of an empty `› ` — e.g. `PYQ · JEE · All sections` or
+ * `PYQ · JEE · NEET 2019 · All sections`. Used for both grouped units and the by-id fallback so the
+ * two never disagree.
+ */
+export function unitDisplayLabel(doc: Document): string {
+  if (doc.pyq || doc.path.module.trim() === '') {
+    const provenance = [doc.pyqExam, doc.pyqYear].filter(Boolean).join(' ');
+    return ['PYQ', doc.exam, provenance, doc.path.section].filter(Boolean).join(' · ');
+  }
+  const title = [doc.path.chapter, doc.path.section].filter(Boolean).join(' · ');
+  return `${doc.path.module} › ${title}`;
+}
+
 /** The question PDF that represents a unit for verification: the extracted one, else the first. */
 export function representativeQuestion(questions: readonly Document[]): Document | undefined {
   const extracted = questions.find(

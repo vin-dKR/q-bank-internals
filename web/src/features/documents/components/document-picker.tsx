@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { Combobox, Skeleton } from '../../../shared/ui/index.js';
 import { useDocuments } from '../hooks/use-documents.js';
-import { groupByUnit, representativeQuestion } from '../lib/group-by-unit.js';
+import { groupByUnit, representativeQuestion, unitDisplayLabel } from '../lib/group-by-unit.js';
 
 type DocumentPickerProps = {
   value: string | null;
@@ -33,8 +33,8 @@ export function DocumentPicker({ value, onChange }: DocumentPickerProps): JSX.El
   // collision between distinct units gets a numeric suffix so every option stays pickable.
   const labelToId = new Map<string, string>();
   const idToLabel = new Map<string, string>();
-  for (const { unit, doc } of units) {
-    const base = `${unit.module} › ${unit.title}`;
+  for (const { doc } of units) {
+    const base = unitDisplayLabel(doc);
     let label = `${base} — ${doc.status}`;
     for (let n = 2; labelToId.has(label); n += 1) label = `${base} (${String(n)}) — ${doc.status}`;
     labelToId.set(label, doc.id);
@@ -45,8 +45,7 @@ export function DocumentPicker({ value, onChange }: DocumentPickerProps): JSX.El
   // document.
   for (const doc of data.items) {
     if (doc.kind === 'question' && !idToLabel.has(doc.id)) {
-      const title = [doc.path.chapter, doc.path.section].filter(Boolean).join(' · ');
-      idToLabel.set(doc.id, `${doc.path.module} › ${title} — ${doc.status}`);
+      idToLabel.set(doc.id, `${unitDisplayLabel(doc)} — ${doc.status}`);
     }
   }
 
