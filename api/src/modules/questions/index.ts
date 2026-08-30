@@ -18,3 +18,7 @@ export type {
   QuestionReExtractor,
   ReExtractInput,
 } from './question-reextractor.js';
+export type {
+  PaperMetadataExtraction,
+  PaperMetadataExtractor,
+} from './paper-metadata-extractor.js';

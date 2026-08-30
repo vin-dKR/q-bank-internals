@@ -17,6 +17,7 @@ import {
   type ImageStore,
   type LatexRefiner,
   type QuestionReExtractor,
+  type PaperMetadataExtractor,
   type QuestionRepository,
 } from './modules/questions/index.js';
 import {
@@ -60,6 +61,8 @@ import { OpenAiDiagramDetector } from './infrastructure/ai/openai.diagram-detect
 import { UnconfiguredDiagramDetector } from './infrastructure/ai/unconfigured.diagram-detector.js';
 import { OpenAiQuestionReExtractor } from './infrastructure/ai/openai.question-reextractor.js';
 import { UnconfiguredQuestionReExtractor } from './infrastructure/ai/unconfigured.question-reextractor.js';
+import { OpenAiPaperMetadataExtractor } from './infrastructure/ai/openai.paper-metadata-extractor.js';
+import { UnconfiguredPaperMetadataExtractor } from './infrastructure/ai/unconfigured.paper-metadata-extractor.js';
 import { MongoBankPublisher } from './infrastructure/bank/mongo.bank-publisher.js';
 import { UnconfiguredBankPublisher } from './infrastructure/bank/unconfigured.bank-publisher.js';
 import { MongoBankQuestionStore } from './infrastructure/bank/mongo.bank-question-store.js';
@@ -216,6 +219,16 @@ function buildQuestionReExtractor(): QuestionReExtractor {
   return new UnconfiguredQuestionReExtractor();
 }
 
+/** OpenAI vision reader for the cut-upload "AI-fill paper details" button; otherwise a null-object. */
+function buildPaperMetadataExtractor(): PaperMetadataExtractor {
+  if (env.OPENAI_API_KEY) {
+    logger.info(`Paper-metadata reader: OpenAI ${env.EXTRACTION_MODEL}`);
+    return new OpenAiPaperMetadataExtractor(env.OPENAI_API_KEY, env.EXTRACTION_MODEL);
+  }
+  logger.info('Paper-metadata reader: unconfigured. Set OPENAI_API_KEY to AI-fill paper details.');
+  return new UnconfiguredPaperMetadataExtractor();
+}
+
 export function createContainer(): Container {
   const { documents, sessions, jobs, questions, usage, limits } = buildPersistence();
   const jobQueue = buildQueue();
@@ -235,6 +248,7 @@ export function createContainer(): Container {
     buildDiagramDetector(),
     pagesService,
     buildQuestionReExtractor(),
+    buildPaperMetadataExtractor(),
   );
   const bankPublisher =
     env.DB_DRIVER === 'mongo'
