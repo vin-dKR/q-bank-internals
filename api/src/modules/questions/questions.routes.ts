@@ -14,6 +14,7 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
  *   PATCH /batch              — apply verify-screen edits to several questions → { updated, failed }
  *   PATCH /:id                — apply verify-screen edits (image flags/urls, stem, options, answer)
  *   POST /:id/images          — upload one cropped image (multipart) → { url }
+ *   POST /paper-metadata      — AI-read a paper's header image (multipart) → { paper }
  */
 export function createQuestionsRouter(service: QuestionsService): Router {
   const controller = createQuestionsController(service);
@@ -22,6 +23,7 @@ export function createQuestionsRouter(service: QuestionsService): Router {
 
   router.get('/', controller.list);
   router.post('/refine', controller.refine);
+  router.post('/paper-metadata', upload.single('file'), controller.extractPaperMetadata);
   router.post('/re-extract', controller.reExtract);
   router.post('/detect-figures', controller.detectFigures);
   router.post('/detect-figures/batch', controller.detectFiguresBatch);

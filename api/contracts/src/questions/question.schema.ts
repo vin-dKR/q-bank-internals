@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SourcePathSchema } from '../common/source-path.js';
+import { PaperMetadataSchema } from '../common/paper-metadata.js';
 
 /** A figure extracted from the page, stored in Drive and referenced by the question. */
 export const QuestionImageSchema = z.object({
@@ -133,6 +134,11 @@ export const QuestionSchema = z.object({
   isPyq: z.boolean(),
   pyqExam: z.string().nullable(),
   pyqYear: z.string().nullable(),
+  // Paper-level PYQ provenance denormalized from the document (exam name/year/session/shift/paper
+  // code …), so every published question carries the paper it came from. Null on non-PYQ questions
+  // and on legacy rows. `pyqExam`/`pyqYear` above remain the per-question source the model reads on
+  // the page; `paper.examName`/`examYear` are the whole-paper values and normally agree.
+  paper: PaperMetadataSchema.nullable(),
   sourceRegion: z.object({
     page: z.number().int().positive(),
     bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]),
@@ -166,6 +172,7 @@ export const UpdateQuestionSchema = QuestionSchema.pick({
   topic: true,
   pyqExam: true,
   pyqYear: true,
+  paper: true,
   flagged: true,
 }).partial();
 export type UpdateQuestion = z.infer<typeof UpdateQuestionSchema>;

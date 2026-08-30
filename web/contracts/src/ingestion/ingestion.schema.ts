@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ChapterKindSchema, ExamSchema, ModuleSchema, QuestionTypeSchema, SourceSchema } from '../common/vocabulary.js';
+import { AnswerLayoutSchema, PaperMetadataSchema } from '../common/paper-metadata.js';
 import { DriveFileSchema } from '../drive/drive.schema.js';
 import { ChapterTopicSchema, DocumentSchema } from '../documents/document.schema.js';
 
@@ -23,6 +24,11 @@ export type ChapterPath = z.infer<typeof ChapterPathSchema>;
  * persist a Document record the moment the bytes land (see the ingestion service).
  */
 export const ChapterUploadMetadataSchema = ChapterPathSchema.extend({
+  // subject/module/chapter may be blank for a PYQ paper (a whole paper spans many); the refine below
+  // still requires them for every other source. Overrides the strict ChapterPathSchema fields.
+  subject: z.string(),
+  module: z.string(),
+  chapter: z.string(),
   sessionId: z.string().min(1),
   sectionName: z.string().min(1),
   questionType: QuestionTypeSchema,
@@ -36,11 +42,33 @@ export const ChapterUploadMetadataSchema = ChapterPathSchema.extend({
   /** The year a PYQ chapter's questions were asked (e.g. "2019"). Sent only when `pyq` is set. */
   pyqYear: z.string().optional(),
   /**
+   * Paper-level provenance for a PYQ upload (exam name/year/session/shift/paper code …). Describes the
+   * whole paper the questions came from; entered once (optionally AI-filled) and denormalized onto
+   * every extracted question. Omitted for non-PYQ chapters.
+   */
+  paper: PaperMetadataSchema.optional(),
+  /**
+   * How this paper's answers are laid out: `separate` (answer key grouped elsewhere / a sibling PDF —
+   * the default) or `inline` (each question is followed by its own answer in one combined PDF, so
+   * extraction reads the answer beside each question). Absent ⇒ `separate`.
+   */
+  answerLayout: AnswerLayoutSchema.optional(),
+  /**
    * Optional topic-level structure of a QUESTION part: each topic's predefined question-type blocks
    * with the page spans they occupy in the uploaded PDF. Omitted for the chapter-wise flow (and for
    * answer/solution parts) — the pipeline behaves exactly as before when absent.
    */
   topics: z.array(ChapterTopicSchema).optional(),
+}).superRefine((meta, ctx) => {
+  // subject/module/chapter are optional ONLY for previous-year-question papers; every other source
+  // must still file under a full subject → module → chapter path so the bank stays browseable.
+  const isPyq = (meta.source ?? '').trim().toLowerCase() === 'pyq';
+  if (isPyq) return;
+  for (const key of ['subject', 'module', 'chapter'] as const) {
+    if (!meta[key].trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} is required` });
+    }
+  }
 });
 export type ChapterUploadMetadata = z.infer<typeof ChapterUploadMetadataSchema>;
 

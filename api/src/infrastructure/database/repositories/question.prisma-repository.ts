@@ -9,6 +9,7 @@ import {
 } from '@ingest/contracts';
 import { z } from 'zod';
 import { type NewQuestion, type QuestionRepository, sortByPdfOrder } from '../../../modules/questions/index.js';
+import { type PaperMetadataRow, toContractPaper, toPrismaPaper } from './paper-metadata-row.js';
 
 // Prisma's row shape for a Question, narrowed to what we map back to the contract shape.
 type QuestionRow = {
@@ -36,6 +37,7 @@ type QuestionRow = {
   isPyq: boolean;
   pyqExam: string | null;
   pyqYear: string | null;
+  paper: PaperMetadataRow | null;
   sourceRegion: { page: number; bbox: number[] };
   createdAt: Date;
   updatedAt: Date;
@@ -80,6 +82,7 @@ function toQuestion(row: QuestionRow): Question {
     isPyq: row.isPyq,
     pyqExam: row.pyqExam,
     pyqYear: row.pyqYear,
+    paper: toContractPaper(row.paper),
     sourceRegion: { page: row.sourceRegion.page, bbox: [x0 ?? 0, y0 ?? 0, x1 ?? 0, y1 ?? 0] },
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -113,6 +116,7 @@ export class PrismaQuestionRepository implements QuestionRepository {
         isPyq: question.isPyq,
         pyqExam: question.pyqExam,
         pyqYear: question.pyqYear,
+        paper: toPrismaPaper(question.paper),
         sourceRegion: question.sourceRegion,
       })),
     });
@@ -152,6 +156,7 @@ export class PrismaQuestionRepository implements QuestionRepository {
         ...(patch.topic !== undefined ? { topic: patch.topic } : {}),
         ...(patch.pyqExam !== undefined ? { pyqExam: patch.pyqExam } : {}),
         ...(patch.pyqYear !== undefined ? { pyqYear: patch.pyqYear } : {}),
+        ...(patch.paper !== undefined ? { paper: toPrismaPaper(patch.paper) } : {}),
         ...(patch.flagged !== undefined ? { flagged: patch.flagged } : {}),
       },
     });

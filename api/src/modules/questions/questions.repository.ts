@@ -1,5 +1,6 @@
 import type {
   MatchData,
+  PaperMetadata,
   Question,
   QuestionImage,
   QuestionOption,
@@ -25,6 +26,8 @@ export type NewQuestion = {
   isPyq: boolean;
   pyqExam: string | null;
   pyqYear: string | null;
+  // Paper-level PYQ provenance denormalized from the document; null on non-PYQ / legacy uploads.
+  paper: PaperMetadata | null;
   sourceRegion: { page: number; bbox: [number, number, number, number] };
 };
 

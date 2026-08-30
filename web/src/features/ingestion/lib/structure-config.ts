@@ -1,4 +1,4 @@
-import type { ChapterKind } from '@ingest/contracts';
+import { type ChapterKind, PAPER_METADATA_FIELDS } from '@ingest/contracts';
 import { emptyMetadata, type ChapterMetadataDraft } from '../types/chapter-group.js';
 import {
   NODE_LEVELS,
@@ -43,9 +43,10 @@ export type ParsedConfig = {
 };
 
 const CONFIG_VERSION = 1;
-// The string-valued metadata fields, copied verbatim on import. The boolean `pyq` flag is handled
-// separately below (it is not a string), while `serializeConfig` exports every field via a spread.
-const METADATA_KEYS: readonly Exclude<keyof ChapterMetadataDraft, 'pyq'>[] = [
+// The string-valued metadata fields, copied verbatim on import. The non-string fields (`pyq` boolean,
+// `paper` object, `answerLayout` union) are handled separately below, while `serializeConfig` exports
+// every field via a spread.
+const METADATA_KEYS: readonly Exclude<keyof ChapterMetadataDraft, 'pyq' | 'paper' | 'answerLayout'>[] = [
   'source',
   'exam',
   'subject',
@@ -160,6 +161,15 @@ function parseMetadata(value: unknown): ChapterMetadataDraft {
     if (typeof field === 'string') draft[key] = field;
   }
   if (typeof value.pyq === 'boolean') draft.pyq = value.pyq;
+  if (value.answerLayout === 'inline' || value.answerLayout === 'separate') {
+    draft.answerLayout = value.answerLayout;
+  }
+  if (isRecord(value.paper)) {
+    for (const { key } of PAPER_METADATA_FIELDS) {
+      const field = value.paper[key];
+      if (typeof field === 'string') draft.paper[key] = field;
+    }
+  }
   return draft;
 }
 
