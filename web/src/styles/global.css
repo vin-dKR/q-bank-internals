@@ -1036,8 +1036,28 @@
      Verify crop workspace
      ========================================================================== */
   .verify {
-    @apply grid items-start gap-4;
-    grid-template-columns: minmax(0, 1fr) 460px;
+    @apply grid items-start;
+    /* Source page | drag handle | question panel. The panel width is operator-set (var) and persists;
+       the handle column is the gutter, so no separate gap is needed. */
+    grid-template-columns: minmax(0, 1fr) 14px var(--verify-panel-w, 460px);
+  }
+  /* Draggable split between the source page and the question panel. */
+  .verify__resizer {
+    @apply relative flex cursor-col-resize items-stretch justify-center;
+    touch-action: none;
+  }
+  .verify__grip {
+    @apply my-auto h-10 w-0.5 rounded-full bg-line transition-colors;
+  }
+  .verify__resizer:hover .verify__grip,
+  .verify__resizer:active .verify__grip {
+    @apply bg-brand;
+  }
+  /* AI-crop review lives in the pinned top block: cap its height so a long list scrolls inside the
+     card instead of pushing the question cards off-screen. */
+  .verify__ai-review-list {
+    @apply overflow-y-auto;
+    max-height: 34vh;
   }
   .verify__canvas {
     @apply sticky flex flex-row overflow-hidden rounded-xl border border-line bg-surface shadow-sm;

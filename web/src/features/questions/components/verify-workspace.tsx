@@ -1,4 +1,4 @@
-import { type CSSProperties, type JSX, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type JSX, type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { DetectedFigure, ImageCrop, Question, ReExtractSource } from '@ingest/contracts';
 import { DETECT_FIGURES_MAX_PAGES } from '@ingest/contracts';
@@ -43,6 +43,30 @@ const VIEW_MODES: readonly { mode: ViewMode; label: string; needs: 'answer' | 's
   { mode: 'answer', label: '+ Answer', needs: 'answer' },
   { mode: 'solution', label: '+ Solution', needs: 'solution' },
 ];
+
+/** Draggable split between the source page and the question panel — persisted width, clamped range. */
+const PANEL_KEY = 'ingest:verifyPanelWidth';
+const DEFAULT_PANEL = 460;
+const MIN_PANEL = 340;
+const MAX_PANEL = 760;
+
+function readVerifyPanelWidth(): number {
+  try {
+    const raw = Number(localStorage.getItem(PANEL_KEY));
+    return Number.isFinite(raw) && raw >= MIN_PANEL && raw <= MAX_PANEL ? raw : DEFAULT_PANEL;
+  } catch {
+    return DEFAULT_PANEL;
+  }
+}
+
+function writeVerifyPanelWidth(width: number): void {
+  try {
+    localStorage.setItem(PANEL_KEY, String(width));
+  } catch {
+    // Storage unavailable (private mode) — the width just won't survive reload; nothing to recover.
+    return;
+  }
+}
 
 type Box = BoxRect & {
   id: string;
@@ -402,6 +426,10 @@ export function VerifyWorkspace({
   // The sibling answer/solution sources for this unit, resolved for the page currently on screen so
   // both the preview panes and the answer/explanation re-read target this topic's pages in them.
   const sources = useVerifySources(document.data, page);
+  // An inline-answer paper carries each question's answer beside it in the one question PDF — there is
+  // no separate answer/solution PDF to show, so the side-by-side answer/solution views are dropped.
+  const inlineAnswers = document.data?.answerLayout === 'inline';
+  const viewModes = inlineAnswers ? VIEW_MODES.filter((option) => option.mode === 'question') : VIEW_MODES;
   const [viewMode, setViewMode] = useState<ViewMode>('question');
   const answerSource: ReExtractSource | undefined = sources.answer
     ? { documentId: sources.answer.document.id, page: sources.answer.defaultPage }
@@ -424,6 +452,34 @@ export function VerifyWorkspace({
   const [activeBoxId, setActiveBoxId] = useState<string | null>(null);
   /** A box briefly rung to draw the eye to it after "Edit crop" re-selected an already-drawn crop. */
   const [flashId, setFlashId] = useState<string | null>(null);
+
+  // The scrolling question panel (scrolled back to the top on every page change) and the draggable
+  // split between it and the source page.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [panelWidth, setPanelWidth] = useState<number>(readVerifyPanelWidth);
+  const panelWidthRef = useRef(panelWidth);
+  const setPanel = useCallback((width: number): void => {
+    const clamped = Math.min(MAX_PANEL, Math.max(MIN_PANEL, width));
+    panelWidthRef.current = clamped;
+    setPanelWidth(clamped);
+  }, []);
+  // Drag the splitter: moving the handle LEFT widens the question panel (grid columns are
+  // page | resizer | panel), so subtract the pointer delta. The width persists on release.
+  const onPanelResizeStart = useCallback((event: ReactMouseEvent): void => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = panelWidthRef.current;
+    const move = (moveEvent: MouseEvent): void => { setPanel(startWidth - (moveEvent.clientX - startX)); };
+    const up = (): void => {
+      writeVerifyPanelWidth(panelWidthRef.current);
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      window.document.body.classList.remove('is-col-resizing');
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+    window.document.body.classList.add('is-col-resizing');
+  }, [setPanel]);
 
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -602,6 +658,9 @@ export function VerifyWorkspace({
     setAiError(null);
     pendingRestore.current = next;
     setPage(next);
+    // Land on the first question of the new page, not wherever the previous page was scrolled to.
+    // rAF so the scroll runs after the new page's cards have rendered.
+    requestAnimationFrame(() => { panelRef.current?.scrollTo({ top: 0 }); });
   };
 
   // A bank search opens the workspace on the focused question's source page; once its card renders,
@@ -1275,7 +1334,7 @@ export function VerifyWorkspace({
   const totalPages = pageCount.data ?? 1;
 
   return (
-    <div className="verify">
+    <div className="verify" style={{ '--verify-panel-w': `${String(panelWidth)}px` } as CSSProperties}>
       <div className="verify__canvas">
         <div className="verify__rail" role="toolbar" aria-label="Source page tools">
           <div className="verify__rail-group">
@@ -1374,14 +1433,26 @@ export function VerifyWorkspace({
         ) : null}
       </div>
 
-      <div className="verify__panel">
+      <div
+        className="verify__resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize the source page and question panel"
+        title="Drag to resize · double-click to reset"
+        onMouseDown={onPanelResizeStart}
+        onDoubleClick={() => { setPanel(DEFAULT_PANEL); writeVerifyPanelWidth(DEFAULT_PANEL); }}
+      >
+        <span className="verify__grip" aria-hidden="true" />
+      </div>
+
+      <div className="verify__panel" ref={panelRef}>
         <div className="verify__pinned">
           <div className="verify__session">
             {sessionBar ? <div className="verify__session-row">{sessionBar}</div> : null}
-            <div className="verify__session-row">
+            <div className="verify__session-row" hidden={viewModes.length <= 1}>
               <span className="text-sm text-ink-2">View</span>
               <div className="segmented ml-auto" role="tablist" aria-label="Source view">
-                {VIEW_MODES.map((option) => {
+                {viewModes.map((option) => {
                   const missing =
                     (option.needs === 'answer' && !sources.answer) ||
                     (option.needs === 'solution' && !sources.solution);
@@ -1423,6 +1494,63 @@ export function VerifyWorkspace({
           {magnifierBox && size && size.displayWidth > 0 ? (
             <CropMagnifier imageSrc={imageSrc} box={magnifierBox} size={size} />
           ) : null}
+          {/* Crop confirmation stays pinned to the top of the panel — keep or remove each AI crop
+              without scrolling to find it. Manual crops attach + save on draw and need no review. */}
+          {pendingAi.length > 0 ? (
+            <div className="card verify__ai-review">
+              <div className="card__head">
+                <h2 className="card__title">
+                  Review {pendingAi.length} AI crop{pendingAi.length === 1 ? '' : 's'}
+                </h2>
+                <div className="row">
+                  <Button size="xs" disabled={runActive} onClick={() => { void confirmAll(); }}>
+                    <IconCheck /> Confirm all
+                  </Button>
+                  <Button variant="ghost" size="xs" onClick={discardAll}>
+                    <IconX /> Discard all
+                  </Button>
+                </div>
+              </div>
+              <ul className="ai-review__list verify__ai-review-list">
+                {pendingAi.map((b) => {
+                  const matched = questionById.get(b.questionId);
+                  const stemLine = matched ? firstLine(matched.stem) : null;
+                  return (
+                    <li key={b.id} className="ai-review__item">
+                      <CropThumb imageSrc={imageSrc} box={b} size={size} />
+                      <button
+                        type="button"
+                        className="ai-review__match"
+                        onClick={() => { focusQuestion(b.questionId); }}
+                        title="Show the matched question"
+                      >
+                        <span className="ai-review__label">
+                          <IconSparkle />
+                          Q{questionNumberById.get(b.questionId) ?? '?'}
+                          {b.type === 'option' ? ` · option ${String(b.optionIndex + 1)}` : ''}
+                        </span>
+                        {stemLine ? <span className="ai-review__stem">{stemLine}</span> : null}
+                        {b.snippet?.trim() ? (
+                          <span className="ai-review__snippet">reads: “{b.snippet.trim()}”</span>
+                        ) : null}
+                      </button>
+                      <div className="row">
+                        <Button size="xs" disabled={busy.has(b.id) || runActive} onClick={() => { confirmBox(b.id); }}>
+                          {busy.has(b.id) ? 'Saving…' : <><IconCheck /> Confirm</>}
+                        </Button>
+                        <IconButton
+                          icon={<IconX />}
+                          label="Discard this suggestion"
+                          size="sm"
+                          onClick={() => { deleteBox(b.id); }}
+                        />
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
         </div>
 
         {aiError ? <p className="error">{aiError}</p> : null}
@@ -1444,62 +1572,6 @@ export function VerifyWorkspace({
                 ? `Detected ${String(aiResult.detected)} figure(s); ${String(aiResult.skipped)} already have an image and were skipped.`
                 : `Detected ${String(aiResult.detected)} figure(s).`}
           </p>
-        ) : null}
-
-        {pendingAi.length > 0 ? (
-          <div className="card">
-            <div className="card__head">
-              <h2 className="card__title">
-                Review {pendingAi.length} AI crop{pendingAi.length === 1 ? '' : 's'}
-              </h2>
-              <div className="row">
-                <Button size="xs" disabled={runActive} onClick={() => { void confirmAll(); }}>
-                  <IconCheck /> Confirm all
-                </Button>
-                <Button variant="ghost" size="xs" onClick={discardAll}>
-                  <IconX /> Discard all
-                </Button>
-              </div>
-            </div>
-            <ul className="ai-review__list">
-              {pendingAi.map((b) => {
-                const matched = questionById.get(b.questionId);
-                const stemLine = matched ? firstLine(matched.stem) : null;
-                return (
-                  <li key={b.id} className="ai-review__item">
-                    <CropThumb imageSrc={imageSrc} box={b} size={size} />
-                    <button
-                      type="button"
-                      className="ai-review__match"
-                      onClick={() => { focusQuestion(b.questionId); }}
-                      title="Show the matched question"
-                    >
-                      <span className="ai-review__label">
-                        <IconSparkle />
-                        Q{questionNumberById.get(b.questionId) ?? '?'}
-                        {b.type === 'option' ? ` · option ${String(b.optionIndex + 1)}` : ''}
-                      </span>
-                      {stemLine ? <span className="ai-review__stem">{stemLine}</span> : null}
-                      {b.snippet?.trim() ? (
-                        <span className="ai-review__snippet">reads: “{b.snippet.trim()}”</span>
-                      ) : null}
-                    </button>
-                    <div className="row">
-                      <Button size="xs" disabled={busy.has(b.id) || runActive} onClick={() => { confirmBox(b.id); }}>
-                        {busy.has(b.id) ? 'Saving…' : <><IconCheck /> Confirm</>}
-                      </Button>
-                      <IconButton
-                        icon={<IconX />}
-                        label="Discard this suggestion"
-                        size="sm"
-                        onClick={() => { deleteBox(b.id); }}
-                      />
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
         ) : null}
 
         {onThisPage.length === 0 ? (
