@@ -31,6 +31,7 @@ export class InMemoryQuestionRepository implements QuestionRepository {
       isPyq: question.isPyq,
       pyqExam: question.pyqExam,
       pyqYear: question.pyqYear,
+      paper: question.paper,
       sourceRegion: question.sourceRegion,
       createdAt: now,
       updatedAt: now,
@@ -71,6 +72,7 @@ export class InMemoryQuestionRepository implements QuestionRepository {
         ...(patch.topic !== undefined ? { topic: patch.topic } : {}),
         ...(patch.pyqExam !== undefined ? { pyqExam: patch.pyqExam } : {}),
         ...(patch.pyqYear !== undefined ? { pyqYear: patch.pyqYear } : {}),
+        ...(patch.paper !== undefined ? { paper: patch.paper } : {}),
         ...(patch.flagged !== undefined ? { flagged: patch.flagged } : {}),
         updatedAt: new Date().toISOString(),
       };

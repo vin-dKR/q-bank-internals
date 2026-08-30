@@ -23,13 +23,22 @@ export class IngestionService {
     private readonly extraction: ExtractionService,
   ) {}
 
-  /** Ensure the exam → subject → module → chapter folder chain exists, returning the chapter id. */
+  /**
+   * Ensure the exam → subject → module → chapter folder chain exists, returning the deepest folder's
+   * id. Blank segments are skipped (a PYQ paper may omit subject/module/chapter), so the file is filed
+   * under the deepest level the operator actually named — e.g. just under the exam folder.
+   */
   async ensureChapterPath(path: ChapterPath): Promise<string> {
-    const exam = await this.driveService.findOrCreateFolder(path.exam);
-    const subject = await this.driveService.findOrCreateFolder(path.subject, exam.id);
-    const module = await this.driveService.findOrCreateFolder(path.module, subject.id);
-    const chapter = await this.driveService.findOrCreateFolder(path.chapter, module.id);
-    return chapter.id;
+    const segments = [path.exam, path.subject, path.module, path.chapter]
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0);
+    let parentId: string | undefined;
+    for (const name of segments) {
+      const folder = await this.driveService.findOrCreateFolder(name, parentId);
+      parentId = folder.id;
+    }
+    // `exam` is always present (required for every source), so at least one folder was created.
+    return parentId as string;
   }
 
   /**
@@ -44,7 +53,8 @@ export class IngestionService {
     const session = await this.sessions.getById(metadata.sessionId); // 404s here if the session is gone
 
     const folderId = await this.ensureChapterPath(metadata);
-    const name = `${metadata.chapter}-${metadata.kind}.pdf`;
+    // A PYQ paper may omit the chapter, so fall back to the exam for a still-meaningful file name.
+    const name = `${metadata.chapter.trim() || metadata.exam.trim() || 'paper'}-${metadata.kind}.pdf`;
     const driveFile = await this.driveService.uploadPdf({ name, bytes, folderId });
 
     const document = await this.documents.create({
@@ -62,6 +72,9 @@ export class IngestionService {
       pyq: metadata.pyq ?? false,
       pyqExam: metadata.pyqExam ?? null,
       pyqYear: metadata.pyqYear ?? null,
+      // Paper-level PYQ provenance + answer layout, chosen once for the whole paper at cut time.
+      paper: metadata.paper ?? null,
+      answerLayout: metadata.answerLayout ?? 'separate',
       source: metadata.source ?? null,
       pageRange: null,
       topics: metadata.topics ?? [],

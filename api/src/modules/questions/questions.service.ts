@@ -3,6 +3,7 @@ import type {
   DetectedFigures,
   DetectedFiguresBatch,
   DetectedFiguresPage,
+  PaperMetadata,
   Question,
   QuestionBatchUpdate,
   ReExtractedQuestion,
@@ -19,6 +20,7 @@ import { matchFiguresToQuestions } from './figure-matcher.js';
 import type { ImageStore } from './image-store.js';
 import type { LatexRefiner } from './latex-refiner.js';
 import type { PageRenderer } from './page-renderer.js';
+import type { PaperMetadataExtractor } from './paper-metadata-extractor.js';
 import type { QuestionReExtractor } from './question-reextractor.js';
 import type { QuestionRepository } from './questions.repository.js';
 
@@ -43,6 +45,7 @@ export class QuestionsService {
     private readonly detector: DiagramDetector,
     private readonly pages: PageRenderer,
     private readonly reExtractor: QuestionReExtractor,
+    private readonly paperMetadata: PaperMetadataExtractor,
   ) {}
 
   /** The questions extracted from a single document, in PDF reading order. */
@@ -184,6 +187,22 @@ export class QuestionsService {
       logger.warn({ err: message }, 'Failed to record question re-extract token usage');
     }
     return { stem, options, answer, explanation, match };
+  }
+
+  /**
+   * AI-fill the PYQ paper-details form: read the whole-paper metadata off a rendered header-page
+   * image (rasterized in the browser before upload) and return the fields the page prints. Records
+   * the token spend like the other vision reads; a blank field simply means the page did not show it.
+   */
+  async extractPaperMetadata(png: Buffer): Promise<PaperMetadata> {
+    const { paper, usage } = await this.paperMetadata.extract({ png });
+    try {
+      await this.usage.recordUsage({ source: 'paper-metadata', ...usage });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn({ err: message }, 'Failed to record paper-metadata token usage');
+    }
+    return paper;
   }
 
   /** One-click "Fix LaTeX": wrap the math in `\(...\)`. Empty text is returned unchanged. */

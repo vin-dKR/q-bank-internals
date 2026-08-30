@@ -57,6 +57,26 @@ type TopicTypeConfig {
   pyq               Boolean?
 }
 
+// Paper-level provenance for a previous-year-questions upload: describes the WHOLE paper the
+// questions came from (exam name/year/session/shift/paper code …), entered once at cut time
+// (optionally AI-filled) and denormalized onto the document and every question. Every field optional.
+type PaperMetadata {
+  pyqExamName        String?
+  pyqExamYear        String?
+  pyqExamSession     String?
+  pyqShift           String?
+  pyqPaperName       String?
+  pyqPaperCode       String?
+  pyqConductingBody  String?
+  pyqExamStage       String?
+  pyqExamDate        String?
+  pyqPaperSet        String?
+  pyqLanguage        String?
+  pyqTotalQuestions  String?
+  pyqDuration        String?
+  pyqTotalMarks      String?
+}
+
 // One topic inside a chapter PDF (Chapter -> Section -> Part -> Topic -> Questions). `name` is the
 // unique per-leaf answer-matching key (full joined path); sectionName/topicName are the split display
 // identity (Section node label -> bank section_name; Topic leaf label -> bank topic). Both optional.
@@ -107,6 +127,11 @@ model Document {
   pyq           Boolean         @default(false)
   pyqExam       String?
   pyqYear       String?
+  // Paper-level PYQ provenance (exam name/year/session/shift/paper code …); absent when not a PYQ upload.
+  paper         PaperMetadata?
+  // How answers are laid out in the source PDF: "separate" (grouped / sibling answer PDF) or "inline"
+  // (each question followed by its own answer). Drives the inline extraction prompt + Verify panes.
+  answerLayout  String          @default("separate")
   // Question provenance chosen at cut time: pyq / module / textbook (open string). Null on legacy docs.
   source        String?
   pageRange     PageRange?
@@ -177,6 +202,9 @@ model Question {
   isPyq           Boolean          @default(false)
   pyqExam         String?
   pyqYear         String?
+  // Paper-level PYQ provenance denormalized from the document, so every published question carries the
+  // paper it came from. Absent on non-PYQ and legacy rows.
+  paper           PaperMetadata?
   sourceRegion    SourceRegion
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
