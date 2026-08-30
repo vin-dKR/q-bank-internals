@@ -78,6 +78,8 @@ export class DocumentsService {
       pyq: input.pyq ?? false,
       pyqExam: input.pyqExam ?? null,
       pyqYear: input.pyqYear ?? null,
+      paper: input.paper ?? null,
+      answerLayout: input.answerLayout ?? 'separate',
       source: input.source ?? null,
       pageRange: input.pageRange ?? null,
       topics: input.topics ?? [],

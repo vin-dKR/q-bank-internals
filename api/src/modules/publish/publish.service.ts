@@ -1,6 +1,9 @@
 import {
   type Document,
+  hasPaperMetadata,
   matchKeyToAnswer,
+  PAPER_METADATA_FIELDS,
+  type PaperMetadata,
   type PublishSessionResult,
   type Question,
 } from '@ingest/contracts';
@@ -84,6 +87,23 @@ const PUBLISHABLE_STATUSES: ReadonlySet<Document['status']> = new Set([
   'completed',
 ]);
 
+/** camelCase → snake_case, so `pyqExamName` becomes the bank's `pyq_exam_name` column style. */
+function snakeCase(key: string): string {
+  return key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+}
+
+/**
+ * Snake-case the whole-paper PYQ metadata for the bank row (its column style), or null when the
+ * upload carried no paper details. Keys stay `pyq_`-prefixed so a PYQ question's paper fields are
+ * never confused with an ordinary question's columns. A blank object (every field '') is absent.
+ */
+function toBankPaper(paper: PaperMetadata | null): Record<string, string> | null {
+  if (!hasPaperMetadata(paper) || !paper) return null;
+  const row: Record<string, string> = {};
+  for (const { key } of PAPER_METADATA_FIELDS) row[snakeCase(key)] = paper[key];
+  return row;
+}
+
 /** Map one ingest question into the main bank's Question document shape. */
 function toBankQuestion(question: Question, index: number, document: Document): BankQuestion {
   return {
@@ -120,6 +140,11 @@ function toBankQuestion(question: Question, index: number, document: Document): 
     is_pyq: question.isPyq || document.pyq,
     pyq_exam: question.pyqExam ?? document.pyqExam,
     pyq_year: question.pyqYear ?? document.pyqYear,
+    // Whole-paper PYQ provenance (exam name/year/session/shift/paper code …), denormalized from the
+    // question (falling back to the document). Snake-cased to match the bank's column style; a new
+    // optional field, so the bank simply carries it and existing readers are unaffected. Null when
+    // the upload was not a PYQ paper.
+    paper: toBankPaper(question.paper ?? document.paper),
     chapter: question.path.chapter,
     // For a match question the answer is the key mirrored to text ("A-p,t; B-q,u"); else the raw answer.
     answer:

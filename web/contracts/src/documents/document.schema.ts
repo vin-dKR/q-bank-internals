@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { SourcePathSchema } from '../common/source-path.js';
 import { PaginationQuerySchema } from '../common/pagination.js';
 import { ChapterKindSchema, QuestionTypeSchema, SourceSchema } from '../common/vocabulary.js';
+import { AnswerLayoutSchema, PaperMetadataSchema } from '../common/paper-metadata.js';
 
 /** Lifecycle of a section PDF as it moves through the pipeline. The web dropdown filters on this. */
 export const DocumentStatusSchema = z.enum([
@@ -91,6 +92,10 @@ export const DocumentSchema = z.object({
   pyqExam: z.string().nullable(),
   /** The year a PYQ chapter's questions were asked (e.g. "2019"); null unless `pyq` is set. */
   pyqYear: z.string().nullable(),
+  /** Paper-level PYQ provenance (exam name/year/session/shift/paper code …); null when not a PYQ upload. */
+  paper: PaperMetadataSchema.nullable(),
+  /** How answers are laid out in the source PDF: `separate` (grouped/sibling) or `inline` (with each question). */
+  answerLayout: AnswerLayoutSchema.default('separate'),
   /** Where the questions came from: pyq / module / textbook (open string). Null for legacy documents. */
   source: SourceSchema.nullable(),
   pageRange: PageRangeSchema.nullable(),
@@ -122,6 +127,8 @@ export const RegisterDocumentSchema = z.object({
   pyq: z.boolean().optional(),
   pyqExam: z.string().min(1).nullable().optional(),
   pyqYear: z.string().min(1).nullable().optional(),
+  paper: PaperMetadataSchema.nullable().optional(),
+  answerLayout: AnswerLayoutSchema.optional(),
   source: SourceSchema.nullable().optional(),
   pageRange: PageRangeSchema.nullable().optional(),
   topics: z.array(ChapterTopicSchema).optional(),

@@ -24,6 +24,7 @@ export function createQuestionsController(service: QuestionsService): {
   reExtract: RequestHandler;
   detectFigures: RequestHandler;
   detectFiguresBatch: RequestHandler;
+  extractPaperMetadata: RequestHandler;
 } {
   return {
     list: asyncHandler(async (req, res) => {
@@ -59,6 +60,12 @@ export function createQuestionsController(service: QuestionsService): {
     batchUpdate: asyncHandler(async (req, res) => {
       const { updates } = parseOrThrow(BatchUpdateQuestionsSchema, req.body);
       ok(res, await service.batchUpdate(updates));
+    }),
+
+    // Multipart: `file` = the rendered header-page PNG. Returns the AI-read paper fields.
+    extractPaperMetadata: asyncHandler(async (req, res) => {
+      if (!req.file) throw errors.uploadMissingFile();
+      ok(res, { paper: await service.extractPaperMetadata(req.file.buffer) });
     }),
 
     // Multipart: `file` = the cropped PNG blob, `name` = the storage key. Returns the public URL.

@@ -22,8 +22,10 @@ import {
   configPageBindings,
   deletePage,
   deletePages,
+  ingestionApi,
   materializePages,
   mergePdfs,
+  renderPageToPng,
   useChapterVocabulary,
   useReflowBlocks,
   useSplitPoints,
@@ -103,6 +105,7 @@ export function TreeIngestPage(): JSX.Element {
   const [panelWidth, setPanelWidth] = useState(readPanelWidth);
   const panelWidthRef = useRef(panelWidth);
   const [bindingSlot, setBindingSlot] = useState<string | null>(null);
+  const [aiFillingPaper, setAiFillingPaper] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [didUpload, setDidUpload] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -361,6 +364,34 @@ export function TreeIngestPage(): JSX.Element {
     },
     [tree, numPages, onBindPages, toast],
   );
+
+  /**
+   * AI-fill the PYQ paper-details form: render the working document's first page to a PNG, send it to
+   * the vision endpoint, and merge the fields it read into the chapter metadata (only overwriting a
+   * field the model actually filled, so an operator's manual edits to other fields survive). Best-
+   * effort — a failed read toasts and leaves the form untouched.
+   */
+  const handleAiFillPaper = useCallback((): void => {
+    if (!activeBytes || aiFillingPaper) return;
+    setAiFillingPaper(true);
+    void (async (): Promise<void> => {
+      try {
+        const png = await renderPageToPng(activeBytes, 1);
+        const paper = await ingestionApi.extractPaperMetadata(png);
+        const current = tree.tree.metadata.paper;
+        const merged = { ...current };
+        for (const key of Object.keys(paper) as (keyof typeof paper)[]) {
+          if (paper[key].trim()) merged[key] = paper[key].trim();
+        }
+        tree.setMetadata({ paper: merged });
+        success('Paper details filled', 'Review the fields and correct anything the reader missed.');
+      } catch (err) {
+        toastError('Couldn’t read the paper header', errorMessage(err));
+      } finally {
+        setAiFillingPaper(false);
+      }
+    })();
+  }, [activeBytes, aiFillingPaper, tree, success, toastError]);
 
   // The keyboard handler reads the latest state/handlers through a ref, so it never re-subscribes and
   // never sees a stale closure (applyMode / handleDeleteSelected are re-created every render).
@@ -642,6 +673,8 @@ export function TreeIngestPage(): JSX.Element {
             maxPages={numPages}
             onImport={onImportConfig}
             onImportError={(message) => { toastError('Couldn’t import config', message); }}
+            onAiFillPaper={handleAiFillPaper}
+            aiFillingPaper={aiFillingPaper}
           />
 
           {uploadError ? <p className="error">{uploadError}</p> : null}

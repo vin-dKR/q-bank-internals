@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import type {
+  AnswerLayout,
   ChapterTopic,
   Document,
   DocumentListQuery,
@@ -8,6 +9,7 @@ import type {
 } from '@ingest/contracts';
 import type { CreateDocumentInput, DocumentRepository } from '../../../modules/documents/index.js';
 import { notSoftDeleted } from '../prisma.js';
+import { type PaperMetadataRow, toContractPaper, toPrismaPaper } from './paper-metadata-row.js';
 
 type PageRangeRow = { from: number; to: number };
 type TopicTypeRow = {
@@ -39,6 +41,9 @@ type DocumentRow = {
   pyq: boolean;
   pyqExam: string | null;
   pyqYear: string | null;
+  paper: PaperMetadataRow | null;
+  // Legacy rows predate this column, so a read can genuinely come back without it — default on map.
+  answerLayout: string | null;
   source: string | null;
   pageRange: PageRangeRow | null;
   topics: TopicRow[];
@@ -96,6 +101,8 @@ function toDocument(row: DocumentRow): Document {
     pyq: row.pyq,
     pyqExam: row.pyqExam,
     pyqYear: row.pyqYear,
+    paper: toContractPaper(row.paper),
+    answerLayout: (row.answerLayout ?? 'separate') as AnswerLayout,
     source: row.source,
     pageRange: row.pageRange,
     topics: toContractTopics(row.topics),
@@ -172,6 +179,8 @@ export class PrismaDocumentRepository implements DocumentRepository {
         pyq: input.pyq,
         pyqExam: input.pyqExam,
         pyqYear: input.pyqYear,
+        paper: toPrismaPaper(input.paper),
+        answerLayout: input.answerLayout,
         source: input.source,
         pageRange: input.pageRange,
         topics: toPrismaTopics(input.topics),

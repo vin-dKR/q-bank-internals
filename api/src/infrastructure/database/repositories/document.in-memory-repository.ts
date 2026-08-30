@@ -63,6 +63,8 @@ export class InMemoryDocumentRepository implements DocumentRepository {
       pyq: input.pyq,
       pyqExam: input.pyqExam,
       pyqYear: input.pyqYear,
+      paper: input.paper,
+      answerLayout: input.answerLayout,
       source: input.source,
       pageRange: input.pageRange,
       topics: input.topics,

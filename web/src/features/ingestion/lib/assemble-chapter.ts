@@ -1,5 +1,11 @@
 import { PDFDocument } from 'pdf-lib';
-import type { ChapterKind, ChapterTopic, ChapterUploadMetadata } from '@ingest/contracts';
+import {
+  type ChapterKind,
+  type ChapterTopic,
+  type ChapterUploadMetadata,
+  hasPaperMetadata,
+  trimPaperMetadata,
+} from '@ingest/contracts';
 import type { NodeLevel, StructureNode, StructureTree } from '../types/structure-node.js';
 import { appendPdf } from './merge-pdfs.js';
 import { leaves, resolveQuestionType } from './structure-tree.js';
@@ -64,11 +70,16 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
   const m = tree.metadata;
   const problems: string[] = [];
 
+  // A PYQ paper spans many subjects/chapters, so subject/module/chapter are optional for it — only the
+  // exam is required. Every other source must still name its full path.
+  const pyq = isPyqSource(m);
   const missing: string[] = [];
   if (!m.exam.trim()) missing.push('exam');
-  if (!m.subject.trim()) missing.push('subject');
-  if (!m.module.trim()) missing.push('module');
-  if (!m.chapter.trim()) missing.push('chapter');
+  if (!pyq) {
+    if (!m.subject.trim()) missing.push('subject');
+    if (!m.module.trim()) missing.push('module');
+    if (!m.chapter.trim()) missing.push('chapter');
+  }
   if (missing.length > 0) {
     return { base: emptyBase(m), question: null, answer: null, solution: null, problems: [`Missing chapter ${missing.join(', ')}.`] };
   }
@@ -115,7 +126,8 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
               pageRange: { from, to },
               ...(a ? { answerPageRange: { from: a.from, to: a.to } } : {}),
               ...(s ? { solutionPageRange: { from: s.from, to: s.to } } : {}),
-              ...(leaf.node.pyq ? { pyq: true } : {}),
+              // A PYQ-source chapter defaults every leaf to PYQ; an explicit per-leaf toggle wins.
+              ...((leaf.node.pyq ?? isPyqSource(m)) ? { pyq: true } : {}),
             },
           ],
           ...(sectionName ? { sectionName } : {}),
@@ -134,6 +146,7 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
     questionType: resolveQuestionType(firstLeaf.node, firstLeaf.ancestors).trim(),
     ...(m.source.trim() ? { source: m.source.trim() } : {}),
     ...pyqFields(m),
+    ...paperFields(m),
   };
 
   return {
@@ -155,15 +168,37 @@ function emptyBase(m: StructureTree['metadata']): Base {
     questionType: '',
     ...(m.source.trim() ? { source: m.source.trim() } : {}),
     ...pyqFields(m),
+    ...paperFields(m),
   };
 }
 
-/** The PYQ upload fields, present only when the chapter is flagged as previous-year questions. */
+/** True when the chapter's source is previous-year questions — the whole paper is then marked PYQ. */
+function isPyqSource(m: StructureTree['metadata']): boolean {
+  return m.source.trim().toLowerCase() === 'pyq';
+}
+
+/**
+ * The PYQ upload fields, present when the chapter is flagged PYQ — either explicitly (`m.pyq`) or by
+ * its source being `pyq`, so a PYQ paper is stamped `pyq: true` on the document even when the operator
+ * never touched a per-leaf toggle.
+ */
 function pyqFields(m: StructureTree['metadata']): Partial<Pick<Base, 'pyq' | 'pyqExam' | 'pyqYear'>> {
-  if (!m.pyq) return {};
+  if (!m.pyq && !isPyqSource(m)) return {};
   return {
     pyq: true,
     ...(m.pyqExam.trim() ? { pyqExam: m.pyqExam.trim() } : {}),
     ...(m.pyqYear.trim() ? { pyqYear: m.pyqYear.trim() } : {}),
+  };
+}
+
+/**
+ * The paper-level fields for a PYQ upload: the whole-paper metadata (only when the operator/AI filled
+ * something) and the answer layout (only when it differs from the default `separate`). Both are sent
+ * regardless of `pyq`/`source` — the panel that fills them is only shown for the pyq source anyway.
+ */
+function paperFields(m: StructureTree['metadata']): Partial<Pick<Base, 'paper' | 'answerLayout'>> {
+  return {
+    ...(hasPaperMetadata(m.paper) ? { paper: trimPaperMetadata(m.paper) } : {}),
+    ...(m.answerLayout !== 'separate' ? { answerLayout: m.answerLayout } : {}),
   };
 }
