@@ -1,3 +1,4 @@
+import { type AnswerLayout, EMPTY_PAPER_METADATA, type PaperMetadata } from '@ingest/contracts';
 import type { SliceTags } from '../lib/build-chapter-pdfs.js';
 
 /** Editable metadata for one chapter before it is validated into a ChapterUploadMetadata. */
@@ -16,6 +17,18 @@ export type ChapterMetadataDraft = {
   pyqExam: string;
   /** The year a PYQ chapter's questions were asked (e.g. "2019"); meaningful only when `pyq` is set. */
   pyqYear: string;
+  /**
+   * Whole-paper PYQ provenance (exam name/year/session/shift/paper code …). Shown as the "Paper
+   * details" panel when `source === 'pyq'`; optionally AI-filled from the paper header. Sent with the
+   * upload and denormalized onto every extracted question.
+   */
+  paper: PaperMetadata;
+  /**
+   * How this paper's answers are laid out: `separate` (answer key grouped elsewhere / a sibling PDF —
+   * the default) or `inline` (each question followed by its own answer in one combined PDF). Drives
+   * the inline extraction prompt and hides the answer/solution drop-slots + Verify panes.
+   */
+  answerLayout: AnswerLayout;
 };
 
 /**
@@ -51,7 +64,7 @@ export type ChapterGroup = {
 };
 
 export function emptyMetadata(): ChapterMetadataDraft {
-  return { source: '', exam: '', subject: '', module: '', chapter: '', sectionName: '', questionType: '', pyq: false, pyqExam: '', pyqYear: '' };
+  return { source: '', exam: '', subject: '', module: '', chapter: '', sectionName: '', questionType: '', pyq: false, pyqExam: '', pyqYear: '', paper: { ...EMPTY_PAPER_METADATA }, answerLayout: 'separate' };
 }
 
 /** The chapter (if any) that owns a given page, resolved for the on-page slice overlay. */

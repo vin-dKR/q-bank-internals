@@ -1,13 +1,12 @@
 import { z } from 'zod';
 
 /**
- * The module → chapter → section trail that travels with every file and every question. Losing it
- * is what makes the bank unsearchable (see pipeline stage handoffs), so it is one shape, validated
- * everywhere a document or question crosses the boundary.
- *
- * `module`/`chapter` may be empty for PYQ (previous-year-question) uploads: those are organized by
- * exam/year, not by a coaching module or chapter, so they legitimately carry no module/chapter.
- * `section` always has a value (defaults to "All sections") and stays required.
+ * The module → chapter → section trail that travels with every file and every question — the key that
+ * keeps the bank searchable. `module`/`chapter` may be EMPTY for a previous-year-questions (PYQ) paper:
+ * a whole paper spans many subjects/chapters, so the operator can leave them blank and the question is
+ * found by its PYQ provenance (`is_pyq` + paper metadata) instead. `section` is always present (the
+ * unit's "All sections"). Ordinary (non-PYQ) uploads still require module/chapter — enforced at the
+ * upload boundary (see {@link ChapterUploadMetadataSchema}), not here, so the stored shape stays one type.
  */
 export const SourcePathSchema = z.object({
   module: z.string(),

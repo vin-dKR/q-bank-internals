@@ -1,4 +1,5 @@
 import type { Document } from '@ingest/contracts';
+import { PAPER_METADATA_FIELDS } from '@ingest/contracts';
 import { topicBindingForPage } from '../../../modules/extraction/index.js';
 
 /**
@@ -117,10 +118,26 @@ function resolvePyq(document: Document, binding: ReturnType<typeof topicBindingF
 }
 
 /**
+ * Extra rule appended when the paper's answer layout is `inline`: each question is immediately
+ * followed by its own printed answer key (e.g. "MathonGo Answer Key : (3)"), with no separate answer
+ * sheet. Unlike the opportunistic BASE_RULES rule 8, this one REQUIRES reading that printed answer
+ * into the `answer` field for every question, plus any worked solution into `explanation`.
+ */
+const INLINE_ANSWER_RULE = `
+INLINE ANSWER-KEY RULE (this paper prints each answer next to its question):
+This is an inline-answer paper: the correct answer — and often a worked solution/explanation — is printed immediately after each question, before the next question begins (e.g. "Answer Key : (3)", "Ans. (B)", "Sol. …"). For EVERY question you MUST:
+- Read that question's OWN printed answer and put it in that question's "answer" field, formatted per the TYPE-SPECIFIC RULE (normalize (1)(2)(3)(4) to A/B/C/D for option types; the exact number for integer/numerical types).
+- Also mark the matching option's correctness where options are extracted.
+- If a worked solution/explanation is printed for that question, put its FULL text (math as LaTeX) in that same question's "explanation" field; omit "explanation" only when none is printed.
+CRITICAL PAIRING: the answer and explanation belong to the question they are printed under — never attach question N's answer or explanation to question N+1. The next numbered question marks the boundary; everything between question N and question N+1 (its answer + solution) is question N's. Never guess an answer or explanation the page does not print.
+`;
+
+/**
  * The question-extraction prompt for one page of a document. The question type comes from the
  * operator's topic config when the page is covered by a block (stated as fixed so the model cannot
  * re-classify), else from the document-level question type — exactly mirroring how the worker stamps
- * the persisted questions.
+ * the persisted questions. When the paper's answer layout is `inline`, an extra rule tells the model
+ * to read each question's printed answer key in the same pass (no sibling answer sheet exists).
  */
 export function questionPrompt(document: Document, pageNumber: number): string {
   const binding = topicBindingForPage(document.topics, pageNumber);
@@ -134,10 +151,30 @@ export function questionPrompt(document: Document, pageNumber: number): string {
     bindingNote,
     BASE_RULES.trim(),
     typeRule ? `TYPE-SPECIFIC RULE:\n${typeRule}` : '',
+    document.answerLayout === 'inline' ? INLINE_ANSWER_RULE.trim() : '',
     resolvePyq(document, binding) ? PYQ_RULE.trim() : '',
   ]
     .filter(Boolean)
     .join('\n\n');
+}
+
+/**
+ * Prompt for the AI-fill of the PYQ paper-details form. Given ONE rendered page image (the paper's
+ * header/first page), read the whole-paper metadata printed on it into a flat JSON object keyed by
+ * exactly the {@link PAPER_METADATA_FIELDS} keys. Every field is optional — return only what the page
+ * actually prints, an empty string for anything it does not, and never guess.
+ */
+export function paperMetadataPrompt(): string {
+  const fieldLines = PAPER_METADATA_FIELDS.map(
+    ({ key, hint, placeholder }) => `- "${key}": ${hint} (e.g. ${placeholder}).`,
+  ).join('\n');
+  return [
+    'You are given an image of the header / first page of a previous-year examination paper (e.g. the title block that names the exam, year, date, and shift).',
+    'Read the whole-paper metadata printed on it and return ONLY this exact JSON shape:',
+    `{\n${PAPER_METADATA_FIELDS.map(({ key }) => `  "${key}": "…"`).join(',\n')}\n}`,
+    `FIELD MEANINGS:\n${fieldLines}`,
+    'RULES:\n1. Include every key above. Use an empty string "" for any field the page does not print — never guess or infer a value that is not shown.\n2. Copy values verbatim as printed (e.g. keep "Morning Shift", "02 April 2026"); normalise an obvious date to YYYY-MM-DD only when the parts are unambiguous.\n3. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.',
+  ].join('\n\n');
 }
 
 /**

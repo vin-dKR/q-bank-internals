@@ -1,10 +1,12 @@
 import type {
+  AnswerLayout,
   ChapterKind,
   ChapterTopic,
   Document,
   DocumentListQuery,
   DocumentStatus,
   PageRange,
+  PaperMetadata,
   QuestionType,
   SourcePath,
   UpdateDocument,
@@ -26,6 +28,10 @@ export type CreateDocumentInput = {
   pyq: boolean;
   pyqExam: string | null;
   pyqYear: string | null;
+  /** Paper-level PYQ provenance (exam name/year/session/shift/paper code …); null when not a PYQ upload. */
+  paper: PaperMetadata | null;
+  /** How answers are laid out in the source PDF: 'separate' (grouped/sibling) or 'inline' (with each question). */
+  answerLayout: AnswerLayout;
   /** Question provenance (pyq / module / textbook); null when the operator left it blank. */
   source: string | null;
   pageRange: PageRange | null;

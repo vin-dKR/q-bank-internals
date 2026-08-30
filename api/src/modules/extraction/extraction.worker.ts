@@ -76,6 +76,8 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
     isPyq,
     pyqExam: isPyq ? draft.pyqExam ?? document.pyqExam : null,
     pyqYear: isPyq ? draft.pyqYear ?? document.pyqYear : null,
+    // Paper-level provenance is the same for every question in the paper — denormalize the document's.
+    paper: document.paper,
   };
 
   // A match-the-column question persists its structured columns instead of options: the stem is the
