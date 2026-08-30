@@ -1,5 +1,5 @@
 import { type ChangeEvent, type DragEvent, type JSX, type KeyboardEvent, useRef, useState } from 'react';
-import type { ChapterKind } from '@ingest/contracts';
+import { type ChapterKind, PAPER_METADATA_FIELDS, type PaperMetadataKey } from '@ingest/contracts';
 import {
   Combobox,
   EmptyState,
@@ -10,6 +10,7 @@ import {
   IconDownload,
   IconLayers,
   IconPlus,
+  IconSparkle,
   IconTrash,
   IconX,
   Spinner,
@@ -36,10 +37,16 @@ type StructureTreePanelProps = {
   onImport: (parsed: ParsedConfig) => void;
   /** Report a rejected config import (bad/unreadable file) so the page can toast it. */
   onImportError: (message: string) => void;
+  /** Read the paper header (page 1) with AI and fill the paper-details form. Owned by the page. */
+  onAiFillPaper: () => void;
+  /** True while the AI-fill read is in flight, for the button's busy state. */
+  aiFillingPaper: boolean;
 };
 
 const LEVEL_OPTIONS = ['Section', 'Part', 'Topic'] as const;
 const PART_KINDS: readonly ChapterKind[] = ['question', 'answer', 'solution'];
+/** Inline-answer papers bind only the combined Question PDF — the answer travels with each question. */
+const INLINE_PART_KINDS: readonly ChapterKind[] = ['question'];
 const KIND_LABEL: Record<ChapterKind, string> = {
   question: 'Question',
   answer: 'Answer',
@@ -80,10 +87,15 @@ export function StructureTreePanel({
   maxPages,
   onImport,
   onImportError,
+  onAiFillPaper,
+  aiFillingPaper,
 }: StructureTreePanelProps): JSX.Element {
   const { tree } = controller;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const importInputRef = useRef<HTMLInputElement>(null);
+  // The paper-details panel only applies to previous-year-question uploads; it stays hidden for the
+  // module/textbook sources, which carry no whole-paper provenance.
+  const isPyq = tree.metadata.source.trim().toLowerCase() === 'pyq';
 
   const toggleCollapse = (id: string): void => {
     setCollapsed((prev) => {
@@ -118,11 +130,22 @@ export function StructureTreePanel({
         <MetaField label="Source" value={tree.metadata.source} options={vocabulary.sources} placeholder="pyq / module / textbook" onChange={(v) => { controller.setMetadata({ source: v }); }} />
         <div className="grid grid-cols-2 gap-2">
           <MetaField label="Exam" value={tree.metadata.exam} options={vocabulary.exams} placeholder="e.g. JEE" onChange={(v) => { controller.setMetadata(cascadeMetadata('exam', v, tree.metadata, vocabulary)); }} />
-          <MetaField label="Subject" value={tree.metadata.subject} options={vocabulary.subjectsFor(tree.metadata.exam)} placeholder="e.g. Physics" onChange={(v) => { controller.setMetadata(cascadeMetadata('subject', v, tree.metadata, vocabulary)); }} />
-          <MetaField label="Module" value={tree.metadata.module} options={vocabulary.modulesFor(tree.metadata.subject)} placeholder="e.g. Resonance" onChange={(v) => { controller.setMetadata(cascadeMetadata('module', v, tree.metadata, vocabulary)); }} />
-          <MetaField label="Chapter" value={tree.metadata.chapter} options={vocabulary.chaptersFor(tree.metadata.module)} placeholder="e.g. Gravitation" onChange={(v) => { controller.setMetadata(cascadeMetadata('chapter', v, tree.metadata, vocabulary)); }} />
+          <MetaField label={isPyq ? 'Subject (optional)' : 'Subject'} value={tree.metadata.subject} options={vocabulary.subjectsFor(tree.metadata.exam)} placeholder={isPyq ? 'whole-paper — leave blank' : 'e.g. Physics'} onChange={(v) => { controller.setMetadata(cascadeMetadata('subject', v, tree.metadata, vocabulary)); }} />
+          <MetaField label={isPyq ? 'Module (optional)' : 'Module'} value={tree.metadata.module} options={vocabulary.modulesFor(tree.metadata.subject)} placeholder={isPyq ? 'whole-paper — leave blank' : 'e.g. Resonance'} onChange={(v) => { controller.setMetadata(cascadeMetadata('module', v, tree.metadata, vocabulary)); }} />
+          <MetaField label={isPyq ? 'Chapter (optional)' : 'Chapter'} value={tree.metadata.chapter} options={vocabulary.chaptersFor(tree.metadata.module)} placeholder={isPyq ? 'whole-paper — leave blank' : 'e.g. Gravitation'} onChange={(v) => { controller.setMetadata(cascadeMetadata('chapter', v, tree.metadata, vocabulary)); }} />
         </div>
       </section>
+
+      <AnswerLayoutSection controller={controller} />
+
+      {isPyq ? (
+        <PaperDetailsSection
+          controller={controller}
+          onAiFillPaper={onAiFillPaper}
+          aiFillingPaper={aiFillingPaper}
+          canAiFill={maxPages > 0}
+        />
+      ) : null}
 
       <section className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
@@ -203,6 +226,108 @@ function MetaField({ label, value, options, placeholder, onChange }: MetaFieldPr
   );
 }
 
+const ANSWER_LAYOUTS: readonly { value: 'separate' | 'inline'; label: string; hint: string }[] = [
+  { value: 'separate', label: 'Grouped separately', hint: 'Answer key on a last page or a sibling answer/solution PDF — bind it to the Answer/Solution slots.' },
+  { value: 'inline', label: 'Inline with each question', hint: 'Each question is followed by its own answer (and any explanation) in one combined PDF — only bind the Question slot; extraction reads the answer beside each question.' },
+];
+
+/**
+ * The answer-layout chooser — universal across every source (module / textbook / pyq). It decides how
+ * extraction reads answers (a separate key vs. inline beside each question) and, for `inline`, hides
+ * the Answer/Solution drop-slots and the Verify answer pane. Sits above the structure so the operator
+ * sets it before binding pages.
+ */
+function AnswerLayoutSection({ controller }: { controller: StructureTreeController }): JSX.Element {
+  const { metadata } = controller.tree;
+  return (
+    <section className="flex flex-col gap-1">
+      <h3 className="m-0 text-[13px] font-semibold uppercase tracking-wide text-ink-3">Answer layout</h3>
+      <div className="grid grid-cols-2 gap-1.5">
+        {ANSWER_LAYOUTS.map((option) => {
+          const active = metadata.answerLayout === option.value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              className={`rounded-lg border p-2 text-left text-[12px] transition-colors ${active ? 'border-brand bg-brand/5 text-ink' : 'border-line text-ink-2 hover:bg-surface-2'}`}
+              aria-pressed={active}
+              onClick={() => { controller.setMetadata({ answerLayout: option.value }); }}
+            >
+              <span className="block font-semibold">{option.label}</span>
+              <span className="mt-0.5 block text-ink-3">{option.hint}</span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+type PaperDetailsSectionProps = {
+  controller: StructureTreeController;
+  onAiFillPaper: () => void;
+  aiFillingPaper: boolean;
+  /** Whether a working document with pages is loaded — the AI-fill needs a page to read. */
+  canAiFill: boolean;
+};
+
+/**
+ * The PYQ paper-details panel: the whole-paper provenance (exam name/year/session/shift/paper code …)
+ * plus the answer-layout choice. Shown only for the `pyq` source. The 14 fields are AI-fillable from
+ * the paper's header page and hand-editable; the layout toggle decides whether extraction expects a
+ * separate answer key or reads each question's inline answer (and whether Verify shows an answer pane).
+ */
+function PaperDetailsSection({ controller, onAiFillPaper, aiFillingPaper, canAiFill }: PaperDetailsSectionProps): JSX.Element {
+  const { metadata } = controller.tree;
+  const [collapsed, setCollapsed] = useState(false);
+  const setPaperField = (key: PaperMetadataKey, value: string): void => {
+    controller.setMetadata({ paper: { ...metadata.paper, [key]: value } });
+  };
+
+  return (
+    <section className="flex flex-col gap-2 rounded-lg border border-line bg-surface p-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          className="flex items-center gap-1.5 text-[13px] font-semibold uppercase tracking-wide text-ink-3"
+          aria-expanded={!collapsed}
+          onClick={() => { setCollapsed((open) => !open); }}
+        >
+          {collapsed ? <IconChevronRight /> : <IconChevronDown />}
+          Paper details
+        </button>
+        <button
+          type="button"
+          className="btn btn--ghost btn--xs"
+          disabled={!canAiFill || aiFillingPaper}
+          onClick={onAiFillPaper}
+          title={canAiFill ? 'Read the exam, year, date, shift … off the paper’s first page' : 'Load a PDF first'}
+        >
+          {aiFillingPaper ? <><Spinner /> Reading…</> : <><IconSparkle /> AI-fill from paper</>}
+        </button>
+      </div>
+
+      {!collapsed ? (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            {PAPER_METADATA_FIELDS.map(({ key, label, placeholder }) => (
+              <label key={key} className="field">
+                <span>{label}</span>
+                <input
+                  className="w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 text-sm text-ink outline-none placeholder:text-ink-3 focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-brand/25"
+                  value={metadata.paper[key]}
+                  placeholder={`e.g. ${placeholder}`}
+                  onChange={(event) => { setPaperField(key, event.target.value); }}
+                />
+              </label>
+            ))}
+          </div>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
 type TreeNodeRowProps = {
   node: StructureNode;
   depth: number;
@@ -223,6 +348,11 @@ function TreeNodeRow({ node, depth, controller, vocabulary, onBindPages, binding
   const hasBindings = node.bindings !== undefined && Object.keys(node.bindings).length > 0;
   const collapsible = node.children.length > 0 || hasBindings;
   const isCollapsed = collapsed.has(node.id);
+  const inlineAnswers = controller.tree.metadata.answerLayout === 'inline';
+  // A PYQ-source chapter defaults every leaf's PYQ toggle ON (the operator can still uncheck a leaf) —
+  // an explicit choice wins, so `node.pyq` (once set) is honoured over the source default.
+  const pyqSource = controller.tree.metadata.source.trim().toLowerCase() === 'pyq';
+  const nodePyq = node.pyq ?? pyqSource;
 
   return (
     <li className="rounded-lg border border-line bg-surface p-2">
@@ -278,7 +408,7 @@ function TreeNodeRow({ node, depth, controller, vocabulary, onBindPages, binding
           <input
             type="checkbox"
             className="size-4 accent-brand"
-            checked={node.pyq ?? false}
+            checked={nodePyq}
             onChange={(event) => { controller.setNodePyq(node.id, event.target.checked); }}
           />
           <span>PYQ — previous-year questions (AI reads each question&rsquo;s source exam &amp; year)</span>
@@ -286,8 +416,10 @@ function TreeNodeRow({ node, depth, controller, vocabulary, onBindPages, binding
       ) : null}
 
       {!isCollapsed && leaf ? (
-        <div className="mt-2 grid grid-cols-3 gap-1.5">
-          {PART_KINDS.map((kind) => (
+        // Inline-answer papers carry the answer beside each question in the one Question PDF, so only
+        // the Question slot is bound; the Answer/Solution slots are hidden (nothing separate to drop).
+        <div className={`mt-2 grid gap-1.5 ${inlineAnswers ? 'grid-cols-1' : 'grid-cols-3'}`}>
+          {(inlineAnswers ? INLINE_PART_KINDS : PART_KINDS).map((kind) => (
             <BindingSlot
               key={kind}
               leafId={node.id}
