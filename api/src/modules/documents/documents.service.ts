@@ -13,10 +13,14 @@ export class DocumentsService {
   constructor(
     private readonly documents: DocumentRepository,
     private readonly sessions: SessionRepository,
+    private readonly staleExtractionMs: number,
   ) {}
 
   /** List documents, optionally narrowed by session and/or status — powers the operator filter. */
   async list(query: DocumentListQuery): Promise<Paginated<Document>> {
+    // Self-heal first: an orphaned `extracting` row (dead/frozen worker) is reset to `failed` so the
+    // file rows never show a run that will never finish. Age-gated, so a live run is never touched.
+    await this.documents.resetStale(new Date(Date.now() - this.staleExtractionMs));
     const { items, total } = await this.documents.list(query);
     return { items, total, page: query.page, pageSize: query.pageSize };
   }

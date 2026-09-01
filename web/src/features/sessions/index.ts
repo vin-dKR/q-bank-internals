@@ -12,4 +12,5 @@ export {
   useRunDocumentExtraction,
   useExtractionJob,
   useCancelExtraction,
+  useResetDocumentExtraction,
 } from './hooks/use-sessions.js';

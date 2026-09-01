@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-query';
 import type {
   CreateSession,
+  Document,
   ExtractionJob,
   Session,
   SessionStatus,
@@ -64,6 +65,26 @@ export function useCancelExtraction(): UseMutationResult<ExtractionJob, Error, s
       void queryClient.invalidateQueries({ queryKey: ['sessions'] });
     },
     onError: (err) => { error('Could not cancel extraction', err.message); },
+  });
+}
+
+/**
+ * Stops a stuck extraction by document id (the "Stop" action on an extracting file), returning it to a
+ * re-runnable state. Works for any viewer — it needs no job id — so a run started elsewhere can be
+ * cleared. Refreshes documents + session views so the row updates immediately.
+ */
+export function useResetDocumentExtraction(): UseMutationResult<Document, Error, string> {
+  const queryClient = useQueryClient();
+  const { success, error } = useToast();
+  return useMutation({
+    mutationFn: (documentId: string) => sessionsApi.resetDocument(documentId),
+    onSuccess: () => {
+      success('Extraction stopped', 'The file is back to a re-runnable state.');
+      void queryClient.invalidateQueries({ queryKey: ['documents'] });
+      void queryClient.invalidateQueries({ queryKey: ['session'] });
+      void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+    },
+    onError: (err) => { error('Could not stop extraction', err.message); },
   });
 }
 

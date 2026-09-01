@@ -1,4 +1,4 @@
-import type { ExtractionJob } from '@ingest/contracts';
+import type { Document, ExtractionJob } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { UsageService } from '../usage/index.js';
@@ -80,5 +80,27 @@ export class ExtractionService {
     });
     await this.documents.updateStatus(job.documentId, 'failed');
     return cancelled;
+  }
+
+  /**
+   * Stop a stuck/orphaned extraction by DOCUMENT id — the operator-facing "Stop" any viewer can hit,
+   * unlike {@link cancel} which needs the job id the starting tab kept in memory. Best-effort aborts
+   * the in-process run and drops a still-queued entry, closes the latest job, and returns the document
+   * to a re-runnable `failed` state. A no-op (returns the document unchanged) when it isn't in flight.
+   */
+  async resetDocument(documentId: string): Promise<Document> {
+    const document = await this.documents.findById(documentId);
+    if (!document) throw errors.documentNotFound(documentId);
+    if (document.status !== 'queued' && document.status !== 'extracting') return document;
+
+    const job = await this.jobs.findLatestByDocument(documentId);
+    if (job) {
+      this.runs.abort(job.id, 'cancelled');
+      await this.queue.cancel(job.id);
+      if (job.status === 'queued' || job.status === 'running') {
+        await this.jobs.update(job.id, { status: 'cancelled', finishedAt: new Date().toISOString() });
+      }
+    }
+    return this.documents.updateStatus(documentId, 'failed');
   }
 }

@@ -236,9 +236,13 @@ export function createContainer(): Container {
   const extractor = buildExtractor();
   const driveService = buildDrive();
 
+  // The age past which a stuck `queued`/`extracting` document is auto-reset on read. Floored to always
+  // exceed the run budget (+1min) so the self-heal can never kill a genuinely in-flight extraction.
+  const staleExtractionMs = Math.max(env.STALE_EXTRACTION_MS, env.EXTRACTION_TIMEOUT_MS + 60_000);
+
   const usageService = new UsageService(usage, limits, sessions, documents);
-  const documentsService = new DocumentsService(documents, sessions);
-  const sessionsService = new SessionsService(sessions, documents);
+  const documentsService = new DocumentsService(documents, sessions, staleExtractionMs);
+  const sessionsService = new SessionsService(sessions, documents, staleExtractionMs);
   const pagesService = new PagesService(documents, driveService, rasterizer);
   const questionsService = new QuestionsService(
     questions,

@@ -5,6 +5,7 @@ import { DocumentStatusSchema } from '@ingest/contracts';
 import {
   ExtractionProgress,
   useDeleteSession,
+  useResetDocumentExtraction,
   useRunDocumentExtraction,
   useRunSessionExtraction,
   useSession,
@@ -34,6 +35,7 @@ export function SessionDetailPage(): JSX.Element {
   const updateDocument = useUpdateDocument();
   const runSession = useRunSessionExtraction();
   const runDoc = useRunDocumentExtraction();
+  const resetDoc = useResetDocumentExtraction();
   const publishDoc = usePublishDocument();
   const [confirm, confirmDialog] = useConfirm();
   const [status, setStatus] = useState<StatusFilter>('all');
@@ -97,6 +99,15 @@ export function SessionDetailPage(): JSX.Element {
     updateDocument.mutate({ id: doc.id, patch: { flagged: !doc.flagged } });
   };
 
+  const stopExtraction = (doc: Document): void => {
+    void confirm({
+      title: `Stop extraction on “${doc.fileName}”?`,
+      body: 'This stops a run that is stuck (or was started elsewhere) and returns the file to a re-runnable state.',
+      tone: 'danger',
+      confirmLabel: 'Stop',
+    }).then((ok) => { if (ok) resetDoc.mutate(doc.id); });
+  };
+
   /** The per-document action buttons for the unit list — decided here from kind + status. */
   const renderActions = (doc: Document): JSX.Element => (
     <>
@@ -128,6 +139,15 @@ export function SessionDetailPage(): JSX.Element {
           onClick={() => { runDoc.mutate(doc.id, { onSuccess: (job) => { trackJobs([job.id]); } }); }}
         >
           Run
+        </button>
+      ) : ACTIVE_STATUSES.has(doc.status) ? (
+        <button
+          type="button"
+          className="btn btn--xs btn--danger"
+          disabled={resetDoc.isPending}
+          onClick={() => { stopExtraction(doc); }}
+        >
+          Stop
         </button>
       ) : null}
       {doc.kind === 'question' ? (

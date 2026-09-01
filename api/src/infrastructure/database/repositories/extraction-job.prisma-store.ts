@@ -46,6 +46,14 @@ export class PrismaExtractionJobStore implements ExtractionJobStore {
     return row ? toJob(row) : null;
   }
 
+  async findLatestByDocument(documentId: string): Promise<ExtractionJob | null> {
+    const row = await this.prisma.extractionJob.findFirst({
+      where: { documentId },
+      orderBy: { createdAt: 'desc' },
+    });
+    return row ? toJob(row) : null;
+  }
+
   async deleteByDocument(documentId: string): Promise<void> {
     await this.prisma.extractionJob.deleteMany({ where: { documentId } });
   }

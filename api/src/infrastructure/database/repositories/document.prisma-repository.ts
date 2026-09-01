@@ -7,7 +7,11 @@ import type {
   DocumentStatus,
   UpdateDocument,
 } from '@ingest/contracts';
-import type { CreateDocumentInput, DocumentRepository } from '../../../modules/documents/index.js';
+import type {
+  CreateDocumentInput,
+  DocumentIdentity,
+  DocumentRepository,
+} from '../../../modules/documents/index.js';
 import { notSoftDeleted } from '../prisma.js';
 import { type PaperMetadataRow, toContractPaper, toPrismaPaper } from './paper-metadata-row.js';
 
@@ -130,6 +134,27 @@ export class PrismaDocumentRepository implements DocumentRepository {
     return row ? toDocument(row) : null;
   }
 
+  async findLiveByIdentity(identity: DocumentIdentity): Promise<Document | null> {
+    // Narrow on the indexed scalar columns first, then match the embedded `path` in memory — this
+    // avoids depending on Mongo composite-type filter syntax, and (session, kind, fileName) already
+    // scopes to a tiny handful of rows.
+    const rows = await this.prisma.document.findMany({
+      where: {
+        sessionId: identity.sessionId,
+        kind: identity.kind,
+        fileName: identity.fileName,
+        ...notSoftDeleted(),
+      },
+    });
+    const match = rows.find(
+      (row) =>
+        row.path.module === identity.path.module &&
+        row.path.chapter === identity.path.chapter &&
+        row.path.section === identity.path.section,
+    );
+    return match ? toDocument(match) : null;
+  }
+
   async list(query: DocumentListQuery): Promise<{ items: Document[]; total: number }> {
     const where = {
       ...notSoftDeleted(),
@@ -189,6 +214,35 @@ export class PrismaDocumentRepository implements DocumentRepository {
     return toDocument(row);
   }
 
+  async replaceSource(id: string, input: CreateDocumentInput): Promise<Document> {
+    const row = await this.prisma.document.update({
+      where: { id },
+      data: {
+        driveFileId: input.driveFileId,
+        fileName: input.fileName,
+        path: input.path,
+        kind: input.kind,
+        sectionName: input.sectionName,
+        questionType: input.questionType,
+        exam: input.exam,
+        subject: input.subject,
+        pyq: input.pyq,
+        pyqExam: input.pyqExam,
+        pyqYear: input.pyqYear,
+        paper: toPrismaPaper(input.paper),
+        answerLayout: input.answerLayout,
+        source: input.source,
+        pageRange: input.pageRange,
+        topics: toPrismaTopics(input.topics),
+        // Reset to a clean, re-runnable state — the prior extraction (if any) described the old file.
+        status: 'uploaded',
+        questionCount: 0,
+        extractedAt: null,
+      },
+    });
+    return toDocument(row);
+  }
+
   async updateStatus(id: string, status: DocumentStatus): Promise<Document> {
     const row = await this.prisma.document.update({ where: { id }, data: { status } });
     return toDocument(row);
@@ -221,6 +275,18 @@ export class PrismaDocumentRepository implements DocumentRepository {
   async resetInFlight(): Promise<number> {
     const result = await this.prisma.document.updateMany({
       where: { status: { in: ['queued', 'extracting'] }, ...notSoftDeleted() },
+      data: { status: 'failed' },
+    });
+    return result.count;
+  }
+
+  async resetStale(olderThan: Date): Promise<number> {
+    const result = await this.prisma.document.updateMany({
+      where: {
+        status: { in: ['queued', 'extracting'] },
+        updatedAt: { lt: olderThan },
+        ...notSoftDeleted(),
+      },
       data: { status: 'failed' },
     });
     return result.count;

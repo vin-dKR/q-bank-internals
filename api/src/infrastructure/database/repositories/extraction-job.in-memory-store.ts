@@ -27,6 +27,12 @@ export class InMemoryExtractionJobStore implements ExtractionJobStore {
     return Promise.resolve(this.store.get(id) ?? null);
   }
 
+  findLatestByDocument(documentId: string): Promise<ExtractionJob | null> {
+    // Map preserves insertion order, so the last inserted job for the document is the most recent.
+    const jobs = [...this.store.values()].filter((job) => job.documentId === documentId);
+    return Promise.resolve(jobs.at(-1) ?? null);
+  }
+
   update(id: string, patch: ExtractionJobPatch): Promise<ExtractionJob> {
     const existing = this.store.get(id);
     if (!existing) throw new Error(`Extraction job ${id} vanished from the in-memory store.`);

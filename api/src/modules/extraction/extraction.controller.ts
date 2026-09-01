@@ -11,6 +11,7 @@ export function createExtractionController(service: ExtractionService): {
   startSession: RequestHandler;
   getJob: RequestHandler;
   cancel: RequestHandler;
+  resetDocument: RequestHandler;
 } {
   return {
     start: asyncHandler(async (req, res) => {
@@ -28,6 +29,10 @@ export function createExtractionController(service: ExtractionService): {
 
     cancel: asyncHandler(async (req, res) => {
       ok(res, await service.cancel(requiredParam(req, 'id')));
+    }),
+
+    resetDocument: asyncHandler(async (req, res) => {
+      ok(res, await service.resetDocument(requiredParam(req, 'documentId')));
     }),
   };
 }

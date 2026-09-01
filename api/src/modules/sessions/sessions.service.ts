@@ -9,6 +9,7 @@ import type {
   UpdateSession,
 } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
+import { logger } from '../../shared/logger/logger.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { SessionRecord, SessionRepository } from './sessions.repository.js';
 
@@ -66,7 +67,25 @@ export class SessionsService {
   constructor(
     private readonly sessions: SessionRepository,
     private readonly documents: DocumentRepository,
+    private readonly staleExtractionMs: number,
   ) {}
+
+  /**
+   * Reset orphaned in-flight documents (dead/frozen worker) to `failed` before deriving any session
+   * status, so a stuck `extracting` document can't hold its session on "Extracting…" forever.
+   * Age-gated in the repository, so a genuinely live run is never touched. Best-effort — a failure
+   * here must not break a read.
+   */
+  private async healStale(): Promise<void> {
+    try {
+      await this.documents.resetStale(new Date(Date.now() - this.staleExtractionMs));
+    } catch (error) {
+      logger.warn(
+        { err: error instanceof Error ? error.message : String(error) },
+        'Stale-extraction self-heal failed; continuing with current statuses',
+      );
+    }
+  }
 
   /** Open a session. All inputs are optional — a missing label is auto-generated (Phase-1 auto-create). */
   async create(input: CreateSession): Promise<Session> {
@@ -81,12 +100,14 @@ export class SessionsService {
   }
 
   async getById(id: string): Promise<Session> {
+    await this.healStale();
     const record = await this.sessions.findById(id);
     if (!record) throw errors.sessionNotFound(id);
     return this.enrich(record);
   }
 
   async list(query: SessionListQuery): Promise<Paginated<Session>> {
+    await this.healStale();
     const records = await this.sessions.list(query);
     const enriched = await Promise.all(records.map((record) => this.enrich(record)));
     const filtered = query.status

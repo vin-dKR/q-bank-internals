@@ -1,7 +1,8 @@
 import type { ChapterPath, ChapterUploadMetadata, Document, DriveFile } from '@ingest/contracts';
 import { logger } from '../../shared/logger/logger.js';
+import { errors } from '../../shared/errors/error-catalog.js';
 import type { DriveService } from '../drive/index.js';
-import type { DocumentRepository } from '../documents/index.js';
+import type { CreateDocumentInput, DocumentRepository } from '../documents/index.js';
 import type { SessionsService } from '../sessions/index.js';
 import type { ExtractionService } from '../extraction/index.js';
 
@@ -52,16 +53,32 @@ export class IngestionService {
     const { metadata, bytes } = input;
     const session = await this.sessions.getById(metadata.sessionId); // 404s here if the session is gone
 
-    const folderId = await this.ensureChapterPath(metadata);
+    const path = { module: metadata.module, chapter: metadata.chapter, section: metadata.sectionName };
     // A PYQ paper may omit the chapter, so fall back to the exam for a still-meaningful file name.
     const name = `${metadata.chapter.trim() || metadata.exam.trim() || 'paper'}-${metadata.kind}.pdf`;
+
+    // Dedup a re-cut/re-upload: at most one live document may occupy this (unit · kind · file) slot.
+    // A not-yet-extracted version is replaced in place by the new upload; a version that already carries
+    // results — or is still in flight — is left untouched and the upload is rejected, so the operator
+    // stops or deletes it first. This is what stops the duplicate "question 2 / answer 2" rows.
+    const twin = await this.documents.findLiveByIdentity({
+      sessionId: metadata.sessionId,
+      path,
+      kind: metadata.kind,
+      fileName: name,
+    });
+    if (twin && twin.status !== 'uploaded' && twin.status !== 'failed') {
+      throw errors.documentUnitVersionExists(name, twin.status);
+    }
+
+    const folderId = await this.ensureChapterPath(metadata);
     const driveFile = await this.driveService.uploadPdf({ name, bytes, folderId });
 
-    const document = await this.documents.create({
+    const createInput: CreateDocumentInput = {
       sessionId: metadata.sessionId,
       driveFileId: driveFile.id,
-      fileName: driveFile.name,
-      path: { module: metadata.module, chapter: metadata.chapter, section: metadata.sectionName },
+      fileName: name,
+      path,
       kind: metadata.kind,
       sectionName: metadata.sectionName,
       questionType: metadata.questionType,
@@ -78,7 +95,12 @@ export class IngestionService {
       source: metadata.source ?? null,
       pageRange: null,
       topics: metadata.topics ?? [],
-    });
+    };
+
+    // Replace the not-yet-extracted twin in place, else create a fresh row.
+    const document = twin
+      ? await this.documents.replaceSource(twin.id, createInput)
+      : await this.documents.create(createInput);
 
     // Make the (possibly auto-created) session informative by filling its exam/subject/module from
     // the first upload — only where still blank, so it never fights an operator's edit.
