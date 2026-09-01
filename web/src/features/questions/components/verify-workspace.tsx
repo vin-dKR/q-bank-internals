@@ -30,7 +30,14 @@ import {
   Spinner,
   ToolbarHelp,
 } from '../../../shared/ui/index.js';
-import { type CardBox, type CardDrawTarget, EditableQuestionCard } from './editable-question-card.js';
+import {
+  ALL_CARD_FIELDS,
+  CARD_FIELDS,
+  type CardBox,
+  type CardDrawTarget,
+  type CardField,
+  EditableQuestionCard,
+} from './editable-question-card.js';
 import { SourcePreviewPane } from './source-preview-pane.js';
 import { useVerifySources } from '../hooks/use-verify-sources.js';
 
@@ -64,6 +71,33 @@ function writeVerifyPanelWidth(width: number): void {
     localStorage.setItem(PANEL_KEY, String(width));
   } catch {
     // Storage unavailable (private mode) — the width just won't survive reload; nothing to recover.
+    return;
+  }
+}
+
+/** Which question-card sections the operator has chosen to show — persisted, like the panel width. */
+const FIELDS_KEY = 'ingest:verifyVisibleFields';
+
+function readVisibleFields(): Set<CardField> {
+  const all = (): Set<CardField> => new Set(ALL_CARD_FIELDS);
+  try {
+    const raw = localStorage.getItem(FIELDS_KEY);
+    if (!raw) return all();
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return all();
+    const valid = CARD_FIELDS.map((f) => f.field).filter((f) => parsed.includes(f));
+    // Empty/garbage selection falls back to all, so the panel is never stuck showing nothing.
+    return valid.length > 0 ? new Set(valid) : all();
+  } catch {
+    return all();
+  }
+}
+
+function writeVisibleFields(fields: ReadonlySet<CardField>): void {
+  try {
+    localStorage.setItem(FIELDS_KEY, JSON.stringify([...fields]));
+  } catch {
+    // Storage unavailable (private mode) — the selection just won't survive reload; nothing to recover.
     return;
   }
 }
@@ -431,6 +465,21 @@ export function VerifyWorkspace({
   const inlineAnswers = document.data?.answerLayout === 'inline';
   const viewModes = inlineAnswers ? VIEW_MODES.filter((option) => option.mode === 'question') : VIEW_MODES;
   const [viewMode, setViewMode] = useState<ViewMode>('question');
+  // Which question-card sections to render across the panel — the operator's "Show" selection.
+  const [visibleFields, setVisibleFields] = useState<Set<CardField>>(readVisibleFields);
+  const toggleField = (field: CardField): void => {
+    setVisibleFields((prev) => {
+      const next = new Set(prev);
+      if (next.has(field)) {
+        if (next.size === 1) return prev; // keep at least one section visible
+        next.delete(field);
+      } else {
+        next.add(field);
+      }
+      writeVisibleFields(next);
+      return next;
+    });
+  };
   const answerSource: ReExtractSource | undefined = sources.answer
     ? { documentId: sources.answer.document.id, page: sources.answer.defaultPage }
     : undefined;
@@ -1474,6 +1523,26 @@ export function VerifyWorkspace({
               </div>
             </div>
             <div className="verify__session-row">
+              <span className="text-sm text-ink-2">Show</span>
+              <div className="row ml-auto flex-wrap justify-end" role="group" aria-label="Question fields to show">
+                {CARD_FIELDS.map(({ field, label }) => {
+                  const on = visibleFields.has(field);
+                  return (
+                    <Button
+                      key={field}
+                      size="xs"
+                      variant={on ? 'default' : 'ghost'}
+                      aria-pressed={on}
+                      title={on ? `Hide ${label}` : `Show ${label}`}
+                      onClick={() => { toggleField(field); }}
+                    >
+                      {on ? <IconCheck /> : null} {label}
+                    </Button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="verify__session-row">
               <span className="text-sm text-ink-2">
                 {drafts.dirtyIds.size > 0
                   ? `${String(drafts.dirtyIds.size)} question(s) with unsaved edits`
@@ -1601,6 +1670,7 @@ export function VerifyWorkspace({
                 cropDisabled={runActive}
                 answerSource={answerSource}
                 solutionSource={solutionSource}
+                visibleFields={visibleFields}
                 onDraftUpdate={(updater) => { drafts.updateDraft(question.id, updater); }}
                 onSave={() => { void drafts.save([question.id]); }}
                 onDrawRegion={toggleDrawTarget}
