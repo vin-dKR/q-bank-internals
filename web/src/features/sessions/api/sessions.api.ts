@@ -1,8 +1,9 @@
 import { z } from 'zod';
-import type { CreateSession, ExtractionJob, Session, SessionStatus, UpdateSession } from '@ingest/contracts';
+import type { CreateSession, Document, ExtractionJob, Session, SessionStatus, UpdateSession } from '@ingest/contracts';
 import {
   BulkDeleteResultSchema,
   CreateSessionSchema,
+  DocumentSchema,
   ExtractionJobSchema,
   SessionSchema,
   paginated,
@@ -82,6 +83,18 @@ export const sessionsApi = {
     return request(`/extraction/jobs/${jobId}/cancel`, {
       method: 'POST',
       schema: ExtractionJobSchema,
+    });
+  },
+
+  /**
+   * Stop a stuck extraction by DOCUMENT id and return the document to a re-runnable state. Unlike
+   * `cancelJob` this needs no job id, so any viewer (not just the tab that started the run) can stop a
+   * run that's wedged on "Extracting…". Returns the updated document.
+   */
+  resetDocument: (documentId: string): Promise<Document> => {
+    return request(`/extraction/documents/${documentId}/reset`, {
+      method: 'POST',
+      schema: DocumentSchema,
     });
   },
 };

@@ -40,6 +40,14 @@ export const errors = {
   extractionInProgress: (documentId: string): AppError =>
     new AppError('EXTRACTION_IN_PROGRESS', 409, `Document "${documentId}" is already extracting.`),
 
+  documentUnitVersionExists: (fileName: string, status: string): AppError =>
+    new AppError(
+      'DOCUMENT_UNIT_VERSION_EXISTS',
+      409,
+      `"${fileName}" already exists in this unit (status "${status}"). Stop or delete that version ` +
+        `before re-uploading, so it isn't duplicated.`,
+    ),
+
   extractionJobNotFound: (id: string): AppError =>
     new AppError('EXTRACTION_JOB_NOT_FOUND', 404, `No extraction job with id "${id}".`),
 

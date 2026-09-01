@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { Document, DocumentListQuery, DocumentStatus, UpdateDocument } from '@ingest/contracts';
-import type { CreateDocumentInput, DocumentRepository } from '../../../modules/documents/index.js';
+import type {
+  CreateDocumentInput,
+  DocumentIdentity,
+  DocumentRepository,
+} from '../../../modules/documents/index.js';
 
 /**
  * Dev/test adapter for {@link DocumentRepository}. Keeps documents in a Map so the app runs with no
@@ -17,6 +21,23 @@ export class InMemoryDocumentRepository implements DocumentRepository {
   findByDriveFileId(driveFileId: string): Promise<Document | null> {
     for (const doc of this.store.values()) {
       if (doc.driveFileId === driveFileId) return Promise.resolve(doc);
+    }
+    return Promise.resolve(null);
+  }
+
+  findLiveByIdentity(identity: DocumentIdentity): Promise<Document | null> {
+    for (const doc of this.store.values()) {
+      if (
+        doc.deletedAt === null &&
+        doc.sessionId === identity.sessionId &&
+        doc.kind === identity.kind &&
+        doc.fileName === identity.fileName &&
+        doc.path.module === identity.path.module &&
+        doc.path.chapter === identity.path.chapter &&
+        doc.path.section === identity.path.section
+      ) {
+        return Promise.resolve(doc);
+      }
     }
     return Promise.resolve(null);
   }
@@ -80,6 +101,36 @@ export class InMemoryDocumentRepository implements DocumentRepository {
     return Promise.resolve(document);
   }
 
+  replaceSource(id: string, input: CreateDocumentInput): Promise<Document> {
+    const existing = this.store.get(id);
+    if (!existing) throw new Error(`Document ${id} vanished from the in-memory store.`);
+    const updated: Document = {
+      ...existing,
+      driveFileId: input.driveFileId,
+      fileName: input.fileName,
+      path: input.path,
+      kind: input.kind,
+      sectionName: input.sectionName,
+      questionType: input.questionType,
+      exam: input.exam,
+      subject: input.subject,
+      pyq: input.pyq,
+      pyqExam: input.pyqExam,
+      pyqYear: input.pyqYear,
+      paper: input.paper,
+      answerLayout: input.answerLayout,
+      source: input.source,
+      pageRange: input.pageRange,
+      topics: input.topics,
+      status: 'uploaded',
+      questionCount: 0,
+      extractedAt: null,
+      updatedAt: new Date().toISOString(),
+    };
+    this.store.set(id, updated);
+    return Promise.resolve(updated);
+  }
+
   updateStatus(id: string, status: DocumentStatus): Promise<Document> {
     const existing = this.store.get(id);
     if (!existing) throw new Error(`Document ${id} vanished from the in-memory store.`);
@@ -130,6 +181,22 @@ export class InMemoryDocumentRepository implements DocumentRepository {
     const now = new Date().toISOString();
     for (const [id, doc] of this.store) {
       if (doc.status === 'queued' || doc.status === 'extracting') {
+        this.store.set(id, { ...doc, status: 'failed', updatedAt: now });
+        count += 1;
+      }
+    }
+    return Promise.resolve(count);
+  }
+
+  resetStale(olderThan: Date): Promise<number> {
+    let count = 0;
+    const now = new Date().toISOString();
+    for (const [id, doc] of this.store) {
+      if (
+        (doc.status === 'queued' || doc.status === 'extracting') &&
+        doc.deletedAt === null &&
+        new Date(doc.updatedAt) < olderThan
+      ) {
         this.store.set(id, { ...doc, status: 'failed', updatedAt: now });
         count += 1;
       }
