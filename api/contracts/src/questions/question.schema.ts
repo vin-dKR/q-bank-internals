@@ -21,6 +21,9 @@ export type QuestionOption = z.infer<typeof QuestionOptionSchema>;
 export const MatchEntrySchema = z.object({
   label: z.string().min(1), // "A".."D" (col I), "p".."s" (col II), "t".."w" (col III)
   body: z.string(), // LaTeX-bearing
+  // Optional figure attached to this entry (Supabase URL); null when none. Ingest-only annotation,
+  // defaulted so match data written before this field still parses.
+  image: z.string().nullable().default(null),
 });
 export type MatchEntry = z.infer<typeof MatchEntrySchema>;
 
@@ -117,6 +120,10 @@ export const QuestionSchema = z.object({
   questionImage: z.string().nullable(),
   isOptionImage: z.boolean(),
   optionImages: z.array(z.string()),
+  // Figures attached to the worked solution / explanation (Supabase URLs). Ingest-only annotation for
+  // diagrams that belong to the reasoning; empty by default. Unlike question/option figures these are
+  // not re-materialised as editable canvas boxes on reload — they persist as thumbnails.
+  explanationImages: z.array(z.string()).default([]),
   // Persisted crop rectangles (natural image pixels) for the attached figures — ingest-only, empty by
   // default. Lets every saved crop reappear as an editable box on the verify canvas on any device.
   imageCrops: z.array(ImageCropSchema).default([]),
@@ -166,6 +173,7 @@ export const UpdateQuestionSchema = QuestionSchema.pick({
   questionImage: true,
   isOptionImage: true,
   optionImages: true,
+  explanationImages: true,
   imageCrops: true,
   questionType: true,
   sectionName: true,
