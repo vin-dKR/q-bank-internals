@@ -5,6 +5,8 @@ import { ingestionApi } from '../api/ingestion.api.js';
 export type UploadChapterInput = {
   pdfBytes: Uint8Array;
   metadata: ChapterUploadMetadata;
+  /** Reports the direct-to-storage upload's progress as a fraction 0–1, so the page can show a bar. */
+  onProgress?: (fraction: number) => void;
 };
 
 /** Uploads one built chapter PDF (question or answer) to its Drive folder. */
@@ -15,6 +17,6 @@ export function useUploadChapter(): UseMutationResult<
 > {
   return useMutation({
     mutationFn: (input: UploadChapterInput) =>
-      ingestionApi.uploadChapter(input.pdfBytes, input.metadata),
+      ingestionApi.uploadChapter(input.pdfBytes, input.metadata, input.onProgress),
   });
 }

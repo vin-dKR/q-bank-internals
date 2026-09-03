@@ -82,12 +82,18 @@ export const errors = {
   uploadMissingFile: (): AppError =>
     new AppError('UPLOAD_MISSING_FILE', 400, 'No PDF file was included in the upload.'),
 
-  uploadTooLarge: (maxBytes: number): AppError =>
+  uploadStagingNotConfigured: (): AppError =>
     new AppError(
-      'UPLOAD_TOO_LARGE',
-      413,
-      `The uploaded PDF exceeds the ${String(maxBytes)}-byte limit.`,
+      'UPLOAD_STAGING_NOT_CONFIGURED',
+      502,
+      'Direct-to-storage upload is not configured. Set SUPABASE_SERVICE_KEY to accept PDF uploads.',
     ),
+
+  uploadStagingFailed: (reason: string): AppError =>
+    new AppError('UPLOAD_STAGING_FAILED', 502, `Direct upload to storage failed: ${reason}`),
+
+  uploadStagingInvalidPath: (): AppError =>
+    new AppError('UPLOAD_STAGING_INVALID_PATH', 400, 'The upload reference is not a staged object.'),
 
   extractionFailed: (reason: string): AppError =>
     new AppError('EXTRACTION_FAILED', 502, `The vision model failed: ${reason}`),
