@@ -134,6 +134,8 @@ model Document {
   answerLayout  String          @default("separate")
   // Question provenance chosen at cut time: pyq / module / textbook (open string). Null on legacy docs.
   source        String?
+  // Free-text note from upload (a PYQ paper's subject list, say). Null on legacy docs / non-PYQ uploads.
+  note          String?
   pageRange     PageRange?
   // Missing on pre-topic documents; Prisma reads an absent composite list as [] (config absent).
   topics        ChapterTopic[]

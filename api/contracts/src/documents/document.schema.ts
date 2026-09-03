@@ -98,6 +98,8 @@ export const DocumentSchema = z.object({
   answerLayout: AnswerLayoutSchema.default('separate'),
   /** Where the questions came from: pyq / module / textbook (open string). Null for legacy documents. */
   source: SourceSchema.nullable(),
+  /** Free-text note carried from upload (a PYQ paper's subject list, say); null when none was given. */
+  note: z.string().nullable(),
   pageRange: PageRangeSchema.nullable(),
   /** Operator-defined topic → question-type map of the question PDF; empty for chapter-only documents. */
   topics: z.array(ChapterTopicSchema),
@@ -130,6 +132,7 @@ export const RegisterDocumentSchema = z.object({
   paper: PaperMetadataSchema.nullable().optional(),
   answerLayout: AnswerLayoutSchema.optional(),
   source: SourceSchema.nullable().optional(),
+  note: z.string().nullable().optional(),
   pageRange: PageRangeSchema.nullable().optional(),
   topics: z.array(ChapterTopicSchema).optional(),
 });

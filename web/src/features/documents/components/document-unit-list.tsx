@@ -43,6 +43,7 @@ function UnitRow({
         <div className="unit__summary-main">
           <span className="unit__title">{unit.title || 'Untitled unit'}</span>
           <span className="unit__sub">{unit.module}</span>
+          {primary?.note ? <span className="unit__sub" title="Subjects note (PYQ)">Subjects: {primary.note}</span> : null}
         </div>
         <div className="unit__chips">
           {unit.questions.length > 0 ? <span className="chip is-question">Question</span> : null}

@@ -59,6 +59,12 @@ export const ChapterUploadMetadataSchema = ChapterPathSchema.extend({
    * answer/solution parts) — the pipeline behaves exactly as before when absent.
    */
   topics: z.array(ChapterTopicSchema).optional(),
+  /**
+   * A free-text note carried with the upload — for a PYQ paper, the subject(s) it covers (e.g.
+   * "Physics, Chemistry"), since a PYQ paper spans subjects and files under the exam only. Persisted on
+   * the document so the operator can later sort/extract by subject. Absent for non-PYQ uploads.
+   */
+  note: z.string().optional(),
 }).superRefine((meta, ctx) => {
   // subject/module/chapter are optional ONLY for previous-year-question papers; every other source
   // must still file under a full subject → module → chapter path so the bank stays browseable.

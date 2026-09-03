@@ -49,6 +49,7 @@ type DocumentRow = {
   // Legacy rows predate this column, so a read can genuinely come back without it — default on map.
   answerLayout: string | null;
   source: string | null;
+  note: string | null;
   pageRange: PageRangeRow | null;
   topics: TopicRow[];
   status: DocumentStatus;
@@ -108,6 +109,7 @@ function toDocument(row: DocumentRow): Document {
     paper: toContractPaper(row.paper),
     answerLayout: (row.answerLayout ?? 'separate') as AnswerLayout,
     source: row.source,
+    note: row.note ?? null,
     pageRange: row.pageRange,
     topics: toContractTopics(row.topics),
     status: row.status,
@@ -207,6 +209,7 @@ export class PrismaDocumentRepository implements DocumentRepository {
         paper: toPrismaPaper(input.paper),
         answerLayout: input.answerLayout,
         source: input.source,
+        note: input.note,
         pageRange: input.pageRange,
         topics: toPrismaTopics(input.topics),
       },
@@ -232,6 +235,7 @@ export class PrismaDocumentRepository implements DocumentRepository {
         paper: toPrismaPaper(input.paper),
         answerLayout: input.answerLayout,
         source: input.source,
+        note: input.note,
         pageRange: input.pageRange,
         topics: toPrismaTopics(input.topics),
         // Reset to a clean, re-runnable state — the prior extraction (if any) described the old file.

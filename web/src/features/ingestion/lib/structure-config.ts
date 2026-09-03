@@ -52,6 +52,7 @@ const METADATA_KEYS: readonly Exclude<keyof ChapterMetadataDraft, 'pyq' | 'paper
   'subject',
   'module',
   'chapter',
+  'note',
   'sectionName',
   'questionType',
   'pyqExam',
