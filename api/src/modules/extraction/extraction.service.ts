@@ -62,6 +62,16 @@ export class ExtractionService {
   }
 
   /**
+   * The latest extraction job for a document, or null if it has never been extracted. This is what
+   * drives the shared progress bar: any operator viewing the file — not just the tab that started the
+   * run — polls by document id and sees the same live counts written to the job row, which is also the
+   * only way the bar can appear on serverless (where the enqueue request blocks until the run is over).
+   */
+  async latestJobForDocument(documentId: string): Promise<ExtractionJob | null> {
+    return this.jobs.findLatestByDocument(documentId);
+  }
+
+  /**
    * Cancel an in-flight extraction: signal the run's AbortController (stops the vision call in this
    * process), drop the still-queued entry from the queue, mark the job `cancelled`, and return the
    * document to a re-runnable `failed` state. A no-op on an already-finished job (idempotent).

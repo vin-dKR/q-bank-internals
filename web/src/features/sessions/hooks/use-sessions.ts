@@ -40,31 +40,21 @@ export function useSession(id: string | null): UseQueryResult<Session> {
   });
 }
 
-/** Polls one extraction job's live progress while it is queued/running; stops once terminal. */
-export function useExtractionJob(jobId: string): UseQueryResult<ExtractionJob> {
+/**
+ * Polls a document's latest extraction job so the shared progress bar stays live. The counts come from
+ * the persisted job row (not the tab that started the run), so any operator viewing the file sees the
+ * same progress — and it is the only source that surfaces on serverless, where the enqueue request
+ * blocks until the run is already over. Keeps polling while queued/running (or before the job row is
+ * visible); stops once terminal.
+ */
+export function useDocumentExtractionJob(documentId: string): UseQueryResult<ExtractionJob | null> {
   return useQuery({
-    queryKey: ['extraction-job', jobId],
-    queryFn: () => sessionsApi.getJob(jobId),
+    queryKey: ['document-extraction-job', documentId],
+    queryFn: () => sessionsApi.documentJob(documentId),
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      return status === 'queued' || status === 'running' ? 1500 : false;
+      return status === 'succeeded' || status === 'failed' || status === 'cancelled' ? false : 1500;
     },
-  });
-}
-
-/** Cancels an in-flight extraction job; refreshes views so the document shows as re-runnable. */
-export function useCancelExtraction(): UseMutationResult<ExtractionJob, Error, string> {
-  const queryClient = useQueryClient();
-  const { error } = useToast();
-  return useMutation({
-    mutationFn: (jobId: string) => sessionsApi.cancelJob(jobId),
-    onSuccess: (job) => {
-      void queryClient.invalidateQueries({ queryKey: ['extraction-job', job.id] });
-      void queryClient.invalidateQueries({ queryKey: ['documents'] });
-      void queryClient.invalidateQueries({ queryKey: ['session'] });
-      void queryClient.invalidateQueries({ queryKey: ['sessions'] });
-    },
-    onError: (err) => { error('Could not cancel extraction', err.message); },
   });
 }
 

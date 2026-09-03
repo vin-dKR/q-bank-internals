@@ -1,4 +1,4 @@
-import { type JSX, useState } from 'react';
+import { type JSX, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { Document, DocumentStatus } from '@ingest/contracts';
 import { DocumentStatusSchema } from '@ingest/contracts';
@@ -42,18 +42,30 @@ export function SessionDetailPage(): JSX.Element {
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState('');
   const [configsFor, setConfigsFor] = useState<string | null>(null);
-  // Extraction runs started from this view, shown as live status bars until they finish.
-  const [activeJobIds, setActiveJobIds] = useState<string[]>([]);
-  const trackJobs = (ids: string[]): void => {
-    setActiveJobIds((prev) => [...prev, ...ids.filter((id) => !prev.includes(id))]);
-  };
-  const dropJob = (id: string): void => {
-    setActiveJobIds((prev) => prev.filter((jobId) => jobId !== id));
+  // Document ids whose live progress bar is shown. Seeded from the shared documents list (any file that
+  // is queued/extracting), so a run started here OR by another operator surfaces the same bar; each bar
+  // prunes itself a moment after its run ends.
+  const [shownDocIds, setShownDocIds] = useState<string[]>([]);
+  const dismissBar = (id: string): void => {
+    setShownDocIds((prev) => prev.filter((docId) => docId !== id));
   };
 
   const documents = useDocuments(
     status === 'all' ? { sessionId } : { sessionId, status: [status] },
+    { idlePollMs: 5000 },
   );
+
+  // Track every currently-active file so its bar appears — including runs another operator started.
+  useEffect(() => {
+    const activeIds = (documents.data?.items ?? [])
+      .filter((doc) => ACTIVE_STATUSES.has(doc.status))
+      .map((doc) => doc.id);
+    setShownDocIds((prev) => {
+      let next = prev;
+      for (const id of activeIds) if (!next.includes(id)) next = [...next, id];
+      return next;
+    });
+  }, [documents.data]);
 
   if (session.isPending) return <LoadingState label="Loading session…" />;
   if (session.isError) return <p className="error">Could not load this session.</p>;
@@ -136,7 +148,7 @@ export function SessionDetailPage(): JSX.Element {
           type="button"
           className="btn btn--xs"
           disabled={runDoc.isPending}
-          onClick={() => { runDoc.mutate(doc.id, { onSuccess: (job) => { trackJobs([job.id]); } }); }}
+          onClick={() => { runDoc.mutate(doc.id); }}
         >
           Run
         </button>
@@ -244,16 +256,21 @@ export function SessionDetailPage(): JSX.Element {
             type="button"
             className="btn"
             disabled={runSession.isPending || busy || pending === 0}
-            onClick={() => { runSession.mutate(s.id, { onSuccess: (r) => { trackJobs(r.jobIds); } }); }}
+            onClick={() => { runSession.mutate(s.id); }}
           >
             {busy ? <><Spinner /> Extracting…</> : 'Run extraction on all pending'}
           </button>
         </div>
 
-        {activeJobIds.length > 0 ? (
+        {shownDocIds.length > 0 ? (
           <div className="flex flex-col gap-2">
-            {activeJobIds.map((id) => (
-              <ExtractionProgress key={id} jobId={id} onDismiss={() => { dropJob(id); }} />
+            {shownDocIds.map((id) => (
+              <ExtractionProgress
+                key={id}
+                documentId={id}
+                fileName={items.find((doc) => doc.id === id)?.fileName}
+                onDismiss={() => { dismissBar(id); }}
+              />
             ))}
           </div>
         ) : null}

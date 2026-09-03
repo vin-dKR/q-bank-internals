@@ -10,6 +10,7 @@ export function createExtractionController(service: ExtractionService): {
   start: RequestHandler;
   startSession: RequestHandler;
   getJob: RequestHandler;
+  documentJob: RequestHandler;
   cancel: RequestHandler;
   resetDocument: RequestHandler;
 } {
@@ -25,6 +26,11 @@ export function createExtractionController(service: ExtractionService): {
 
     getJob: asyncHandler(async (req, res) => {
       ok(res, await service.getJob(requiredParam(req, 'id')));
+    }),
+
+    // The latest job for a document (or null) — the shared, cross-operator progress source.
+    documentJob: asyncHandler(async (req, res) => {
+      ok(res, await service.latestJobForDocument(requiredParam(req, 'documentId')));
     }),
 
     cancel: asyncHandler(async (req, res) => {

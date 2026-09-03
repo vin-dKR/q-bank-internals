@@ -73,16 +73,14 @@ export const sessionsApi = {
     });
   },
 
-  /** Fetch one extraction job's live progress (drives the status bar). */
-  getJob: (jobId: string): Promise<ExtractionJob> => {
-    return request(`/extraction/jobs/${jobId}`, { schema: ExtractionJobSchema });
-  },
-
-  /** Cancel an in-flight extraction job; the document returns to a re-runnable state. */
-  cancelJob: (jobId: string): Promise<ExtractionJob> => {
-    return request(`/extraction/jobs/${jobId}/cancel`, {
-      method: 'POST',
-      schema: ExtractionJobSchema,
+  /**
+   * The latest extraction job for a document (or null) — drives the shared status bar. Any operator
+   * viewing the file polls this, so a run started elsewhere is visible; it is also the only progress
+   * source that works on serverless, where the enqueue request blocks until the whole run finishes.
+   */
+  documentJob: (documentId: string): Promise<ExtractionJob | null> => {
+    return request(`/extraction/documents/${documentId}/job`, {
+      schema: ExtractionJobSchema.nullable(),
     });
   },
 

@@ -10,7 +10,6 @@ export {
   useBulkDeleteSessions,
   useRunSessionExtraction,
   useRunDocumentExtraction,
-  useExtractionJob,
-  useCancelExtraction,
+  useDocumentExtractionJob,
   useResetDocumentExtraction,
 } from './hooks/use-sessions.js';
