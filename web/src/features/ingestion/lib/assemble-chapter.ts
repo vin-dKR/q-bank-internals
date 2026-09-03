@@ -145,6 +145,7 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
     // Unit-level fallback type (topics cover every question page); use the first leaf's type.
     questionType: resolveQuestionType(firstLeaf.node, firstLeaf.ancestors).trim(),
     ...(m.source.trim() ? { source: m.source.trim() } : {}),
+    ...(m.note.trim() ? { note: m.note.trim() } : {}),
     ...pyqFields(m),
     ...paperFields(m),
   };

@@ -9,6 +9,8 @@ export type ChapterMetadataDraft = {
   subject: string;
   module: string;
   chapter: string;
+  /** Free-text note — for a PYQ paper, the subject(s) it covers, since it files under the exam only. */
+  note: string;
   sectionName: string;
   questionType: string;
   /** Flags this chapter's questions as previous-year questions (PYQ), capturing the exam + year below. */
@@ -64,7 +66,7 @@ export type ChapterGroup = {
 };
 
 export function emptyMetadata(): ChapterMetadataDraft {
-  return { source: '', exam: '', subject: '', module: '', chapter: '', sectionName: '', questionType: '', pyq: false, pyqExam: '', pyqYear: '', paper: { ...EMPTY_PAPER_METADATA }, answerLayout: 'separate' };
+  return { source: '', exam: '', subject: '', module: '', chapter: '', note: '', sectionName: '', questionType: '', pyq: false, pyqExam: '', pyqYear: '', paper: { ...EMPTY_PAPER_METADATA }, answerLayout: 'separate' };
 }
 
 /** The chapter (if any) that owns a given page, resolved for the on-page slice overlay. */

@@ -42,6 +42,8 @@ export type CreateDocumentInput = {
   answerLayout: AnswerLayout;
   /** Question provenance (pyq / module / textbook); null when the operator left it blank. */
   source: string | null;
+  /** Free-text note from upload (a PYQ paper's subject list, say); null when none was given. */
+  note: string | null;
   pageRange: PageRange | null;
   /** Topic → question-type config of a question PDF; empty when the chapter has no topic structure. */
   topics: ChapterTopic[];
