@@ -1438,9 +1438,13 @@
   position: absolute;
   border: 2px solid var(--color-brand);
   box-sizing: border-box;
+  cursor: move;
 }
 .reflow-crop.is-active {
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6);
+}
+.reflow-crop.is-selected {
+  box-shadow: 0 0 0 1px #fff, 0 0 0 3px rgba(0, 0, 0, 0.35);
 }
 .reflow-crop__tag {
   position: absolute;
@@ -1472,13 +1476,6 @@
   background: color-mix(in srgb, var(--color-brand) 10%, transparent);
   pointer-events: none;
 }
-.reflow-draft {
-  position: absolute;
-  box-sizing: border-box;
-  border: 2px solid var(--color-brand);
-  background: color-mix(in srgb, var(--color-brand) 12%, transparent);
-  cursor: move;
-}
 .reflow-handle {
   position: absolute;
   width: 11px;
@@ -1488,32 +1485,6 @@
   border: 2px solid var(--color-brand);
   border-radius: 2px;
   transform: translate(-50%, -50%);
-}
-.reflow-draft__actions {
-  position: absolute;
-  top: -8px;
-  right: 0;
-  transform: translateY(-100%);
-  display: flex;
-  gap: 4px;
-}
-.reflow-draft__btn {
-  width: 22px;
-  height: 22px;
-  line-height: 20px;
-  text-align: center;
-  font-size: 13px;
-  font-weight: 700;
-  color: #fff;
-  border: none;
-  border-radius: 50%;
-  cursor: pointer;
-}
-.reflow-draft__btn--ok {
-  background: var(--color-brand);
-}
-.reflow-draft__btn--cancel {
-  background: var(--color-bad);
 }
 .slice-band {
   position: absolute;
