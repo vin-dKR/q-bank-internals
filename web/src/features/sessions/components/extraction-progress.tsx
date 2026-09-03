@@ -1,24 +1,29 @@
 import { type JSX, useEffect, useRef } from 'react';
 import { useToast } from '../../../shared/ui/index.js';
-import { useCancelExtraction, useExtractionJob } from '../hooks/use-sessions.js';
+import { useDocumentExtractionJob, useResetDocumentExtraction } from '../hooks/use-sessions.js';
 
 /** Terminal states, after which the run no longer moves and the bar can be dismissed. */
 const DONE = new Set(['succeeded', 'failed', 'cancelled']);
 
 /**
- * Live status bar for one extraction run: a determinate pages bar (count + %), the running question
- * tally, a Cancel action while it runs, and a one-shot completion toast. Self-pruning — it calls
- * `onDismiss` a moment after the run reaches a terminal state so the operator sees the final frame.
+ * Live status bar for one document's extraction: a determinate pages bar (count + %), the running
+ * question tally, a Stop action while it runs, and a one-shot completion toast. Driven by the document
+ * id — it polls the shared job row — so every operator viewing the file sees the same progress, and it
+ * surfaces on serverless too (where the tab that started the run can't learn the job id in time to poll
+ * it). Self-pruning: it calls `onDismiss` a moment after the run reaches a terminal state so the operator
+ * sees the final frame.
  */
 export function ExtractionProgress({
-  jobId,
+  documentId,
+  fileName,
   onDismiss,
 }: {
-  jobId: string;
+  documentId: string;
+  fileName?: string | undefined;
   onDismiss: () => void;
 }): JSX.Element | null {
-  const job = useExtractionJob(jobId);
-  const cancel = useCancelExtraction();
+  const job = useDocumentExtractionJob(documentId);
+  const reset = useResetDocumentExtraction();
   const { toast } = useToast();
   const notified = useRef(false);
 
@@ -49,17 +54,18 @@ export function ExtractionProgress({
   const pct = data.pagesTotal > 0 ? Math.round((data.pagesDone / data.pagesTotal) * 100) : 0;
   const fillTone =
     status === 'failed' ? 'bg-bad' : status === 'cancelled' ? 'bg-ink-3' : 'bg-brand';
+  const prefix = fileName ? `${fileName} — ` : '';
 
   const headline =
     status === 'succeeded'
-      ? `Extracted ${String(data.questionsFound)} question${data.questionsFound === 1 ? '' : 's'}`
+      ? `${prefix}Extracted ${String(data.questionsFound)} question${data.questionsFound === 1 ? '' : 's'}`
       : status === 'failed'
-        ? 'Extraction failed'
+        ? `${prefix}Extraction failed`
         : status === 'cancelled'
-          ? 'Extraction cancelled'
+          ? `${prefix}Extraction cancelled`
           : status === 'queued'
-            ? 'Queued…'
-            : `Extracting — ${String(data.questionsFound)} question${data.questionsFound === 1 ? '' : 's'} so far`;
+            ? `${prefix}Queued…`
+            : `${prefix}Extracting — ${String(data.questionsFound)} question${data.questionsFound === 1 ? '' : 's'} so far`;
 
   return (
     <div className="flex flex-col gap-1.5 rounded-lg border border-line bg-surface p-3">
@@ -73,10 +79,10 @@ export function ExtractionProgress({
             <button
               type="button"
               className="btn btn--ghost btn--xs btn--danger"
-              disabled={cancel.isPending}
-              onClick={() => { cancel.mutate(jobId); }}
+              disabled={reset.isPending}
+              onClick={() => { reset.mutate(documentId); }}
             >
-              Cancel
+              Stop
             </button>
           ) : null}
         </div>
