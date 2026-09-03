@@ -1187,6 +1187,14 @@
     @apply pointer-events-none absolute border-2 border-dashed border-brand;
     background: color-mix(in srgb, var(--color-brand) 10%, transparent);
   }
+  /* Hover magnifier: a circular lens that follows the cursor, showing the page magnified around it. */
+  .crop-canvas__lens {
+    @apply pointer-events-none absolute z-30 rounded-full border-2 border-line-strong bg-surface shadow-xl;
+    background-repeat: no-repeat;
+  }
+  .crop-canvas__lens-toggle {
+    @apply absolute right-2 top-2 z-40;
+  }
 
   .q-list {
     @apply m-0 flex list-none flex-col gap-3 p-0;
