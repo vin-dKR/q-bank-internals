@@ -28,6 +28,7 @@ type QuestionRow = {
   questionImage: string | null;
   isOptionImage: boolean;
   optionImages: string[];
+  explanationImages: string[];
   // Prisma `Json?`: the persisted crop rects, validated back into shape by `toImageCrops`.
   imageCrops: unknown;
   questionType: string | null;
@@ -74,6 +75,7 @@ function toQuestion(row: QuestionRow): Question {
     questionImage: row.questionImage,
     isOptionImage: row.isOptionImage,
     optionImages: row.optionImages,
+    explanationImages: row.explanationImages,
     imageCrops: toImageCrops(row.imageCrops),
     questionType: row.questionType,
     sectionName: row.sectionName,
@@ -150,6 +152,7 @@ export class PrismaQuestionRepository implements QuestionRepository {
         ...(patch.questionImage !== undefined ? { questionImage: patch.questionImage } : {}),
         ...(patch.isOptionImage !== undefined ? { isOptionImage: patch.isOptionImage } : {}),
         ...(patch.optionImages !== undefined ? { optionImages: patch.optionImages } : {}),
+        ...(patch.explanationImages !== undefined ? { explanationImages: patch.explanationImages } : {}),
         ...(patch.imageCrops !== undefined ? { imageCrops: patch.imageCrops } : {}),
         ...(patch.questionType !== undefined ? { questionType: patch.questionType } : {}),
         ...(patch.sectionName !== undefined ? { sectionName: patch.sectionName } : {}),

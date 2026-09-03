@@ -2,6 +2,7 @@ import type { JSX } from 'react';
 import type { MatchColumn, MatchData, MatchEntry } from '@ingest/contracts';
 import { Button, IconButton, IconPlus, IconX } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
+import { AttachImageButton } from './attach-image-button.js';
 
 const FIELD_LABEL = 'text-[13px] font-medium text-ink-2';
 /** Default label pool per column: A,B,C… for the first column; p,q,r… for the rest (JEE convention). */
@@ -21,10 +22,13 @@ function nextLabel(taken: string[], pool: string): string {
 export function MatchTableEditor({
   value,
   onChange,
+  questionId,
   disabled = false,
 }: {
   value: MatchData;
   onChange: (next: MatchData) => void;
+  /** The question the entries belong to — namespaces any image an entry attaches. */
+  questionId: string;
   disabled?: boolean;
 }): JSX.Element {
   const { columns, key } = value;
@@ -49,7 +53,7 @@ export function MatchTableEditor({
     const taken = column.entries.map((entry) => entry.label);
     patchColumn(colIndex, {
       ...column,
-      entries: [...column.entries, { label: nextLabel(taken, colIndex === 0 ? LABEL_POOLS[0] : LABEL_POOLS[1]), body: '' }],
+      entries: [...column.entries, { label: nextLabel(taken, colIndex === 0 ? LABEL_POOLS[0] : LABEL_POOLS[1]), body: '', image: null }],
     });
   };
   const removeEntry = (colIndex: number, entryIndex: number): void => {
@@ -127,6 +131,28 @@ export function MatchTableEditor({
                       onChange={(body) => { patchEntry(colIndex, entryIndex, { ...entry, body }); }}
                       placeholder="Click to edit entry"
                     />
+                    <div className="mt-1 flex items-center gap-2">
+                      {entry.image ? (
+                        <>
+                          <img src={entry.image} alt={`entry ${entry.label}`} className="max-h-16 rounded border border-line bg-white" />
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            disabled={disabled}
+                            onClick={() => { patchEntry(colIndex, entryIndex, { ...entry, image: null }); }}
+                          >
+                            Remove image
+                          </Button>
+                        </>
+                      ) : (
+                        <AttachImageButton
+                          questionId={questionId}
+                          label="Image"
+                          disabled={disabled}
+                          onUploaded={(url) => { patchEntry(colIndex, entryIndex, { ...entry, image: url }); }}
+                        />
+                      )}
+                    </div>
                   </div>
                   <IconButton
                     icon={<IconX />}

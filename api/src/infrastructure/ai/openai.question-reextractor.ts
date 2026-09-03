@@ -91,7 +91,7 @@ function toMatchData(rawColumns: unknown, rawMatch: unknown): MatchData | null {
       ? record.entries
           .map((rawEntry) => {
             const entry = rawEntry as { label?: unknown; body?: unknown };
-            return { label: asString(entry.label).trim(), body: asString(entry.body) };
+            return { label: asString(entry.label).trim(), body: asString(entry.body), image: null };
           })
           .filter((entry) => entry.label.length > 0)
       : [];

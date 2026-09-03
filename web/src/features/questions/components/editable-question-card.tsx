@@ -6,6 +6,7 @@ import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { MatchTableEditor } from './match-table-editor.js';
 import { questionsApi } from '../api/questions.api.js';
 import { useUpdateQuestion } from '../hooks/use-questions.js';
+import { AttachImageButton } from './attach-image-button.js';
 import type { QuestionDraft } from '../hooks/use-question-drafts.js';
 
 /** A not-yet-saved crop region of this question: uploading (`saving`) or awaiting a manual retry. */
@@ -397,6 +398,15 @@ export function EditableQuestionCard({
     optionImages[optionIndex] = '';
     void update.mutateAsync({ id: question.id, patch: { optionImages } });
   };
+  const attachExplanationImage = (url: string): void => {
+    void update.mutateAsync({ id: question.id, patch: { explanationImages: [...question.explanationImages, url] } });
+  };
+  const removeExplanationImage = (url: string): void => {
+    void update.mutateAsync({
+      id: question.id,
+      patch: { explanationImages: question.explanationImages.filter((u) => u !== url) },
+    });
+  };
 
   const armedFor = (type: 'question' | 'option', optionIndex = 0): boolean =>
     drawTarget !== null && drawTarget.type === type && drawTarget.optionIndex === optionIndex;
@@ -521,7 +531,7 @@ export function EditableQuestionCard({
 
       {draft.match ? (
         <>
-            <MatchTableEditor value={draft.match} onChange={setMatch} disabled={saving} />
+            <MatchTableEditor value={draft.match} onChange={setMatch} questionId={question.id} disabled={saving} />
 
           {draft.options.length > 0 ? (
             <div className="flex flex-col gap-1.5">
@@ -660,6 +670,20 @@ export function EditableQuestionCard({
             Explanation {fieldAi('explanation', draft.explanation, (t) => { set('explanation', t); }, (fresh) => fresh.explanation ?? '', solutionSource)}
           </span>
           <EditableLatexValue value={draft.explanation} onChange={(v) => { set('explanation', v); }} multiline placeholder="Click to add explanation" />
+          <div className="flex items-center justify-between">
+            <span className={FIELD_LABEL}>Explanation images</span>
+            <AttachImageButton questionId={question.id} disabled={cropDisabled} onUploaded={attachExplanationImage} />
+          </div>
+          {question.explanationImages.length > 0 ? (
+            <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(120px,1fr))]">
+              {question.explanationImages.map((url) => (
+                <div key={url} className="flex flex-col items-start gap-1">
+                  <img src={url} alt="explanation figure" className="max-h-36 max-w-full rounded-lg border border-line bg-white" />
+                  <Button variant="ghost" size="xs" disabled={cropDisabled} onClick={() => { removeExplanationImage(url); }}>Remove</Button>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
 
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
