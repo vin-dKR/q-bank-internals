@@ -177,8 +177,8 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     for (const page of input.pages) {
       // Per page: the topic config can bind different pages to different fixed question types.
       const prompt = questionPrompt(input.document, page.pageNumber);
-      const { content } = await this.call(prompt, page.png, usage, input.signal);
-      for (const raw of parseQuestions(content)) {
+      const raws = await this.readPageQuestions(prompt, page, input.document, usage, input.signal);
+      for (const raw of raws) {
         results.push({
           questionNumber: toQuestionNumber(raw.question_number),
           questionText: asString(raw.question_text),
@@ -236,6 +236,32 @@ export class OpenAiVisionExtractor implements VisionExtractor {
       sheets.push(...parseSolutionSheets(content, input.document.sectionName));
     }
     return { sheets, usage };
+  }
+
+  /**
+   * Read one page's questions, retrying once if the first reply parses to zero. A page that returns no
+   * questions is the clearest "possible skip" — a single retry recovers a transient, misshaped reply
+   * before we accept the page as genuinely blank (a real blank page simply returns zero again, logged
+   * for visibility). {@link call} already handles truncation/empty replies, so this only guards the
+   * "parsed fine, but no questions" case that used to drop a whole page silently.
+   */
+  private async readPageQuestions(
+    prompt: string,
+    page: PageImage,
+    document: Document,
+    usage: AiTokenUsage,
+    signal?: AbortSignal,
+  ): Promise<RawQuestion[]> {
+    const first = parseQuestions((await this.call(prompt, page.png, usage, signal)).content);
+    if (first.length > 0) return first;
+    const retry = parseQuestions((await this.call(prompt, page.png, usage, signal)).content);
+    if (retry.length === 0) {
+      logger.warn(
+        { documentId: document.id, page: page.pageNumber },
+        'Page yielded no questions after a retry — treating it as blank',
+      );
+    }
+    return retry;
   }
 
   private emptyUsage(): AiTokenUsage {

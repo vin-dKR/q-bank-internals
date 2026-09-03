@@ -24,6 +24,7 @@ import {
   IconSparkle,
   IconTrash,
   IconUndo,
+  IconWarning,
   IconX,
   IconZoomIn,
   LoadingState,
@@ -660,6 +661,26 @@ export function VerifyWorkspace({
     const map = new Map<string, Question>();
     (questions.data ?? []).forEach((q) => map.set(q.id, q));
     return map;
+  }, [questions.data]);
+
+  // Question numbers the extractor appears to have skipped: gaps in the min..max run of the numbers it
+  // read across the whole document. Surfaced so a missing question is visible instead of silently
+  // absent. Suppressed for comprehension (its sub-questions collapse into one card, so their numbers
+  // legitimately disappear and would read as false gaps) and for garbled numbering (a stray large
+  // number that would paint the whole range as missing).
+  const missingNumbers = useMemo<number[]>(() => {
+    const data = questions.data ?? [];
+    if (data.some((q) => q.questionType === 'comprehension')) return [];
+    const present = new Set<number>();
+    for (const q of data) if (q.questionNumber !== null) present.add(q.questionNumber);
+    if (present.size < 2) return [];
+    const nums = [...present];
+    const min = Math.min(...nums);
+    const max = Math.max(...nums);
+    if (max - min + 1 > present.size * 2) return [];
+    const missing: number[] = [];
+    for (let n = min; n <= max; n += 1) if (!present.has(n)) missing.push(n);
+    return missing;
   }, [questions.data]);
 
   // Scroll to + briefly ring the question card a pending crop was mapped to, so the operator can
@@ -1559,6 +1580,15 @@ export function VerifyWorkspace({
                   : `Update all${drafts.dirtyIds.size > 0 ? ` (${String(drafts.dirtyIds.size)})` : ''}`}
               </Button>
             </div>
+            {missingNumbers.length > 0 ? (
+              <div className="flex items-start gap-2 rounded-md bg-warn-soft p-2 text-[13px] text-warn">
+                <IconWarning />
+                <span>
+                  {missingNumbers.length === 1 ? 'Question' : 'Questions'} possibly missing from extraction:{' '}
+                  <strong>{missingNumbers.join(', ')}</strong>. Re-run extraction on this file, or add them by hand.
+                </span>
+              </div>
+            ) : null}
           </div>
           {magnifierBox && size && size.displayWidth > 0 ? (
             <CropMagnifier imageSrc={imageSrc} box={magnifierBox} size={size} />
