@@ -1,7 +1,7 @@
 import { type CSSProperties, type JSX, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { type BoxRect, DraggableBox } from './draggable-box.js';
 import { IconButton } from './icon-button.js';
-import { IconX } from './icons.js';
+import { IconX, IconZoomIn, IconZoomOut } from './icons.js';
 import { Spinner } from './spinner.js';
 
 export type CanvasBox = BoxRect & {
@@ -23,6 +23,10 @@ export type CanvasSize = {
 
 /** Smaller than this (display px) counts as a stray click, not a drawn region. */
 const MIN_DRAW_SIZE = 10;
+
+/** Hover magnifier: the lens diameter (px) and how far it magnifies the fitted page under the cursor. */
+const LENS_SIZE = 176;
+const LENS_ZOOM = 2.2;
 
 type CropCanvasProps = {
   imageSrc: string;
@@ -120,6 +124,10 @@ export function CropCanvas({
   const drawStart = useRef<{ x: number; y: number } | null>(null);
   const [rubber, setRubber] = useState<BoxRect | null>(null);
 
+  // --- Hover magnifier: a lens that follows the cursor over the page (off while drawing a crop) ---
+  const [lensOn, setLensOn] = useState(true);
+  const [lensPos, setLensPos] = useState<{ x: number; y: number } | null>(null);
+
   const framePoint = useCallback((clientX: number, clientY: number): { x: number; y: number } => {
     const rect = frameRef.current?.getBoundingClientRect();
     if (!rect) return { x: 0, y: 0 };
@@ -197,7 +205,16 @@ export function CropCanvas({
           ) : null}
         </div>
       ) : null}
-      <div ref={frameRef} className="crop-canvas__frame" style={frameStyle}>
+      <div
+        ref={frameRef}
+        className="crop-canvas__frame"
+        style={frameStyle}
+        onMouseMove={(event) => {
+          if (draw || !lensOn) return;
+          setLensPos(framePoint(event.clientX, event.clientY));
+        }}
+        onMouseLeave={() => { setLensPos(null); }}
+      >
         <img
           ref={imgRef}
           src={imageSrc}
@@ -236,7 +253,34 @@ export function CropCanvas({
             ) : null}
           </div>
         ) : null}
+        {/* Flipkart-style magnifier: a lens centred on the cursor showing the page under it enlarged,
+            crisp off the same page image already loaded. Suppressed while drawing a crop. */}
+        {lensOn && lensPos && !draw && !loading && displayWidth > 0 ? (
+          <div
+            className="crop-canvas__lens"
+            style={{
+              width: LENS_SIZE,
+              height: LENS_SIZE,
+              left: lensPos.x - LENS_SIZE / 2,
+              top: lensPos.y - LENS_SIZE / 2,
+              backgroundImage: `url("${imageSrc}")`,
+              backgroundSize: `${String(displayWidth * LENS_ZOOM)}px ${String(displayHeight * LENS_ZOOM)}px`,
+              backgroundPosition: `${String(LENS_SIZE / 2 - lensPos.x * LENS_ZOOM)}px ${String(LENS_SIZE / 2 - lensPos.y * LENS_ZOOM)}px`,
+            }}
+          />
+        ) : null}
       </div>
+      {!draw && !loading ? (
+        <button
+          type="button"
+          className="crop-canvas__lens-toggle btn btn--ghost btn--icon-only btn--icon-only-sm"
+          aria-pressed={lensOn}
+          title={lensOn ? 'Turn off hover zoom' : 'Turn on hover zoom'}
+          onClick={() => { setLensOn((on) => !on); }}
+        >
+          {lensOn ? <IconZoomIn /> : <IconZoomOut />}
+        </button>
+      ) : null}
     </div>
   );
 }
