@@ -14,25 +14,6 @@ export type CardBox = { id: string; type: 'question' | 'option'; optionIndex: nu
 /** Which of this question's targets is armed for a rubber-band draw on the page. */
 export type CardDrawTarget = { type: 'question' | 'option'; optionIndex: number };
 
-/**
- * The togglable content groups of a question card. The Verify panel's "Show" control drives which of
- * these render, so an operator can review just what they care about (e.g. question + explanation).
- * Question figures ride with `question`; option figures with `options`; PYQ with `details`.
- */
-export type CardField = 'question' | 'options' | 'answer' | 'explanation' | 'details';
-
-/** The "Show" toggle definitions, in card order — shared with the workspace toolbar that renders them. */
-export const CARD_FIELDS: readonly { field: CardField; label: string }[] = [
-  { field: 'question', label: 'Question' },
-  { field: 'options', label: 'Options' },
-  { field: 'answer', label: 'Answer' },
-  { field: 'explanation', label: 'Explanation' },
-  { field: 'details', label: 'Details' },
-];
-
-/** Every field visible — the default when nothing has been toggled off. */
-export const ALL_CARD_FIELDS: ReadonlySet<CardField> = new Set(CARD_FIELDS.map((f) => f.field));
-
 type Props = {
   question: Question;
   /** The printed question number from the PDF (falls back to the sheet-order ordinal upstream). */
@@ -64,8 +45,6 @@ type Props = {
    */
   answerSource?: ReExtractSource | undefined;
   solutionSource?: ReExtractSource | undefined;
-  /** Which content groups to render — the operator's "Show" selection. Defaults to all fields. */
-  visibleFields?: ReadonlySet<CardField>;
   /**
    * Apply a change to this question's draft, computed from the LATEST state (not a captured snapshot).
    * Every field write folds through here so two AI re-reads finishing out of order can't clobber each
@@ -214,7 +193,6 @@ export function EditableQuestionCard({
   topicOptions = [],
   answerSource,
   solutionSource,
-  visibleFields = ALL_CARD_FIELDS,
   onDraftUpdate,
   onSave,
   onDrawRegion,
@@ -222,7 +200,6 @@ export function EditableQuestionCard({
   onDeleteBox,
   onEditCrop,
 }: Props): JSX.Element {
-  const show = (field: CardField): boolean => visibleFields.has(field);
   const update = useUpdateQuestion();
   const toast = useToast();
   const [fixing, setFixing] = useState<string | null>(null);
@@ -488,16 +465,14 @@ export function EditableQuestionCard({
         </div>
       ) : null}
 
-      {show('question') ? (
         <div className="flex flex-col gap-1.5">
           <span className={`flex items-center gap-1.5 ${FIELD_LABEL}`}>
             Question text {fieldAi('stem', draft.stem, (t) => { set('stem', t); }, (fresh) => fresh.stem)}
           </span>
           <EditableLatexValue value={draft.stem} onChange={(v) => { set('stem', v); }} multiline />
         </div>
-      ) : null}
 
-      {show('question') && question.isQuestionImage ? (
+      {question.isQuestionImage ? (
         <div className="flex flex-col gap-2 rounded-lg border border-dashed border-line-strong bg-surface-2 p-2.5">
           <div className="flex items-center justify-between">
             <span className={FIELD_LABEL}>Question figures</span>
@@ -546,11 +521,9 @@ export function EditableQuestionCard({
 
       {draft.match ? (
         <>
-          {show('options') ? (
             <MatchTableEditor value={draft.match} onChange={setMatch} disabled={saving} />
-          ) : null}
 
-          {show('options') && draft.options.length > 0 ? (
+          {draft.options.length > 0 ? (
             <div className="flex flex-col gap-1.5">
               <span className={FIELD_LABEL}>Printed options — click the correct one to set the matching</span>
               {draft.options.map((option, i) => {
@@ -590,7 +563,6 @@ export function EditableQuestionCard({
             </div>
           ) : null}
 
-          {show('answer') ? (
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between">
                 <span className={FIELD_LABEL}>Answer key</span>
@@ -607,11 +579,9 @@ export function EditableQuestionCard({
                 {draft.answer.trim() ? draft.answer : <span className="text-ink-3">Set the matching above to build the key</span>}
               </div>
             </div>
-          ) : null}
         </>
       ) : (
         <>
-          {show('options') ? (
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between">
               <span className={FIELD_LABEL}>Options</span>
@@ -675,29 +645,23 @@ export function EditableQuestionCard({
               );
             })}
           </div>
-          ) : null}
 
-          {show('answer') ? (
           <div className="flex flex-col gap-1.5">
             <span className={`flex items-center gap-1.5 ${FIELD_LABEL}`}>
               Answer {fieldAi('answer', draft.answer, (t) => { set('answer', t); }, (fresh) => fresh.answer, answerSource)}
             </span>
             <EditableLatexValue value={draft.answer} onChange={(v) => { set('answer', v); }} placeholder="Click to add answer" />
           </div>
-          ) : null}
         </>
       )}
 
-      {show('explanation') ? (
         <div className="flex flex-col gap-1.5">
           <span className={`flex items-center gap-1.5 ${FIELD_LABEL}`}>
             Explanation {fieldAi('explanation', draft.explanation, (t) => { set('explanation', t); }, (fresh) => fresh.explanation ?? '', solutionSource)}
           </span>
           <EditableLatexValue value={draft.explanation} onChange={(v) => { set('explanation', v); }} multiline placeholder="Click to add explanation" />
         </div>
-      ) : null}
 
-      {show('details') ? (
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
         <label className="flex flex-col gap-1.5">
           <span className={FIELD_LABEL}>Question type</span>
@@ -736,9 +700,8 @@ export function EditableQuestionCard({
           />
         </label>
       </div>
-      ) : null}
 
-      {show('details') && question.isPyq ? (
+      {question.isPyq ? (
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
           <label className="flex flex-col gap-1.5">
             <span className={FIELD_LABEL}>PYQ exam</span>
@@ -761,7 +724,7 @@ export function EditableQuestionCard({
         </div>
       ) : null}
 
-      {show('options') && question.isOptionImage ? (
+      {question.isOptionImage ? (
         <div className="flex flex-col gap-2 rounded-lg border border-dashed border-line-strong bg-surface-2 p-2.5">
           <span className={FIELD_LABEL}>Option figures</span>
           {question.options.map((option, optIdx) => {
