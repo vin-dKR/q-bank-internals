@@ -95,6 +95,13 @@ export const errors = {
   uploadStagingInvalidPath: (): AppError =>
     new AppError('UPLOAD_STAGING_INVALID_PATH', 400, 'The upload reference is not a staged object.'),
 
+  promptMissingTokens: (key: string, tokens: string[]): AppError =>
+    new AppError(
+      'PROMPT_MISSING_TOKENS',
+      400,
+      `The "${key}" prompt must keep these placeholders: ${tokens.map((t) => `{${t}}`).join(', ')}.`,
+    ),
+
   extractionFailed: (reason: string): AppError =>
     new AppError('EXTRACTION_FAILED', 502, `The vision model failed: ${reason}`),
 

@@ -31,6 +31,7 @@ import { BankService } from './modules/bank/index.js';
 import { CatalogService } from './modules/catalog/index.js';
 import { DriveService } from './modules/drive/index.js';
 import { IngestionService, type UploadStagingStore } from './modules/ingestion/index.js';
+import { PromptService, type PromptOverrideStore, type PromptOverrides } from './modules/prompts/index.js';
 import { InMemoryDocumentRepository } from './infrastructure/database/repositories/document.in-memory-repository.js';
 import { InMemorySessionRepository } from './infrastructure/database/repositories/session.in-memory-repository.js';
 import { InMemoryExtractionJobStore } from './infrastructure/database/repositories/extraction-job.in-memory-store.js';
@@ -57,6 +58,8 @@ import { SupabaseImageStore } from './infrastructure/storage/supabase.image-stor
 import { UnconfiguredImageStore } from './infrastructure/storage/unconfigured.image-store.js';
 import { SupabaseUploadStagingStore } from './infrastructure/storage/supabase.upload-staging-store.js';
 import { UnconfiguredUploadStagingStore } from './infrastructure/storage/unconfigured.upload-staging-store.js';
+import { InMemoryPromptOverrideStore } from './infrastructure/database/repositories/prompt-override.in-memory-store.js';
+import { PrismaPromptOverrideStore } from './infrastructure/database/repositories/prompt-override.prisma-store.js';
 import { OpenAiLatexRefiner } from './infrastructure/ai/openai.latex-refiner.js';
 import { UnconfiguredLatexRefiner } from './infrastructure/ai/unconfigured.latex-refiner.js';
 import { OpenAiDiagramDetector } from './infrastructure/ai/openai.diagram-detector.js';
@@ -90,6 +93,7 @@ export type Container = {
   jobQueue: JobQueue;
   driveService: DriveService;
   ingestionService: IngestionService;
+  promptsService: PromptService;
 };
 
 function buildDrive(): DriveService {
@@ -129,6 +133,7 @@ function buildPersistence(): {
   questions: QuestionRepository;
   usage: UsageRepository;
   limits: TokenLimitStore;
+  prompts: PromptOverrideStore;
 } {
   if (env.DB_DRIVER === 'mongo') {
     if (!env.DATABASE_URL) {
@@ -143,6 +148,7 @@ function buildPersistence(): {
       questions: new PrismaQuestionRepository(prisma),
       usage: new PrismaUsageRepository(prisma),
       limits: new PrismaTokenLimitStore(prisma),
+      prompts: new PrismaPromptOverrideStore(prisma),
     };
   }
 
@@ -154,6 +160,7 @@ function buildPersistence(): {
     questions: new InMemoryQuestionRepository(),
     usage: new InMemoryUsageRepository(),
     limits: new InMemoryTokenLimitStore(),
+    prompts: new InMemoryPromptOverrideStore(),
   };
 }
 
@@ -176,10 +183,10 @@ function buildQueue(): JobQueue {
 }
 
 /** OpenAI gpt-4o when a key is present; otherwise a null-object that fails extraction loudly. */
-function buildExtractor(): VisionExtractor {
+function buildExtractor(loadPromptOverrides: () => Promise<PromptOverrides>): VisionExtractor {
   if (env.OPENAI_API_KEY) {
     logger.info(`Extractor: OpenAI ${env.EXTRACTION_MODEL}`);
-    return new OpenAiVisionExtractor(env.OPENAI_API_KEY, env.EXTRACTION_MODEL);
+    return new OpenAiVisionExtractor(env.OPENAI_API_KEY, env.EXTRACTION_MODEL, loadPromptOverrides);
   }
   logger.info('Extractor: unconfigured. Set OPENAI_API_KEY to run extraction.');
   return new UnconfiguredVisionExtractor();
@@ -205,16 +212,23 @@ function buildUploadStaging(): UploadStagingStore {
 }
 
 /** OpenAI-backed "Fix LaTeX" refiner when a key is present; otherwise a null-object. */
-function buildLatexRefiner(): LatexRefiner {
-  if (env.OPENAI_API_KEY) return new OpenAiLatexRefiner(env.OPENAI_API_KEY, env.LATEX_MODEL);
+function buildLatexRefiner(loadPromptOverrides: () => Promise<PromptOverrides>): LatexRefiner {
+  if (env.OPENAI_API_KEY) {
+    return new OpenAiLatexRefiner(env.OPENAI_API_KEY, env.LATEX_MODEL, loadPromptOverrides);
+  }
   return new UnconfiguredLatexRefiner();
 }
 
 /** OpenAI vision detector for the Verify auto-crop when a key is present; otherwise a null-object. */
-function buildDiagramDetector(): DiagramDetector {
+function buildDiagramDetector(loadPromptOverrides: () => Promise<PromptOverrides>): DiagramDetector {
   if (env.OPENAI_API_KEY) {
     logger.info(`Detector: OpenAI ${env.DETECTION_MODEL}`);
-    return new OpenAiDiagramDetector(env.OPENAI_API_KEY, env.DETECTION_MODEL, env.DETECTION_MAX_TOKENS);
+    return new OpenAiDiagramDetector(
+      env.OPENAI_API_KEY,
+      env.DETECTION_MODEL,
+      env.DETECTION_MAX_TOKENS,
+      loadPromptOverrides,
+    );
   }
   logger.info('Detector: unconfigured. Set OPENAI_API_KEY to auto-detect figures.');
   return new UnconfiguredDiagramDetector();
@@ -241,10 +255,14 @@ function buildPaperMetadataExtractor(): PaperMetadataExtractor {
 }
 
 export function createContainer(): Container {
-  const { documents, sessions, jobs, questions, usage, limits } = buildPersistence();
+  const { documents, sessions, jobs, questions, usage, limits, prompts } = buildPersistence();
+  const promptsService = new PromptService(prompts);
+  // The prompt builders read edits through this; the service caches it briefly so a multi-page run
+  // isn't a DB read per page.
+  const loadPromptOverrides = (): Promise<PromptOverrides> => promptsService.overrides();
   const jobQueue = buildQueue();
   const rasterizer: PdfRasterizer = new PdfToImgRasterizer();
-  const extractor = buildExtractor();
+  const extractor = buildExtractor(loadPromptOverrides);
   const driveService = buildDrive();
 
   // The age past which a stuck `queued`/`extracting` document is auto-reset on read. Floored to always
@@ -258,9 +276,9 @@ export function createContainer(): Container {
   const questionsService = new QuestionsService(
     questions,
     buildImageStore(),
-    buildLatexRefiner(),
+    buildLatexRefiner(loadPromptOverrides),
     usageService,
-    buildDiagramDetector(),
+    buildDiagramDetector(loadPromptOverrides),
     pagesService,
     buildQuestionReExtractor(),
     buildPaperMetadataExtractor(),
@@ -338,5 +356,6 @@ export function createContainer(): Container {
     jobQueue,
     driveService,
     ingestionService,
+    promptsService,
   };
 }

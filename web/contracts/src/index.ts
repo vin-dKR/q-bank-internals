@@ -5,6 +5,7 @@ export * from './common/vocabulary.js';
 export * from './common/paper-metadata.js';
 export * from './drive/index.js';
 export * from './ingestion/index.js';
+export * from './prompts/index.js';
 export * from './sessions/index.js';
 export * from './documents/index.js';
 export * from './questions/index.js';

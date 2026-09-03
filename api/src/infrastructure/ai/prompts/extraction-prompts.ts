@@ -1,6 +1,7 @@
 import type { Document } from '@ingest/contracts';
 import { PAPER_METADATA_FIELDS } from '@ingest/contracts';
 import { topicBindingForPage } from '../../../modules/extraction/index.js';
+import { fillTokens, resolvePrompt, type PromptOverrides } from '../../../modules/prompts/index.js';
 
 /**
  * Prompts ported from the Python PDF Extractor (`backend/prompts/*.py`). The JSON envelopes are
@@ -17,27 +18,6 @@ function context(document: Document): string {
   if (document.questionType) parts.push(`Question type: ${document.questionType}`);
   return parts.join(' | ');
 }
-
-const BASE_RULES = `
-Extract ONLY the core information for each question into this exact JSON shape:
-
-{
-  "questions": [
-    { "question_number": 1, "question_text": "…", "options": ["(A) …", "(B) …", "(C) …", "(D) …"] }
-  ]
-}
-
-EXTRACTION RULES:
-1. Only these three fields per question: question_number, question_text, options.
-2. question_number: the number printed next to the question (1, 2, 3, …).
-3. question_text: the complete question text, including any passage and math (use LaTeX like \\( \\sqrt{3} \\)).
-4. options: an array of strings, always prefixed and normalized as "(A) …", "(B) …", "(C) …", "(D) …".
-5. Normalize option labels printed as (1)(2)(3)(4) to (A)(B)(C)(D).
-6. Do NOT repeat a shared comprehension passage inside every question_text — a comprehension paper is handled by the TYPE-SPECIFIC RULE below.
-7. For subjective questions with no options, use an empty array [].
-8. If — and ONLY if — the page itself prints the correct answer or a worked solution for a question, add optional "answer" (the correct option letter(s) or numeric/text value) and/or "explanation" (the printed working) fields to that question. Question papers usually do NOT show these; when the page does not, OMIT both fields and never guess.
-9. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.
-`;
 
 const TYPE_RULES: Record<string, string> = {
   single_correct:
@@ -97,19 +77,6 @@ function resolveQuestionType(document: Document, pageNumber: number): string | n
 }
 
 /**
- * Extra rule appended when a page's segment is marked PYQ. Asks the model to read each question's
- * SOURCE exam + year printed on the page (distinct from the target exam/subject in the context line)
- * and return them per-question, never guessed. The worker stamps these onto `question.pyqExam`/`pyqYear`.
- */
-const PYQ_RULE = `
-PREVIOUS-YEAR QUESTION (PYQ) RULE:
-These are previous-year exam questions. For EACH question, read the SOURCE exam and year printed on the page — usually shown beside the question, e.g. "[NEET 2019]", "(JEE Main 2021)", "AIEEE 2011" — and add these two fields to that question object:
-- "pyq_exam": the exam the question originally appeared in (e.g. "NEET", "JEE Main"). Omit when the page does not print it.
-- "pyq_year": the year as printed (e.g. "2019"). Omit when the page does not print it.
-This SOURCE exam/year is distinct from the target exam/subject in the context above. Never guess; omit any field the page does not actually show.
-`;
-
-/**
  * Whether the questions on a page should be extracted as PYQ: the segment's per-node toggle when the
  * page is covered by a block, else the document-level PYQ flag (legacy whole-chapter PYQ uploads).
  */
@@ -118,28 +85,17 @@ function resolvePyq(document: Document, binding: ReturnType<typeof topicBindingF
 }
 
 /**
- * Extra rule appended when the paper's answer layout is `inline`: each question is immediately
- * followed by its own printed answer key (e.g. "MathonGo Answer Key : (3)"), with no separate answer
- * sheet. Unlike the opportunistic BASE_RULES rule 8, this one REQUIRES reading that printed answer
- * into the `answer` field for every question, plus any worked solution into `explanation`.
- */
-const INLINE_ANSWER_RULE = `
-INLINE ANSWER-KEY RULE (this paper prints each answer next to its question):
-This is an inline-answer paper: the correct answer — and often a worked solution/explanation — is printed immediately after each question, before the next question begins (e.g. "Answer Key : (3)", "Ans. (B)", "Sol. …"). For EVERY question you MUST:
-- Read that question's OWN printed answer and put it in that question's "answer" field, formatted per the TYPE-SPECIFIC RULE (normalize (1)(2)(3)(4) to A/B/C/D for option types; the exact number for integer/numerical types).
-- Also mark the matching option's correctness where options are extracted.
-- If a worked solution/explanation is printed for that question, put its FULL text (math as LaTeX) in that same question's "explanation" field; omit "explanation" only when none is printed.
-CRITICAL PAIRING: the answer and explanation belong to the question they are printed under — never attach question N's answer or explanation to question N+1. The next numbered question marks the boundary; everything between question N and question N+1 (its answer + solution) is question N's. Never guess an answer or explanation the page does not print.
-`;
-
-/**
  * The question-extraction prompt for one page of a document. The question type comes from the
  * operator's topic config when the page is covered by a block (stated as fixed so the model cannot
  * re-classify), else from the document-level question type — exactly mirroring how the worker stamps
  * the persisted questions. When the paper's answer layout is `inline`, an extra rule tells the model
  * to read each question's printed answer key in the same pass (no sibling answer sheet exists).
  */
-export function questionPrompt(document: Document, pageNumber: number): string {
+export function questionPrompt(
+  document: Document,
+  pageNumber: number,
+  overrides: PromptOverrides,
+): string {
   const binding = topicBindingForPage(document.topics, pageNumber);
   const questionType = binding?.questionType ?? document.questionType;
   const typeRule = questionType ? TYPE_RULES[questionType] : undefined;
@@ -149,10 +105,10 @@ export function questionPrompt(document: Document, pageNumber: number): string {
   return [
     `You are given an image of an exam question paper (${context(document)}).`,
     bindingNote,
-    BASE_RULES.trim(),
+    resolvePrompt(overrides, 'extraction'),
     typeRule ? `TYPE-SPECIFIC RULE:\n${typeRule}` : '',
-    document.answerLayout === 'inline' ? INLINE_ANSWER_RULE.trim() : '',
-    resolvePyq(document, binding) ? PYQ_RULE.trim() : '',
+    document.answerLayout === 'inline' ? resolvePrompt(overrides, 'inlineAnswer') : '',
+    resolvePyq(document, binding) ? resolvePrompt(overrides, 'pyq') : '',
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -227,25 +183,15 @@ export function reExtractQuestionPrompt(target: {
  * resolved question type (topic binding, else document type — the same resolution the question prompt
  * uses) selects a type-specific rule so the answer VALUE is formatted correctly for that type.
  */
-export function answerPrompt(document: Document, pageNumber: number): string {
+export function answerPrompt(
+  document: Document,
+  pageNumber: number,
+  overrides: PromptOverrides,
+): string {
   const questionType = resolveQuestionType(document, pageNumber);
   const typeRule = questionType ? ANSWER_TYPE_RULES[questionType] : undefined;
   return [
-    `You are given an image of an exam answer sheet (${context(document)}).
-Extract the answer key for EVERY section visible in the image into this exact JSON shape:
-
-{
-  "sections": [
-    { "section_name": "Exercise O-1", "answers": { "1": "A", "2": "B", "3": "C" } }
-  ]
-}
-
-ANSWER RULES:
-1. Include ALL sections in the image; question numbers may restart per section.
-2. answers keys are the question numbers as strings ("1", "2", …).
-3. Format each answer value exactly as the ANSWER TYPE-SPECIFIC RULE below requires.
-4. If no section name is printed, use "General".
-5. Use LaTeX for math; return valid, complete JSON only — no prose, no trailing commas.`,
+    fillTokens(resolvePrompt(overrides, 'answerKey'), { context: context(document) }),
     typeRule ? `ANSWER TYPE-SPECIFIC RULE:\n${typeRule}` : '',
   ]
     .filter(Boolean)
@@ -257,31 +203,15 @@ ANSWER RULES:
  * and usually restates the final answer. We capture BOTH so the solution can back-fill an answer the
  * answer sheet was missing, while also giving the verifier the full explanation text.
  */
-export function solutionPrompt(document: Document, pageNumber: number): string {
+export function solutionPrompt(
+  document: Document,
+  pageNumber: number,
+  overrides: PromptOverrides,
+): string {
   const questionType = resolveQuestionType(document, pageNumber);
   const typeRule = questionType ? ANSWER_TYPE_RULES[questionType] : undefined;
   return [
-    `You are given an image from an exam SOLUTIONS booklet (${context(document)}).
-Extract the worked solution for EVERY question visible in the image into this exact JSON shape:
-
-{
-  "sections": [
-    {
-      "section_name": "Exercise O-1",
-      "solutions": {
-        "1": { "answer": "A", "explanation": "Step-by-step reasoning …" }
-      }
-    }
-  ]
-}
-
-SOLUTION RULES:
-1. Include ALL sections in the image; question numbers may restart per section.
-2. solutions keys are the question numbers as strings ("1", "2", …).
-3. explanation: the complete worked solution / reasoning as printed, preserving math as LaTeX (e.g. \\( \\sqrt{3} \\)). Do NOT summarise or omit steps.
-4. answer: the final answer if the solution states one, formatted exactly as the ANSWER TYPE-SPECIFIC RULE below requires; use null if no final answer is given.
-5. If no section name is printed, use "General".
-6. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`,
+    fillTokens(resolvePrompt(overrides, 'solution'), { context: context(document) }),
     typeRule ? `ANSWER TYPE-SPECIFIC RULE:\n${typeRule}` : '',
   ]
     .filter(Boolean)

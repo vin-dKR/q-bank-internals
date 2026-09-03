@@ -10,6 +10,7 @@ import { createExtractionRouter } from './modules/extraction/index.js';
 import { createUsageRouter } from './modules/usage/index.js';
 import { createDriveRouter } from './modules/drive/index.js';
 import { createIngestionRouter } from './modules/ingestion/index.js';
+import { createPromptsRouter } from './modules/prompts/index.js';
 import type { Container } from './container.js';
 
 /** Mounts every feature router under its base path. The one place the URL map is declared. */
@@ -31,6 +32,7 @@ export function createApiRouter(container: Container): Router {
   router.use('/usage', createUsageRouter(container.usageService));
   router.use('/drive', createDriveRouter(container.driveService));
   router.use('/ingestion', createIngestionRouter(container.ingestionService));
+  router.use('/prompts', createPromptsRouter(container.promptsService));
 
   return router;
 }
