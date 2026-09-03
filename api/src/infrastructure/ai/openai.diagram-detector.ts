@@ -10,6 +10,7 @@ import type {
 import type { AiTokenUsage } from '../../modules/usage/index.js';
 import { logger } from '../../shared/logger/logger.js';
 import { detectorPrompt } from './prompts/detection-prompts.js';
+import type { PromptOverrides } from '../../modules/prompts/index.js';
 
 /** Shape the detector prompt asks the model to return, before we validate + clamp each box. */
 type RawDetection = {
@@ -217,6 +218,7 @@ export class OpenAiDiagramDetector implements DiagramDetector {
     apiKey: string,
     private readonly model: string,
     private readonly maxTokens: number,
+    private readonly loadPromptOverrides: () => Promise<PromptOverrides>,
   ) {
     this.client = new OpenAI({ apiKey });
   }
@@ -227,6 +229,7 @@ export class OpenAiDiagramDetector implements DiagramDetector {
     // service, matcher, and browser crop are all unaffected by this being an internal optimisation.
     const preview = await toPreview(page.png, page.width, page.height);
     const imageUrl = `data:image/png;base64,${preview.png.toString('base64')}`;
+    const prompt = detectorPrompt(preview.width, preview.height, await this.loadPromptOverrides());
 
     // Accumulate token usage across every attempt so a retry is billed honestly, not just the last call.
     let promptTokens = 0;
@@ -247,7 +250,7 @@ export class OpenAiDiagramDetector implements DiagramDetector {
           {
             role: 'user',
             content: [
-              { type: 'text', text: detectorPrompt(preview.width, preview.height) },
+              { type: 'text', text: prompt },
               { type: 'image_url', image_url: { url: imageUrl, detail: 'high' } },
             ],
           },

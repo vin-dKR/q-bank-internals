@@ -232,6 +232,17 @@ model ExtractionJob {
   @@map("ingest_extraction_jobs")
 }
 
+// An operator's edit to one AI prompt, keyed by its PromptKey. Absent = the code default is used.
+// Read by the prompt builders (cached briefly) and managed from the prompt-settings screen.
+model PromptOverride {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("ingest_prompt_overrides")
+}
+
 // One OpenAI call's token spend, appended by the extraction pipeline (vision extraction or LaTeX
 // refinement). Queried by UTC-day windows for the Usage dashboard and to enforce the global budget,
 // so createdAt is indexed. documentId/sessionId are loose string references (no relation) — a usage

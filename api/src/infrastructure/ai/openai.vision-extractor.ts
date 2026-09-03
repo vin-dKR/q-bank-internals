@@ -13,6 +13,7 @@ import type { AiTokenUsage } from '../../modules/usage/index.js';
 import { errors } from '../../shared/errors/error-catalog.js';
 import { logger } from '../../shared/logger/logger.js';
 import { answerPrompt, questionPrompt, solutionPrompt } from './prompts/extraction-prompts.js';
+import type { PromptOverrides } from '../../modules/prompts/index.js';
 
 /**
  * Output-token budget for the first attempt at one page. Covers a reasoning model's hidden reasoning
@@ -160,6 +161,7 @@ export class OpenAiVisionExtractor implements VisionExtractor {
   constructor(
     apiKey: string,
     private readonly model: string,
+    private readonly loadPromptOverrides: () => Promise<PromptOverrides>,
   ) {
     this.client = new OpenAI({ apiKey });
   }
@@ -174,9 +176,10 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     const usage = this.emptyUsage();
     const pagesTotal = input.pages.length;
     let pagesDone = 0;
+    const overrides = await this.loadPromptOverrides();
     for (const page of input.pages) {
       // Per page: the topic config can bind different pages to different fixed question types.
-      const prompt = questionPrompt(input.document, page.pageNumber);
+      const prompt = questionPrompt(input.document, page.pageNumber, overrides);
       const raws = await this.readPageQuestions(prompt, page, input.document, usage, input.signal);
       for (const raw of raws) {
         results.push({
@@ -213,10 +216,11 @@ export class OpenAiVisionExtractor implements VisionExtractor {
   }): Promise<AnswerExtraction> {
     const sheets: AnswerExtraction['sheets'] = [];
     const usage = this.emptyUsage();
+    const overrides = await this.loadPromptOverrides();
     for (const page of input.pages) {
       // Per page: the topic config can bind different pages to different fixed question types, so the
       // answer-value format is resolved per page (mirrors extractQuestions).
-      const prompt = answerPrompt(input.document, page.pageNumber);
+      const prompt = answerPrompt(input.document, page.pageNumber, overrides);
       const { content } = await this.call(prompt, page.png, usage, input.signal);
       sheets.push(...parseAnswerSheets(content, input.document.sectionName));
     }
@@ -230,8 +234,9 @@ export class OpenAiVisionExtractor implements VisionExtractor {
   }): Promise<AnswerExtraction> {
     const sheets: AnswerExtraction['sheets'] = [];
     const usage = this.emptyUsage();
+    const overrides = await this.loadPromptOverrides();
     for (const page of input.pages) {
-      const prompt = solutionPrompt(input.document, page.pageNumber);
+      const prompt = solutionPrompt(input.document, page.pageNumber, overrides);
       const { content } = await this.call(prompt, page.png, usage, input.signal);
       sheets.push(...parseSolutionSheets(content, input.document.sectionName));
     }
