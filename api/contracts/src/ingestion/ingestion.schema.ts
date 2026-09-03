@@ -78,3 +78,32 @@ export const UploadChapterResponseSchema = z.object({
   driveFile: DriveFileSchema,
 });
 export type UploadChapterResponse = z.infer<typeof UploadChapterResponseSchema>;
+
+/**
+ * A chapter PDF is uploaded directly to staging storage (which bypasses the serverless request-body
+ * limit that caps a multipart upload at ~4.5 MB), then ingested by reference. Step 1 asks the API for
+ * a signed, single-use upload slot for a file of this name.
+ */
+export const SignedUploadRequestSchema = z.object({
+  fileName: z.string().min(1),
+});
+export type SignedUploadRequest = z.infer<typeof SignedUploadRequestSchema>;
+
+/** Step 1's reply: the absolute URL the browser PUTs the bytes to, plus the opaque object path to ingest. */
+export const SignedUploadTargetSchema = z.object({
+  /** Opaque staging path the client echoes back to finalize; the browser never interprets or builds it. */
+  path: z.string().min(1),
+  /** Absolute, single-use URL the browser uploads the PDF bytes to directly — no size limit at our function. */
+  uploadUrl: z.string().url(),
+});
+export type SignedUploadTarget = z.infer<typeof SignedUploadTargetSchema>;
+
+/**
+ * Step 2 finalizes the upload: the bytes already live in staging storage at `storagePath`, so this
+ * request carries only the small JSON metadata and never approaches the serverless body limit.
+ */
+export const UploadChapterRequestSchema = z.object({
+  storagePath: z.string().min(1),
+  metadata: ChapterUploadMetadataSchema,
+});
+export type UploadChapterRequest = z.infer<typeof UploadChapterRequestSchema>;

@@ -1,2 +1,3 @@
 export { IngestionService } from './ingestion.service.js';
-export { createIngestionRouter, MAX_UPLOAD_BYTES } from './ingestion.routes.js';
+export { createIngestionRouter } from './ingestion.routes.js';
+export type { UploadStagingStore } from './upload-staging.store.js';

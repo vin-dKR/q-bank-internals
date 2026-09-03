@@ -1,10 +1,17 @@
-import type { ChapterPath, ChapterUploadMetadata, Document, DriveFile } from '@ingest/contracts';
+import type {
+  ChapterPath,
+  ChapterUploadMetadata,
+  Document,
+  DriveFile,
+  SignedUploadTarget,
+} from '@ingest/contracts';
 import { logger } from '../../shared/logger/logger.js';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { DriveService } from '../drive/index.js';
 import type { CreateDocumentInput, DocumentRepository } from '../documents/index.js';
 import type { SessionsService } from '../sessions/index.js';
 import type { ExtractionService } from '../extraction/index.js';
+import type { UploadStagingStore } from './upload-staging.store.js';
 
 /** What an upload produces: the Drive file that was filed, plus the durable Document row it created. */
 export type UploadChapterResult = { document: Document; driveFile: DriveFile };
@@ -22,7 +29,17 @@ export class IngestionService {
     private readonly documents: DocumentRepository,
     private readonly sessions: SessionsService,
     private readonly extraction: ExtractionService,
+    private readonly staging: UploadStagingStore,
   ) {}
+
+  /**
+   * Mint a signed, single-use slot the browser uploads the PDF straight to. This is what lets a chapter
+   * PDF exceed the serverless request-body limit (~4.5 MB): the bytes go to storage directly, and only
+   * a small reference is finalized through {@link uploadChapter}.
+   */
+  async createSignedUpload(fileName: string): Promise<SignedUploadTarget> {
+    return this.staging.createSignedUpload(fileName);
+  }
 
   /**
    * Ensure the exam → subject → module → chapter folder chain exists, returning the deepest folder's
@@ -48,10 +65,13 @@ export class IngestionService {
    */
   async uploadChapter(input: {
     metadata: ChapterUploadMetadata;
-    bytes: Buffer;
+    storagePath: string;
   }): Promise<UploadChapterResult> {
-    const { metadata, bytes } = input;
+    const { metadata, storagePath } = input;
     const session = await this.sessions.getById(metadata.sessionId); // 404s here if the session is gone
+    // The browser already uploaded the PDF straight to staging; pull those bytes server-to-server (no
+    // request-body limit applies here) so a large paper that couldn't fit through the function still files.
+    const bytes = await this.staging.download(storagePath);
 
     const path = { module: metadata.module, chapter: metadata.chapter, section: metadata.sectionName };
     // A PYQ paper may omit the chapter, so fall back to the exam for a still-meaningful file name.
@@ -123,6 +143,15 @@ export class IngestionService {
         );
       }
     }
+
+    // The staged object has served its purpose now the Document + Drive file exist; drop it best-effort
+    // so a failed cleanup can never fail an upload that already succeeded.
+    void this.staging.remove(storagePath).catch((error: unknown) => {
+      logger.warn(
+        { storagePath, err: error instanceof Error ? error.message : String(error) },
+        'Failed to remove staged upload after ingest',
+      );
+    });
 
     return { document, driveFile };
   }

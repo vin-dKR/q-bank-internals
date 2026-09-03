@@ -30,7 +30,7 @@ import { PublishService } from './modules/publish/index.js';
 import { BankService } from './modules/bank/index.js';
 import { CatalogService } from './modules/catalog/index.js';
 import { DriveService } from './modules/drive/index.js';
-import { IngestionService } from './modules/ingestion/index.js';
+import { IngestionService, type UploadStagingStore } from './modules/ingestion/index.js';
 import { InMemoryDocumentRepository } from './infrastructure/database/repositories/document.in-memory-repository.js';
 import { InMemorySessionRepository } from './infrastructure/database/repositories/session.in-memory-repository.js';
 import { InMemoryExtractionJobStore } from './infrastructure/database/repositories/extraction-job.in-memory-store.js';
@@ -55,6 +55,8 @@ import { OpenAiVisionExtractor } from './infrastructure/ai/openai.vision-extract
 import { UnconfiguredVisionExtractor } from './infrastructure/ai/unconfigured.vision-extractor.js';
 import { SupabaseImageStore } from './infrastructure/storage/supabase.image-store.js';
 import { UnconfiguredImageStore } from './infrastructure/storage/unconfigured.image-store.js';
+import { SupabaseUploadStagingStore } from './infrastructure/storage/supabase.upload-staging-store.js';
+import { UnconfiguredUploadStagingStore } from './infrastructure/storage/unconfigured.upload-staging-store.js';
 import { OpenAiLatexRefiner } from './infrastructure/ai/openai.latex-refiner.js';
 import { UnconfiguredLatexRefiner } from './infrastructure/ai/unconfigured.latex-refiner.js';
 import { OpenAiDiagramDetector } from './infrastructure/ai/openai.diagram-detector.js';
@@ -193,6 +195,15 @@ function buildImageStore(): ImageStore {
   return new UnconfiguredImageStore();
 }
 
+/** Supabase-backed staging for direct-to-storage PDF uploads; a null-object that fails loudly otherwise. */
+function buildUploadStaging(): UploadStagingStore {
+  if (env.SUPABASE_SERVICE_KEY) {
+    return new SupabaseUploadStagingStore(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY, env.SUPABASE_BUCKET);
+  }
+  logger.info('Uploads: unconfigured. Set SUPABASE_SERVICE_KEY to accept chapter PDF uploads.');
+  return new UnconfiguredUploadStagingStore();
+}
+
 /** OpenAI-backed "Fix LaTeX" refiner when a key is present; otherwise a null-object. */
 function buildLatexRefiner(): LatexRefiner {
   if (env.OPENAI_API_KEY) return new OpenAiLatexRefiner(env.OPENAI_API_KEY, env.LATEX_MODEL);
@@ -295,6 +306,7 @@ export function createContainer(): Container {
     documents,
     sessionsService,
     extractionService,
+    buildUploadStaging(),
   );
 
   // In-process/synchronous queue: the API also consumes, so extraction runs without a separate

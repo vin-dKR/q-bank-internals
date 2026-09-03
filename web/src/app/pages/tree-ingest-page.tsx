@@ -110,6 +110,7 @@ export function TreeIngestPage(): JSX.Element {
   const [didUpload, setDidUpload] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [results, setResults] = useState<string[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<{ kind: ChapterKind; pct: number } | null>(null);
 
   const splitPoints = useSplitPoints();
   const reflow = useReflowBlocks();
@@ -480,8 +481,13 @@ export function TreeIngestPage(): JSX.Element {
         kind: part.kind,
         ...(part.topics ? { topics: part.topics } : {}),
       };
+      setUploadProgress({ kind: part.kind, pct: 0 });
       try {
-        const result = await upload.mutateAsync({ pdfBytes: part.bytes, metadata });
+        const result = await upload.mutateAsync({
+          pdfBytes: part.bytes,
+          metadata,
+          onProgress: (fraction) => { setUploadProgress({ kind: part.kind, pct: Math.round(fraction * 100) }); },
+        });
         setDidUpload(true);
         lines.push(`${part.kind} → ${result.document.status}`);
       } catch (err) {
@@ -498,6 +504,7 @@ export function TreeIngestPage(): JSX.Element {
     if (!failed) {
       success('Uploaded to the session', `${String(parts.length)} file${parts.length === 1 ? '' : 's'} filed to Drive.`);
     }
+    setUploadProgress(null);
     setUploading(false);
   };
 
@@ -689,6 +696,28 @@ export function TreeIngestPage(): JSX.Element {
               {uploading ? <><Spinner /> Uploading…</> : 'Upload all units'}
             </button>
           ) : null}
+
+          {uploading && uploadProgress ? (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-3 text-[13px] font-medium">
+                <span className="min-w-0 truncate text-ink">Uploading {uploadProgress.kind} PDF…</span>
+                <span className="flex-none text-ink-3">{uploadProgress.pct}%</span>
+              </div>
+              <div
+                className="h-2.5 overflow-hidden rounded-full bg-surface-2"
+                role="progressbar"
+                aria-valuenow={uploadProgress.pct}
+                aria-valuemin={0}
+                aria-valuemax={100}
+              >
+                <div
+                  className="h-full rounded-full bg-brand transition-all"
+                  style={{ width: `${String(uploadProgress.pct)}%` }}
+                />
+              </div>
+            </div>
+          ) : null}
+
           {!sessionId ? <p className="muted">Select or create a session above before uploading.</p> : null}
 
           {results.length > 0 ? (

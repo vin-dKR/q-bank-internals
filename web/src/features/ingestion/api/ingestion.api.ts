@@ -1,20 +1,41 @@
-import type { ChapterUploadMetadata, PaperMetadata, UploadChapterResponse } from '@ingest/contracts';
-import { ExtractPaperMetadataResultSchema, UploadChapterResponseSchema } from '@ingest/contracts';
+import type {
+  ChapterUploadMetadata,
+  PaperMetadata,
+  SignedUploadRequest,
+  UploadChapterRequest,
+  UploadChapterResponse,
+} from '@ingest/contracts';
+import {
+  ExtractPaperMetadataResultSchema,
+  SignedUploadTargetSchema,
+  UploadChapterResponseSchema,
+} from '@ingest/contracts';
 import { request } from '../../../shared/api/http-client.js';
+import { uploadToSignedUrl } from '../../../shared/api/signed-upload.js';
 
 /** Feature-scoped call to the ingestion endpoint. The only place this feature hits the network. */
 export const ingestionApi = {
-  uploadChapter: (
+  /**
+   * Upload one built chapter PDF in three steps: (1) get a signed slot, (2) PUT the bytes straight to
+   * storage with progress, (3) finalize by reference. The bytes never transit our serverless function,
+   * so a chapter larger than the ~4.5 MB request-body limit still uploads. `onProgress` reports 0–1.
+   */
+  uploadChapter: async (
     pdfBytes: Uint8Array,
     metadata: ChapterUploadMetadata,
+    onProgress?: (fraction: number) => void,
   ): Promise<UploadChapterResponse> => {
-    const form = new FormData();
+    const fileName = `${metadata.chapter.trim() || metadata.exam.trim() || 'paper'}-${metadata.kind}.pdf`;
+    const target = await request('/ingestion/signed-upload', {
+      method: 'POST',
+      body: { fileName } satisfies SignedUploadRequest,
+      schema: SignedUploadTargetSchema,
+    });
     const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
-    form.append('pdf', blob, `${metadata.chapter}-${metadata.kind}.pdf`);
-    form.append('metadata', JSON.stringify(metadata));
+    await uploadToSignedUrl(target.uploadUrl, blob, onProgress);
     return request('/ingestion', {
       method: 'POST',
-      body: form,
+      body: { storagePath: target.path, metadata } satisfies UploadChapterRequest,
       schema: UploadChapterResponseSchema,
     });
   },
