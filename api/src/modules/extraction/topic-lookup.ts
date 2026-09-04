@@ -11,7 +11,8 @@ import type { ChapterTopic, QuestionType } from '@ingest/contracts';
  */
 export type TopicBinding = {
   matchKey: string;
-  questionType: QuestionType;
+  /** Absent when the operator left the type blank (a PYQ paper's segments — extracted generically). */
+  questionType?: QuestionType;
   sectionName?: string;
   topicName?: string;
   /** The operator's per-node subject for this leaf — stamped onto each question (a PYQ paper spans subjects). */
@@ -31,7 +32,7 @@ export function topicBindingForPage(topics: ChapterTopic[], pageNumber: number):
       if (pageNumber >= block.pageRange.from && pageNumber <= block.pageRange.to) {
         return {
           matchKey: topic.name,
-          questionType: block.questionType,
+          ...(block.questionType ? { questionType: block.questionType } : {}),
           ...(topic.sectionName ? { sectionName: topic.sectionName } : {}),
           ...(topic.topicName ? { topicName: topic.topicName } : {}),
           ...(topic.subject ? { subject: topic.subject } : {}),

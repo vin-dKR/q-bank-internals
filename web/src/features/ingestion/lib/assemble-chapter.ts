@@ -89,7 +89,9 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
   const questionLeaves: Leaf[] = [];
   for (const leaf of allLeaves) {
     if (!leaf.node.bindings?.question) continue;
-    if (!resolveQuestionType(leaf.node, leaf.ancestors).trim()) {
+    // A PYQ paper's questions are of mixed types, so the type is optional there — a bound question is
+    // enough. Every other source still needs a resolved type per leaf to extract correctly.
+    if (!pyq && !resolveQuestionType(leaf.node, leaf.ancestors).trim()) {
       problems.push(`${pathLabel(leaf) || '(unnamed)'}: no question type set.`);
       continue;
     }
@@ -97,7 +99,7 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
   }
   const firstLeaf = questionLeaves[0];
   if (!firstLeaf) {
-    problems.push('No leaf has a question slice with a question type.');
+    problems.push(pyq ? 'No leaf has a bound question slice.' : 'No leaf has a question slice with a question type.');
     return { base: emptyBase(m), question: null, answer: null, solution: null, problems };
   }
 
@@ -119,11 +121,12 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
         const sectionName = labelAtLevel(leaf, 'section');
         const topicName = labelAtLevel(leaf, 'topic');
         const subject = resolveSubject(leaf.node, leaf.ancestors);
+        const questionType = resolveQuestionType(leaf.node, leaf.ancestors).trim();
         return {
           name: pathLabel(leaf) || 'Section',
           types: [
             {
-              questionType: resolveQuestionType(leaf.node, leaf.ancestors).trim(),
+              ...(questionType ? { questionType } : {}),
               pageRange: { from, to },
               ...(a ? { answerPageRange: { from: a.from, to: a.to } } : {}),
               ...(s ? { solutionPageRange: { from: s.from, to: s.to } } : {}),
@@ -138,14 +141,16 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
       })
     : [];
 
+  const unitType = resolveQuestionType(firstLeaf.node, firstLeaf.ancestors).trim();
   const base: Base = {
     exam: m.exam.trim(),
     subject: m.subject.trim(),
     module: m.module.trim(),
     chapter: m.chapter.trim(),
     sectionName: UNIT_SECTION,
-    // Unit-level fallback type (topics cover every question page); use the first leaf's type.
-    questionType: resolveQuestionType(firstLeaf.node, firstLeaf.ancestors).trim(),
+    // Unit-level fallback type (topics cover every question page); use the first leaf's type. Omitted
+    // for a PYQ paper whose leaves carry no type — its questions are extracted generically.
+    ...(unitType ? { questionType: unitType } : {}),
     ...(m.source.trim() ? { source: m.source.trim() } : {}),
     ...pyqFields(m),
     ...paperFields(m),

@@ -101,7 +101,7 @@ export class IngestionService {
       path,
       kind: metadata.kind,
       sectionName: metadata.sectionName,
-      questionType: metadata.questionType,
+      questionType: metadata.questionType ?? null,
       // Persist the operator's per-chapter exam/subject onto the document so publish reads the
       // authoritative value from here, not the first-write-wins session backfill below.
       exam: metadata.exam,

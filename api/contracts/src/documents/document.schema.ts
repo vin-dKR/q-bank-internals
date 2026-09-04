@@ -41,7 +41,9 @@ export type PageRange = z.infer<typeof PageRangeSchema>;
  * exam/subject. Absent/false on ordinary segments and on legacy uploads.
  */
 export const TopicTypeConfigSchema = z.object({
-  questionType: QuestionTypeSchema,
+  // Optional: a PYQ paper's questions are of mixed types, so its segments leave this blank and are
+  // extracted generically. Every other source still sets it (enforced in the cut-upload assembly).
+  questionType: QuestionTypeSchema.optional(),
   pageRange: PageRangeSchema,
   answerPageRange: PageRangeSchema.optional(),
   solutionPageRange: PageRangeSchema.optional(),

@@ -46,7 +46,8 @@ type PageRange {
 // the uploaded question PDF. Fixed by the operator at cut time; consumed by extraction so the model
 // never picks or invents a type.
 type TopicTypeConfig {
-  questionType String
+  // Optional: a PYQ paper's questions are of mixed types, so its segments leave this blank.
+  questionType String?
   pageRange    PageRange
   // The same topic's spans in the sibling answer / solution PDFs (v2 assembled uploads), so the
   // extractor reads this topic's key from exactly its own pages instead of guessing by name/number.
@@ -85,6 +86,8 @@ type ChapterTopic {
   types       TopicTypeConfig[]
   sectionName String?
   topicName   String?
+  // Operator's per-node subject for this leaf → each question's subject (a PYQ paper spans subjects).
+  subject     String?
 }
 
 // One operator's Phase-1 upload run (e.g. a whole module). The durable, resumable unit: Phase 1
