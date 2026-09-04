@@ -6,7 +6,7 @@ import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { MatchTableEditor } from './match-table-editor.js';
 import { questionsApi } from '../api/questions.api.js';
 import { useUpdateQuestion } from '../hooks/use-questions.js';
-import { AttachImageButton } from './attach-image-button.js';
+import { CropImageButton } from './crop-image-button.js';
 import type { QuestionDraft } from '../hooks/use-question-drafts.js';
 
 /** A not-yet-saved crop region of this question: uploading (`saving`) or awaiting a manual retry. */
@@ -684,7 +684,15 @@ export function EditableQuestionCard({
           <EditableLatexValue value={draft.explanation} onChange={(v) => { set('explanation', v); }} multiline placeholder="Click to add explanation" />
           <div className="flex items-center justify-between">
             <span className={FIELD_LABEL}>Explanation images</span>
-            <AttachImageButton questionId={question.id} disabled={cropDisabled} onUploaded={attachExplanationImage} />
+            {/* Cropped from the solution page — hidden entirely for a unit with no solution PDF. */}
+            {solutionSource ? (
+              <CropImageButton
+                label="Crop from solution"
+                disabled={cropDisabled}
+                onRequestCrop={() => onRequestCrop(question.id, 'solution')}
+                onCropped={attachExplanationImage}
+              />
+            ) : null}
           </div>
           {question.explanationImages.length > 0 ? (
             <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(120px,1fr))]">

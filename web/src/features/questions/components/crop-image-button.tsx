@@ -2,12 +2,11 @@ import { type JSX, useState } from 'react';
 import { Button, IconScissors, Spinner } from '../../../shared/ui/index.js';
 
 /**
- * A field-agnostic "crop image from the page" affordance — the crop-pipeline counterpart of
- * {@link AttachImageButton}. Clicking it asks the workspace to arm a rubber-band crop (via
- * `onRequestCrop`, which resolves with the uploaded image URL once the operator draws a box, or
- * `null` if they cancel or it's superseded); a returned URL is handed to `onCropped`. Used for
- * fields that carry a figure cropped off a source page — the explanation (from the solution PDF)
- * and match-the-column entries (from the question PDF).
+ * A field-agnostic "crop image from the page" affordance for fields that carry a figure cropped off a
+ * source page — the explanation (from the solution PDF) and match-the-column entries (from the question
+ * PDF). Clicking it asks the workspace to arm a rubber-band crop (via `onRequestCrop`, which resolves
+ * with the uploaded image URL once the operator draws a box, or `null` if they cancel or it's
+ * superseded); a returned URL is handed to `onCropped`.
  */
 export function CropImageButton({
   label = 'Crop image',

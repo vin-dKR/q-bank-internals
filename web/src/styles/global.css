@@ -1088,8 +1088,28 @@
   .verify__source-scroll {
     @apply min-h-0 flex-1 overflow-auto p-3;
   }
+  /* The wrapper hugs the fitted image (fit-content, capped to the pane) so the crop overlay can sit
+     exactly over it; the image fills the wrapper. */
+  .verify__source-cropwrap {
+    @apply relative mx-auto block;
+    width: fit-content;
+    max-width: 100%;
+  }
   .verify__source-img {
-    @apply mx-auto max-w-full rounded-lg border border-line bg-white;
+    @apply block h-auto w-full rounded-lg border border-line bg-white;
+  }
+  .verify__source-cropoverlay {
+    @apply absolute inset-0 z-20 cursor-crosshair;
+  }
+  .verify__source-rubber {
+    @apply pointer-events-none absolute border-2 border-dashed border-brand;
+    background: color-mix(in srgb, var(--color-brand) 10%, transparent);
+  }
+  .verify__source-crophint {
+    @apply absolute left-1/2 top-2 z-30 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-full border border-line bg-surface px-3 py-1 text-[12px] text-ink-2 shadow-lg;
+  }
+  .verify__source-crophint kbd {
+    @apply rounded-md border border-line bg-surface-2 px-1.5 py-0.5 font-sans text-[11px] font-semibold text-ink-2;
   }
   /* Vertical tool rail on the left of the page, so the page itself owns the full frame height. */
   .verify__rail {
