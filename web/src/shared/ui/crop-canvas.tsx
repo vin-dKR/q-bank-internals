@@ -1,4 +1,5 @@
 import { type CSSProperties, type JSX, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { type BoxRect, DraggableBox } from './draggable-box.js';
 import { IconButton } from './icon-button.js';
 import { IconX, IconZoomIn, IconZoomOut } from './icons.js';
@@ -24,9 +25,15 @@ export type CanvasSize = {
 /** Smaller than this (display px) counts as a stray click, not a drawn region. */
 const MIN_DRAW_SIZE = 10;
 
-/** Hover magnifier: the lens diameter (px) and how far it magnifies the fitted page under the cursor. */
-const LENS_SIZE = 176;
-const LENS_ZOOM = 2.2;
+/**
+ * Hover magnifier (Amazon-style): how far it enlarges the fitted page, the biggest square side (px) the
+ * zoom panel is allowed to take, its smallest side, and the gap it keeps from the image. The panel is
+ * sized to the image height (capped to LENS_MAX) so it reads like a second, enlarged copy beside it.
+ */
+const LENS_ZOOM = 2.4;
+const LENS_MAX = 480;
+const LENS_MIN = 240;
+const LENS_GAP = 12;
 
 type CropCanvasProps = {
   imageSrc: string;
@@ -124,7 +131,8 @@ export function CropCanvas({
   const drawStart = useRef<{ x: number; y: number } | null>(null);
   const [rubber, setRubber] = useState<BoxRect | null>(null);
 
-  // --- Hover magnifier: a lens that follows the cursor over the page (off while drawing a crop) ---
+  // --- Hover magnifier: an Amazon-style zoom panel beside the page (off while drawing a crop) ---
+  // `lensPos` is the cursor in frame (display) pixels; the panel + on-image highlight derive from it.
   const [lensOn, setLensOn] = useState(true);
   const [lensPos, setLensPos] = useState<{ x: number; y: number } | null>(null);
 
@@ -185,6 +193,38 @@ export function CropCanvas({
 
   const frameStyle: CSSProperties =
     displayWidth > 0 && displayHeight > 0 ? { width: displayWidth, height: displayHeight } : {};
+
+  // Amazon-style hover zoom: a square highlight over the source region + a large panel showing it
+  // enlarged, floated to the right of the image (flipped left when the viewport can't hold it there).
+  // The panel is `position: fixed` and portalled to <body> so it escapes the canvas' `overflow: hidden`
+  // and can overlay whatever sits beside the page. Recomputed each hover render from the frame's rect.
+  const magnifier: { panel: CSSProperties; highlight: CSSProperties } | null = (() => {
+    if (!lensOn || !lensPos || draw || loading || displayWidth <= 0 || displayHeight <= 0) return null;
+    const frameEl = frameRef.current;
+    if (!frameEl) return null;
+    const rect = frameEl.getBoundingClientRect();
+    const side = Math.max(LENS_MIN, Math.min(LENS_MAX, Math.round(displayHeight)));
+    const win = side / LENS_ZOOM; // the source region (display px) the panel shows at LENS_ZOOM
+    const hx = Math.min(Math.max(lensPos.x - win / 2, 0), Math.max(displayWidth - win, 0));
+    const hy = Math.min(Math.max(lensPos.y - win / 2, 0), Math.max(displayHeight - win, 0));
+    const viewportW = document.documentElement.clientWidth;
+    const viewportH = document.documentElement.clientHeight;
+    const toRight = rect.right + LENS_GAP;
+    const left = toRight + side <= viewportW ? toRight : Math.max(LENS_GAP, rect.left - LENS_GAP - side);
+    const top = Math.min(Math.max(rect.top, LENS_GAP), Math.max(LENS_GAP, viewportH - side - LENS_GAP));
+    return {
+      panel: {
+        left,
+        top,
+        width: side,
+        height: side,
+        backgroundImage: `url("${imageSrc}")`,
+        backgroundSize: `${String(displayWidth * LENS_ZOOM)}px ${String(displayHeight * LENS_ZOOM)}px`,
+        backgroundPosition: `${String(-hx * LENS_ZOOM)}px ${String(-hy * LENS_ZOOM)}px`,
+      },
+      highlight: { left: hx, top: hy, width: win, height: win },
+    };
+  })();
 
   return (
     <div ref={containerRef} className={draw ? 'crop-canvas crop-canvas--draw' : 'crop-canvas'}>
@@ -253,23 +293,13 @@ export function CropCanvas({
             ) : null}
           </div>
         ) : null}
-        {/* Flipkart-style magnifier: a lens centred on the cursor showing the page under it enlarged,
-            crisp off the same page image already loaded. Suppressed while drawing a crop. */}
-        {lensOn && lensPos && !draw && !loading && displayWidth > 0 ? (
-          <div
-            className="crop-canvas__lens"
-            style={{
-              width: LENS_SIZE,
-              height: LENS_SIZE,
-              left: lensPos.x - LENS_SIZE / 2,
-              top: lensPos.y - LENS_SIZE / 2,
-              backgroundImage: `url("${imageSrc}")`,
-              backgroundSize: `${String(displayWidth * LENS_ZOOM)}px ${String(displayHeight * LENS_ZOOM)}px`,
-              backgroundPosition: `${String(LENS_SIZE / 2 - lensPos.x * LENS_ZOOM)}px ${String(LENS_SIZE / 2 - lensPos.y * LENS_ZOOM)}px`,
-            }}
-          />
-        ) : null}
+        {/* Amazon-style magnifier: a square marks the region under the cursor; the enlarged view of it
+            renders in a portalled panel beside the image (below). Suppressed while drawing a crop. */}
+        {magnifier ? <div className="crop-canvas__lens-area" style={magnifier.highlight} /> : null}
       </div>
+      {magnifier
+        ? createPortal(<div className="crop-canvas__zoom" style={magnifier.panel} />, document.body)
+        : null}
       {!draw && !loading ? (
         <button
           type="button"
