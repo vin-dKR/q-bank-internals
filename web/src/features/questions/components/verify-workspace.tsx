@@ -1561,6 +1561,11 @@ export function VerifyWorkspace({
             documentId={sources.solution.document.id}
             fileName={sources.solution.document.fileName}
             defaultPage={sources.solution.defaultPage}
+            crop={{
+              armed: cropRequest?.source === 'solution',
+              onCrop: (imageUrl, natural) => { void fulfilCrop(imageUrl, natural); },
+              onCancel: cancelCropRequest,
+            }}
           />
         ) : null}
       </div>
