@@ -22,6 +22,8 @@ export type NewQuestion = {
   questionType: string | null;
   sectionName: string | null;
   topic: string | null;
+  // Per-question subject stamped from the node's subject; null falls back to the document at publish.
+  subject: string | null;
   // Per-question PYQ provenance stamped from the segment toggle + what the model read on the page.
   isPyq: boolean;
   pyqExam: string | null;

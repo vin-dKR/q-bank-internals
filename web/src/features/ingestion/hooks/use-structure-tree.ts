@@ -28,6 +28,8 @@ export type StructureTreeController = {
   renameNode: (id: string, label: string) => void;
   setNodeLevel: (id: string, level: NodeLevel | null) => void;
   setQuestionType: (id: string, questionType: string) => void;
+  /** Set this leaf's subject (beside the question type); flows to each question's `subject`. */
+  setNodeSubject: (id: string, subject: string) => void;
   /** Toggle this segment's per-node PYQ flag (set on a leaf; drives per-question source exam/year). */
   setNodePyq: (id: string, pyq: boolean) => void;
   /** Insert a structural clone of a node (fresh ids, no bindings) as its next sibling. */
@@ -77,6 +79,10 @@ export function useStructureTree(): StructureTreeController {
     setNodes((prev) => updateNode(prev, id, (node) => ({ ...node, questionType })));
   }, []);
 
+  const setNodeSubject = useCallback((id: string, subject: string): void => {
+    setNodes((prev) => updateNode(prev, id, (node) => ({ ...node, subject })));
+  }, []);
+
   const setNodePyq = useCallback((id: string, pyq: boolean): void => {
     setNodes((prev) => updateNode(prev, id, (node) => ({ ...node, pyq })));
   }, []);
@@ -122,6 +128,7 @@ export function useStructureTree(): StructureTreeController {
     renameNode,
     setNodeLevel,
     setQuestionType,
+    setNodeSubject,
     setNodePyq,
     duplicateNode,
     removeNode,

@@ -131,6 +131,9 @@ export const QuestionSchema = z.object({
   questionType: z.string().nullable(),
   sectionName: z.string().nullable(),
   topic: z.string().nullable(),
+  // Per-question subject, set per node in the structure tree — for a paper that spans subjects (a PYQ
+  // paper) each question publishes under its own subject. Null falls back to the document's subject.
+  subject: z.string().nullable(),
   // Marked on the Verify screen to distinguish a question needing later attention. Carried through to
   // the published bank row so a flagged question stays findable in the Questions browse.
   flagged: z.boolean(),

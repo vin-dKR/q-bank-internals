@@ -384,7 +384,11 @@ export function TreeIngestPage(): JSX.Element {
         for (const key of Object.keys(paper) as (keyof typeof paper)[]) {
           if (paper[key].trim()) merged[key] = paper[key].trim();
         }
-        tree.setMetadata({ paper: merged });
+        tree.setMetadata({
+          paper: merged,
+          // The paper's exam name also fills the document's main exam (a PYQ paper files under it).
+          ...(merged.pyqExamName.trim() ? { exam: merged.pyqExamName.trim() } : {}),
+        });
         success('Paper details filled', 'Review the fields and correct anything the reader missed.');
       } catch (err) {
         toastError('Couldn’t read the paper header', errorMessage(err));

@@ -54,6 +54,7 @@ function cloneStructure(node: StructureNode): StructureNode {
     label: node.label,
     level: node.level,
     ...(node.questionType !== undefined ? { questionType: node.questionType } : {}),
+    ...(node.subject !== undefined ? { subject: node.subject } : {}),
     ...(node.pyq !== undefined ? { pyq: node.pyq } : {}),
     children: node.children.map(cloneStructure),
   };
@@ -121,6 +122,16 @@ export function resolveQuestionType(node: StructureNode, ancestors: StructureNod
   for (let i = chain.length - 1; i >= 0; i -= 1) {
     const qt = chain[i]?.questionType?.trim();
     if (qt) return qt;
+  }
+  return '';
+}
+
+/** The subject a leaf inherits: its own, else the nearest ancestor that sets one (else empty). */
+export function resolveSubject(node: StructureNode, ancestors: StructureNode[]): string {
+  const chain = [...ancestors, node];
+  for (let i = chain.length - 1; i >= 0; i -= 1) {
+    const subject = chain[i]?.subject?.trim();
+    if (subject) return subject;
   }
   return '';
 }

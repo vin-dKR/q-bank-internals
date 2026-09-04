@@ -134,8 +134,6 @@ model Document {
   answerLayout  String          @default("separate")
   // Question provenance chosen at cut time: pyq / module / textbook (open string). Null on legacy docs.
   source        String?
-  // Free-text note from upload (a PYQ paper's subject list, say). Null on legacy docs / non-PYQ uploads.
-  note          String?
   pageRange     PageRange?
   // Missing on pre-topic documents; Prisma reads an absent composite list as [] (config absent).
   topics        ChapterTopic[]
@@ -199,6 +197,9 @@ model Question {
   questionType    String?
   sectionName     String?
   topic           String?
+  // Per-question subject (a PYQ paper spans subjects), set per node in the structure tree. Null on
+  // ordinary questions and legacy rows — publish falls back to the document's subject.
+  subject         String?
   // Marked on the Verify screen to flag a question for later attention; carried to the bank on publish.
   flagged         Boolean          @default(false)
   // Per-question PYQ provenance the model read off the page when this question's segment is PYQ: the

@@ -113,7 +113,6 @@ export class IngestionService {
       paper: metadata.paper ?? null,
       answerLayout: metadata.answerLayout ?? 'separate',
       source: metadata.source ?? null,
-      note: metadata.note ?? null,
       pageRange: null,
       topics: metadata.topics ?? [],
     };

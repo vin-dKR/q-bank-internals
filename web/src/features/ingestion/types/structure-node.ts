@@ -53,6 +53,12 @@ export type StructureNode = {
   /** The question type for this leaf's questions. Set only on a leaf (never on a parent node). */
   questionType?: string;
   /**
+   * The subject for this leaf's questions — set on a leaf beside the question type. A PYQ paper spans
+   * subjects, so each section/leaf can carry its own; it flows to `question.subject` at extraction and
+   * to the published bank row. Inherited from the nearest ancestor that sets one, like `questionType`.
+   */
+  subject?: string;
+  /**
    * Operator's per-node previous-year-questions toggle. Set on a leaf (the segment that binds page
    * ranges); flows to the assembled topic's `TopicTypeConfig.pyq` so extraction reads each question's
    * source exam + year off the page. Undefined/false means an ordinary segment.

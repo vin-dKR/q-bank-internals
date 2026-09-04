@@ -101,6 +101,7 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
       questionType: binding?.questionType ?? document.questionType,
       sectionName: document.sectionName ?? document.path.section,
       topic: binding?.topicName ?? null,
+      subject: binding?.subject ?? null,
       ...pyq,
       sourceRegion: { page: draft.sourcePage, bbox: [0, 0, 1, 1] },
     };
@@ -125,6 +126,7 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
     questionType: binding?.questionType ?? document.questionType,
     sectionName: binding?.sectionName ?? document.sectionName ?? document.path.section,
     topic: binding?.topicName ?? null,
+    subject: binding?.subject ?? null,
     ...pyq,
     sourceRegion: { page: draft.sourcePage, bbox: [0, 0, 1, 1] },
   };

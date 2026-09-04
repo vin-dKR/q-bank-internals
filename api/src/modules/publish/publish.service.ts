@@ -128,9 +128,10 @@ function toBankQuestion(question: Question, index: number, document: Document): 
     question_type: question.questionType ?? document.questionType ?? null,
     topic: question.topic,
     // Authoritative exam/subject: the operator's per-chapter pick on the document (not the session's
-    // first-write-wins backfill), so a Biology/NEET chapter never publishes as Physics/JEE.
+    // first-write-wins backfill), so a Biology/NEET chapter never publishes as Physics/JEE. Subject is
+    // sourced per-question first (a PYQ paper spans subjects — the node's subject wins), then the document.
     exam_name: document.exam,
-    subject: document.subject,
+    subject: question.subject ?? document.subject,
     // The module lives on the ingest path; stamping it onto the bank row is what lets the Questions
     // Module filter narrow the published list (the bank had no module column before).
     module: question.path.module,

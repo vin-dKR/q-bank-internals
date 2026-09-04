@@ -8,7 +8,7 @@ import {
 } from '@ingest/contracts';
 import type { NodeLevel, StructureNode, StructureTree } from '../types/structure-node.js';
 import { appendPdf } from './merge-pdfs.js';
-import { leaves, resolveQuestionType } from './structure-tree.js';
+import { leaves, resolveQuestionType, resolveSubject } from './structure-tree.js';
 
 /** One unit per chapter, so its section name is a constant — the per-section detail lives in topics. */
 const UNIT_SECTION = 'All sections';
@@ -118,6 +118,7 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
         // label → bank topic. Part contributes only the question type and is never published.
         const sectionName = labelAtLevel(leaf, 'section');
         const topicName = labelAtLevel(leaf, 'topic');
+        const subject = resolveSubject(leaf.node, leaf.ancestors);
         return {
           name: pathLabel(leaf) || 'Section',
           types: [
@@ -132,6 +133,7 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
           ],
           ...(sectionName ? { sectionName } : {}),
           ...(topicName ? { topicName } : {}),
+          ...(subject ? { subject } : {}),
         };
       })
     : [];
@@ -145,7 +147,6 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
     // Unit-level fallback type (topics cover every question page); use the first leaf's type.
     questionType: resolveQuestionType(firstLeaf.node, firstLeaf.ancestors).trim(),
     ...(m.source.trim() ? { source: m.source.trim() } : {}),
-    ...(m.note.trim() ? { note: m.note.trim() } : {}),
     ...pyqFields(m),
     ...paperFields(m),
   };

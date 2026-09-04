@@ -85,7 +85,6 @@ export class DocumentsService {
       paper: input.paper ?? null,
       answerLayout: input.answerLayout ?? 'separate',
       source: input.source ?? null,
-      note: input.note ?? null,
       pageRange: input.pageRange ?? null,
       topics: input.topics ?? [],
     });
