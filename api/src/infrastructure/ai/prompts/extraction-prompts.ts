@@ -99,7 +99,9 @@ export function questionPrompt(
   const binding = topicBindingForPage(document.topics, pageNumber);
   const questionType = binding?.questionType ?? document.questionType;
   const typeRule = questionType ? TYPE_RULES[questionType] : undefined;
-  const bindingNote = binding
+  // Only assert a fixed type when the operator actually set one — a PYQ paper's questions are of mixed
+  // types, so its segments leave the type blank and are extracted generically.
+  const bindingNote = binding?.questionType
     ? `This page belongs to the topic "${binding.matchKey}" and its questions are of the fixed type "${binding.questionType}", chosen by the operator. Extract the questions exactly as printed for that type — do NOT re-classify them or invent a different type.`
     : '';
   return [

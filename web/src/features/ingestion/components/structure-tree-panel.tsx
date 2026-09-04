@@ -418,18 +418,21 @@ function TreeNodeRow({ node, depth, controller, vocabulary, onBindPages, binding
       {!isCollapsed && showQuestionType ? (
         <div className="mt-2 flex flex-col gap-2">
           <div className="flex items-center gap-2">
-            <span className="w-[92px] flex-none text-[12px] font-medium text-ink-3">Question type</span>
+            <span className="w-[104px] flex-none text-[12px] font-medium text-ink-3">
+              {nodePyq ? 'Type (optional)' : 'Question type'}
+            </span>
             <div className="min-w-0 flex-1">
+              {/* Optional for a PYQ segment — its questions are of mixed types, extracted generically. */}
               <Combobox
                 value={node.questionType ?? ''}
                 options={vocabulary.questionTypes}
-                placeholder="e.g. single_correct"
+                placeholder={nodePyq ? 'optional — leave blank for mixed types' : 'e.g. single_correct'}
                 onChange={(value) => { controller.setQuestionType(node.id, value); }}
               />
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="w-[92px] flex-none text-[12px] font-medium text-ink-3">Subject</span>
+            <span className="w-[104px] flex-none text-[12px] font-medium text-ink-3">Subject</span>
             <div className="min-w-0 flex-1">
               {/* All subjects, unfiltered by exam — a PYQ paper's sections span subjects. */}
               <Combobox

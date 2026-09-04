@@ -31,7 +31,8 @@ export const ChapterUploadMetadataSchema = ChapterPathSchema.extend({
   chapter: z.string(),
   sessionId: z.string().min(1),
   sectionName: z.string().min(1),
-  questionType: QuestionTypeSchema,
+  // Unit-level fallback type; optional because a PYQ paper's questions are of mixed types.
+  questionType: QuestionTypeSchema.optional(),
   kind: ChapterKindSchema,
   /** Optional provenance of the chapter's questions: pyq / module / textbook (open string). */
   source: SourceSchema.optional(),

@@ -17,16 +17,18 @@ import { type PaperMetadataRow, toContractPaper, toPrismaPaper } from './paper-m
 
 type PageRangeRow = { from: number; to: number };
 type TopicTypeRow = {
-  questionType: string;
+  questionType?: string | null;
   pageRange: PageRangeRow;
   answerPageRange?: PageRangeRow | null;
   solutionPageRange?: PageRangeRow | null;
+  pyq?: boolean | null;
 };
 type TopicRow = {
   name: string;
   types: TopicTypeRow[];
   sectionName?: string | null;
   topicName?: string | null;
+  subject?: string | null;
 };
 
 // Prisma's row shape for a Document, narrowed to what we map. Kept local so the mapper is the one
@@ -65,13 +67,15 @@ function toContractTopics(rows: TopicRow[]): ChapterTopic[] {
   return rows.map((topic) => ({
     name: topic.name,
     types: topic.types.map((block) => ({
-      questionType: block.questionType,
+      ...(block.questionType ? { questionType: block.questionType } : {}),
       pageRange: block.pageRange,
       ...(block.answerPageRange ? { answerPageRange: block.answerPageRange } : {}),
       ...(block.solutionPageRange ? { solutionPageRange: block.solutionPageRange } : {}),
+      ...(block.pyq ? { pyq: block.pyq } : {}),
     })),
     ...(topic.sectionName ? { sectionName: topic.sectionName } : {}),
     ...(topic.topicName ? { topicName: topic.topicName } : {}),
+    ...(topic.subject ? { subject: topic.subject } : {}),
   }));
 }
 
@@ -80,13 +84,15 @@ function toPrismaTopics(topics: ChapterTopic[]): TopicRow[] {
   return topics.map((topic) => ({
     name: topic.name,
     types: topic.types.map((block) => ({
-      questionType: block.questionType,
+      questionType: block.questionType ?? null,
       pageRange: block.pageRange,
       answerPageRange: block.answerPageRange ?? null,
       solutionPageRange: block.solutionPageRange ?? null,
+      pyq: block.pyq ?? null,
     })),
     sectionName: topic.sectionName ?? null,
     topicName: topic.topicName ?? null,
+    subject: topic.subject ?? null,
   }));
 }
 
