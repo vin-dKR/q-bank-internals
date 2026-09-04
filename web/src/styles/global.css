@@ -1187,10 +1187,18 @@
     @apply pointer-events-none absolute border-2 border-dashed border-brand;
     background: color-mix(in srgb, var(--color-brand) 10%, transparent);
   }
-  /* Hover magnifier: a circular lens that follows the cursor, showing the page magnified around it. */
-  .crop-canvas__lens {
-    @apply pointer-events-none absolute z-30 rounded-full border-2 border-line-strong bg-surface shadow-xl;
+  /* Amazon-style hover magnifier: a square highlights the region under the cursor, and a large panel
+     (portalled to <body>, positioned inline) shows that region enlarged beside the image. */
+  .crop-canvas__lens-area {
+    @apply pointer-events-none absolute z-30 rounded-[2px];
+    border: 2px solid var(--color-brand);
+    background: color-mix(in srgb, var(--color-brand) 14%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-surface) 70%, transparent);
+  }
+  .crop-canvas__zoom {
+    @apply pointer-events-none fixed z-50 overflow-hidden rounded-lg border border-line-strong bg-surface;
     background-repeat: no-repeat;
+    box-shadow: 0 12px 40px rgb(0 0 0 / 0.28);
   }
   .crop-canvas__lens-toggle {
     @apply absolute right-2 top-2 z-40;
