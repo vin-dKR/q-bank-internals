@@ -989,8 +989,8 @@ export function VerifyWorkspace({
     }
     grabbed.current = null;
     if (!moved) return;
-    // Saved boxes re-crop on release; a box whose save failed (or is mid-flight) retries the same way.
-    // Unconfirmed AI suggestions stay unsaved until Confirm.
+    // Saved boxes re-crop on release; a box whose save failed (or is mid-flight) retries the same way
+    // — this now covers AI boxes too, since they auto-save on detection instead of waiting for Confirm.
     if (savedUrlsRef.current.has(id) || failed.has(id) || saveRuns.current.has(id)) {
       void requestSave(id);
     }
@@ -1053,7 +1053,9 @@ export function VerifyWorkspace({
     applySavedUrls(() => new Map(specs.map((spec) => [spec.id, spec.url])));
   }, [page, size, restoreTick, applyBoxes, applySavedUrls]);
 
-  // --- AI detection: mark the current page's figures for review, never auto-save. ---
+  // --- AI detection: detect the current page's figures and attach each one immediately. ---
+  // Same contract as the all-pages run — no confirm step; every suggestion is cropped, uploaded and
+  // attached the moment it is placed, then stays as an editable (draggable/resizable) box.
   const detectCurrentPage = useCallback(async (): Promise<void> => {
     if (!size || size.displayWidth === 0) {
       setAiError('The page is still loading — try again in a moment.');
@@ -1089,9 +1091,13 @@ export function VerifyWorkspace({
           height: h * sy,
         });
       });
-      // Replace any earlier unconfirmed AI suggestions on this page; confirmed + manual boxes stay.
+      // Replace any earlier unsaved AI suggestions on this page; saved + manual boxes stay.
       commit((prev) => [...prev.filter((b) => b.source !== 'ai' || savedUrlsRef.current.has(b.id)), ...placed]);
       setAiResult({ detected: figures.length, placed: placed.length, skipped });
+      // Auto-save every fresh suggestion right away — no confirm step, exactly like the all-pages run.
+      // `commit` updated boxesRef synchronously above, so each save crops the box just placed; a box
+      // whose save fails stays on the page and can be retried by nudging it (or from the retry list).
+      for (const box of placed) void requestSave(box.id);
     } catch (caught) {
       setAiError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -1293,18 +1299,22 @@ export function VerifyWorkspace({
     }
   }, [autoRun, size, questions.isSuccess, questions.data, detectCurrentPage]);
 
+  // AI boxes auto-save the moment they are detected (see detectCurrentPage). `pendingAi` is any AI box
+  // not yet saved — normally just briefly, while its save is in flight; `aiRetry` narrows that to ones
+  // whose save actually FAILED, which is all the review panel surfaces now (a retry, not a confirm).
   const pendingAi = boxes.filter((b) => b.source === 'ai' && !savedUrls.has(b.id));
-  const confirmBox = (boxId: string): void => { void requestSave(boxId); };
-  const confirmAll = async (): Promise<void> => {
+  const aiRetry = pendingAi.filter((b) => failed.has(b.id));
+  const retryBox = (boxId: string): void => { void requestSave(boxId); };
+  const retryAll = async (): Promise<void> => {
     if (runActive) return;
     // Saves of the same question are serialised on its write queue and each one re-reads the fresh
     // record, so several crops into one question can never clobber one another's option/stem image.
-    for (const box of pendingAi) {
+    for (const box of aiRetry) {
       await requestSave(box.id);
     }
   };
-  const discardAll = (): void => {
-    commit((prev) => prev.filter((b) => b.source !== 'ai' || savedUrlsRef.current.has(b.id)));
+  const dismissFailed = (): void => {
+    commit((prev) => prev.filter((b) => b.source !== 'ai' || savedUrlsRef.current.has(b.id) || !failed.has(b.id)));
   };
 
   const canvasBoxes: CanvasBox[] = boxes.map((b) => ({
@@ -1416,7 +1426,8 @@ export function VerifyWorkspace({
             <b>Add region</b> on a question, then draw — the crop uploads and attaches by itself.
             <b> Drag</b> a box or its <b>handles</b> to adjust; a saved (green) box re-saves on
             release. <b>Right-click</b> removes a box — a saved box&rsquo;s image is detached too.
-            <b> Auto-detect</b> only marks AI suggestions; nothing saves until you Confirm.
+            <b> Auto-detect</b> finds figures on this page and attaches each one automatically —
+            adjust or remove any box afterwards, just like a manual crop.
             <b> Detect all pages</b> detects and attaches figures across the whole document in one
             run, skipping targets that already have an image — review the cards afterwards.
           </ToolbarHelp>
@@ -1528,25 +1539,25 @@ export function VerifyWorkspace({
           {magnifierBox && size && size.displayWidth > 0 ? (
             <CropMagnifier imageSrc={imageSrc} box={magnifierBox} size={size} />
           ) : null}
-          {/* Crop confirmation stays pinned to the top of the panel — keep or remove each AI crop
-              without scrolling to find it. Manual crops attach + save on draw and need no review. */}
-          {pendingAi.length > 0 ? (
+          {/* AI crops auto-save; this panel only appears for ones whose save FAILED, pinned to the top
+              so each can be retried or dismissed without hunting for it on the page. */}
+          {aiRetry.length > 0 ? (
             <div className="card verify__ai-review">
               <div className="card__head">
                 <h2 className="card__title">
-                  Review {pendingAi.length} AI crop{pendingAi.length === 1 ? '' : 's'}
+                  {aiRetry.length} AI crop{aiRetry.length === 1 ? '' : 's'} failed to save
                 </h2>
                 <div className="row">
-                  <Button size="xs" disabled={runActive} onClick={() => { void confirmAll(); }}>
-                    <IconCheck /> Confirm all
+                  <Button size="xs" disabled={runActive} onClick={() => { void retryAll(); }}>
+                    <IconCheck /> Retry all
                   </Button>
-                  <Button variant="ghost" size="xs" onClick={discardAll}>
-                    <IconX /> Discard all
+                  <Button variant="ghost" size="xs" onClick={dismissFailed}>
+                    <IconX /> Dismiss all
                   </Button>
                 </div>
               </div>
               <ul className="ai-review__list verify__ai-review-list">
-                {pendingAi.map((b) => {
+                {aiRetry.map((b) => {
                   const matched = questionById.get(b.questionId);
                   const stemLine = matched ? firstLine(matched.stem) : null;
                   return (
@@ -1569,12 +1580,12 @@ export function VerifyWorkspace({
                         ) : null}
                       </button>
                       <div className="row">
-                        <Button size="xs" disabled={busy.has(b.id) || runActive} onClick={() => { confirmBox(b.id); }}>
-                          {busy.has(b.id) ? 'Saving…' : <><IconCheck /> Confirm</>}
+                        <Button size="xs" disabled={busy.has(b.id) || runActive} onClick={() => { retryBox(b.id); }}>
+                          {busy.has(b.id) ? 'Saving…' : <><IconCheck /> Retry</>}
                         </Button>
                         <IconButton
                           icon={<IconX />}
-                          label="Discard this suggestion"
+                          label="Discard this crop"
                           size="sm"
                           onClick={() => { deleteBox(b.id); }}
                         />
