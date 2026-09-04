@@ -1457,8 +1457,11 @@
 }
 .reflow-crop__remove {
   position: absolute;
-  top: -9px;
-  right: -9px;
+  /* Lifted well above the box's top edge so it clears the resize grips (which render on top of it at
+     the corners) — otherwise the top-right grip sits over the × and swallows the click. */
+  top: -26px;
+  right: -6px;
+  z-index: 1;
   width: 18px;
   height: 18px;
   line-height: 16px;
