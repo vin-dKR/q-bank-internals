@@ -128,20 +128,21 @@ export function StructureTreePanel({
       <section className="flex flex-col gap-2">
         <h3 className="m-0 text-[13px] font-semibold uppercase tracking-wide text-ink-3">Chapter</h3>
         <MetaField label="Source" value={tree.metadata.source} options={vocabulary.sources} placeholder="pyq / module / textbook" onChange={(v) => { controller.setMetadata({ source: v }); }} />
-        <div className="grid grid-cols-2 gap-2">
-          <MetaField label="Exam" value={tree.metadata.exam} options={vocabulary.exams} placeholder="e.g. JEE" onChange={(v) => { controller.setMetadata(cascadeMetadata('exam', v, tree.metadata, vocabulary)); }} />
-          {isPyq ? (
-            // A PYQ paper spans subjects, chapters, and no single module, so it files under the exam
-            // alone. Instead of subject/module/chapter, capture the subject(s) as a free-text note.
-            <MetaField label="Subjects (note)" value={tree.metadata.note} options={[]} placeholder="e.g. Physics, Chemistry — to sort by subject later" onChange={(v) => { controller.setMetadata({ note: v }); }} />
-          ) : (
-            <>
-              <MetaField label="Subject" value={tree.metadata.subject} options={vocabulary.subjectsFor(tree.metadata.exam)} placeholder="e.g. Physics" onChange={(v) => { controller.setMetadata(cascadeMetadata('subject', v, tree.metadata, vocabulary)); }} />
-              <MetaField label="Module" value={tree.metadata.module} options={vocabulary.modulesFor(tree.metadata.subject)} placeholder="e.g. Resonance" onChange={(v) => { controller.setMetadata(cascadeMetadata('module', v, tree.metadata, vocabulary)); }} />
-              <MetaField label="Chapter" value={tree.metadata.chapter} options={vocabulary.chaptersFor(tree.metadata.module)} placeholder="e.g. Gravitation" onChange={(v) => { controller.setMetadata(cascadeMetadata('chapter', v, tree.metadata, vocabulary)); }} />
-            </>
-          )}
-        </div>
+        {isPyq ? (
+          // A PYQ paper spans subjects, chapters, and no single module. Its exam is set once in Paper
+          // details below (it fills the exam name), and each section's subject is set on its node.
+          <p className="text-[13px] text-ink-3">
+            Previous-year paper: set the <strong>exam</strong> in Paper details below, and each section&rsquo;s
+            <strong> subject</strong> on its node beside the question type.
+          </p>
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            <MetaField label="Exam" value={tree.metadata.exam} options={vocabulary.exams} placeholder="e.g. JEE" onChange={(v) => { controller.setMetadata(cascadeMetadata('exam', v, tree.metadata, vocabulary)); }} />
+            <MetaField label="Subject" value={tree.metadata.subject} options={vocabulary.subjectsFor(tree.metadata.exam)} placeholder="e.g. Physics" onChange={(v) => { controller.setMetadata(cascadeMetadata('subject', v, tree.metadata, vocabulary)); }} />
+            <MetaField label="Module" value={tree.metadata.module} options={vocabulary.modulesFor(tree.metadata.subject)} placeholder="e.g. Resonance" onChange={(v) => { controller.setMetadata(cascadeMetadata('module', v, tree.metadata, vocabulary)); }} />
+            <MetaField label="Chapter" value={tree.metadata.chapter} options={vocabulary.chaptersFor(tree.metadata.module)} placeholder="e.g. Gravitation" onChange={(v) => { controller.setMetadata(cascadeMetadata('chapter', v, tree.metadata, vocabulary)); }} />
+          </div>
+        )}
       </section>
 
       <AnswerLayoutSection controller={controller} />
@@ -149,6 +150,7 @@ export function StructureTreePanel({
       {isPyq ? (
         <PaperDetailsSection
           controller={controller}
+          vocabulary={vocabulary}
           onAiFillPaper={onAiFillPaper}
           aiFillingPaper={aiFillingPaper}
           canAiFill={maxPages > 0}
@@ -273,6 +275,7 @@ function AnswerLayoutSection({ controller }: { controller: StructureTreeControll
 
 type PaperDetailsSectionProps = {
   controller: StructureTreeController;
+  vocabulary: ChapterVocabulary;
   onAiFillPaper: () => void;
   aiFillingPaper: boolean;
   /** Whether a working document with pages is loaded — the AI-fill needs a page to read. */
@@ -285,11 +288,16 @@ type PaperDetailsSectionProps = {
  * the paper's header page and hand-editable; the layout toggle decides whether extraction expects a
  * separate answer key or reads each question's inline answer (and whether Verify shows an answer pane).
  */
-function PaperDetailsSection({ controller, onAiFillPaper, aiFillingPaper, canAiFill }: PaperDetailsSectionProps): JSX.Element {
+function PaperDetailsSection({ controller, vocabulary, onAiFillPaper, aiFillingPaper, canAiFill }: PaperDetailsSectionProps): JSX.Element {
   const { metadata } = controller.tree;
   const [collapsed, setCollapsed] = useState(false);
   const setPaperField = (key: PaperMetadataKey, value: string): void => {
-    controller.setMetadata({ paper: { ...metadata.paper, [key]: value } });
+    controller.setMetadata({
+      paper: { ...metadata.paper, [key]: value },
+      // The exam name here is the paper's exam — it also fills the document's main exam, since a PYQ
+      // paper files under it (there is no separate Exam field in the chapter form for PYQ).
+      ...(key === 'pyqExamName' ? { exam: value } : {}),
+    });
   };
 
   return (
@@ -321,12 +329,22 @@ function PaperDetailsSection({ controller, onAiFillPaper, aiFillingPaper, canAiF
             {PAPER_METADATA_FIELDS.map(({ key, label, placeholder }) => (
               <label key={key} className="field">
                 <span>{label}</span>
-                <input
-                  className="w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 text-sm text-ink outline-none placeholder:text-ink-3 focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-brand/25"
-                  value={metadata.paper[key]}
-                  placeholder={`e.g. ${placeholder}`}
-                  onChange={(event) => { setPaperField(key, event.target.value); }}
-                />
+                {key === 'pyqExamName' ? (
+                  // The exam name is a dropdown of known exams (it also sets the document's main exam).
+                  <Combobox
+                    value={metadata.paper[key]}
+                    options={vocabulary.exams}
+                    placeholder={`e.g. ${placeholder}`}
+                    onChange={(value) => { setPaperField(key, value); }}
+                  />
+                ) : (
+                  <input
+                    className="w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 text-sm text-ink outline-none placeholder:text-ink-3 focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-brand/25"
+                    value={metadata.paper[key]}
+                    placeholder={`e.g. ${placeholder}`}
+                    onChange={(event) => { setPaperField(key, event.target.value); }}
+                  />
+                )}
               </label>
             ))}
           </div>
@@ -398,15 +416,29 @@ function TreeNodeRow({ node, depth, controller, vocabulary, onBindPages, binding
       </div>
 
       {!isCollapsed && showQuestionType ? (
-        <div className="mt-2 flex items-center gap-2">
-          <span className="text-[12px] font-medium text-ink-3">Question type</span>
-          <div className="min-w-0 flex-1">
-            <Combobox
-              value={node.questionType ?? ''}
-              options={vocabulary.questionTypes}
-              placeholder="e.g. single_correct"
-              onChange={(value) => { controller.setQuestionType(node.id, value); }}
-            />
+        <div className="mt-2 flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <span className="w-[92px] flex-none text-[12px] font-medium text-ink-3">Question type</span>
+            <div className="min-w-0 flex-1">
+              <Combobox
+                value={node.questionType ?? ''}
+                options={vocabulary.questionTypes}
+                placeholder="e.g. single_correct"
+                onChange={(value) => { controller.setQuestionType(node.id, value); }}
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-[92px] flex-none text-[12px] font-medium text-ink-3">Subject</span>
+            <div className="min-w-0 flex-1">
+              {/* All subjects, unfiltered by exam — a PYQ paper's sections span subjects. */}
+              <Combobox
+                value={node.subject ?? ''}
+                options={vocabulary.subjects}
+                placeholder="e.g. Physics"
+                onChange={(value) => { controller.setNodeSubject(node.id, value); }}
+              />
+            </div>
           </div>
         </div>
       ) : null}

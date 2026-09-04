@@ -34,6 +34,7 @@ type QuestionRow = {
   questionType: string | null;
   sectionName: string | null;
   topic: string | null;
+  subject: string | null;
   flagged: boolean;
   isPyq: boolean;
   pyqExam: string | null;
@@ -80,6 +81,7 @@ function toQuestion(row: QuestionRow): Question {
     questionType: row.questionType,
     sectionName: row.sectionName,
     topic: row.topic,
+    subject: row.subject,
     flagged: row.flagged,
     isPyq: row.isPyq,
     pyqExam: row.pyqExam,
@@ -115,6 +117,7 @@ export class PrismaQuestionRepository implements QuestionRepository {
         questionType: question.questionType,
         sectionName: question.sectionName,
         topic: question.topic,
+        subject: question.subject,
         isPyq: question.isPyq,
         pyqExam: question.pyqExam,
         pyqYear: question.pyqYear,

@@ -28,6 +28,7 @@ export class InMemoryQuestionRepository implements QuestionRepository {
       questionType: question.questionType,
       sectionName: question.sectionName,
       topic: question.topic,
+      subject: question.subject,
       flagged: false,
       isPyq: question.isPyq,
       pyqExam: question.pyqExam,

@@ -23,6 +23,8 @@ export type ConfigNode = {
   label: string;
   level: NodeLevel | null;
   questionType?: string;
+  /** The operator's per-node subject, exported so a reused chapter config keeps its subject tags. */
+  subject?: string;
   /** The operator's per-node PYQ toggle, exported so a reused chapter config keeps its PYQ segments. */
   pyq?: boolean;
   pages?: ConfigPages;
@@ -52,7 +54,6 @@ const METADATA_KEYS: readonly Exclude<keyof ChapterMetadataDraft, 'pyq' | 'paper
   'subject',
   'module',
   'chapter',
-  'note',
   'sectionName',
   'questionType',
   'pyqExam',
@@ -78,6 +79,7 @@ function toConfigNode(node: StructureNode): ConfigNode {
     label: node.label,
     level: node.level,
     ...(node.questionType !== undefined ? { questionType: node.questionType } : {}),
+    ...(node.subject !== undefined ? { subject: node.subject } : {}),
     ...(node.pyq !== undefined ? { pyq: node.pyq } : {}),
     ...(pages !== undefined ? { pages } : {}),
     children: node.children.map(toConfigNode),
@@ -100,6 +102,7 @@ export function nodesFromConfig(nodes: ConfigNode[]): StructureNode[] {
     label: node.label,
     level: node.level,
     ...(node.questionType !== undefined ? { questionType: node.questionType } : {}),
+    ...(node.subject !== undefined ? { subject: node.subject } : {}),
     ...(node.pyq !== undefined ? { pyq: node.pyq } : {}),
     children: nodesFromConfig(node.children),
   }));
@@ -148,6 +151,7 @@ function parseNode(value: unknown): ConfigNode | null {
     label: value.label,
     level: parseLevel(value.level),
     ...(typeof value.questionType === 'string' ? { questionType: value.questionType } : {}),
+    ...(typeof value.subject === 'string' ? { subject: value.subject } : {}),
     ...(typeof value.pyq === 'boolean' ? { pyq: value.pyq } : {}),
     ...(pages !== undefined && children.length === 0 ? { pages } : {}),
     children,
