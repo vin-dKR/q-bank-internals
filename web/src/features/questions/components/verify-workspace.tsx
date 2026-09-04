@@ -88,6 +88,19 @@ type Box = BoxRect & {
 /** The question/option target a rubber-band draw on the canvas will crop into. */
 type DrawTarget = { questionId: string; type: 'question' | 'option'; optionIndex: number };
 
+/**
+ * A one-shot crop into a non-canvas field (an explanation image, a match-the-column entry image).
+ * Unlike a {@link DrawTarget}, this never becomes an editable box: the workspace arms a rubber-band on
+ * the chosen source page, crops + uploads it, and resolves `resolve` with the image URL (or `null` when
+ * the operator cancels / it's superseded) so the requesting card can drop the URL into its own field.
+ */
+type CropRequest = {
+  questionId: string;
+  /** Which page the crop is taken from: the question page (main canvas) or the sibling solution page. */
+  source: 'question' | 'solution';
+  resolve: (url: string | null) => void;
+};
+
 /** One in-flight auto-save per box; `again` re-runs it with the latest rect once the current pass ends. */
 type SaveRun = { again: boolean; done: Promise<void> };
 
@@ -447,6 +460,10 @@ export function VerifyWorkspace({
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [drawTarget, setDrawTarget] = useState<DrawTarget | null>(null);
+  // A pending one-shot field crop (explanation / match image); mirrored in a ref so the async draw +
+  // upload path reads the live request without stale closures. Only one is armed at a time.
+  const [cropRequest, setCropRequest] = useState<CropRequest | null>(null);
+  const cropRequestRef = useRef<CropRequest | null>(null);
   /** boxId → the image URL its last successful save attached to the question. */
   const [savedUrls, setSavedUrls] = useState<ReadonlyMap<string, string>>(new Map());
   /** Boxes whose last auto-save failed — the card offers a manual Save retry for these. */
@@ -925,6 +942,7 @@ export function VerifyWorkspace({
   // --- Draw-to-save (manual flow): arm a target from its card, rubber-band draw, auto-save. ---
   const toggleDrawTarget = (question: Question, type: 'question' | 'option', optionIndex = 0): void => {
     replaceUrl.current = null;
+    cancelCropRequest(); // a box draw and a field crop can't be armed together
     setDrawTarget((prev) =>
       prev && prev.questionId === question.id && prev.type === type && prev.optionIndex === optionIndex
         ? null
@@ -973,6 +991,78 @@ export function VerifyWorkspace({
     window.document.addEventListener('keydown', onKey);
     return () => { window.document.removeEventListener('keydown', onKey); };
   }, [drawTarget]);
+
+  // --- One-shot field crops (explanation image, match-the-column entry image). ---
+  // A card asks for a crop; the workspace arms a rubber-band on the right source page (the question
+  // canvas, or the solution preview pane) and resolves with the uploaded image URL once the operator
+  // draws — reusing the crop + upload primitives without touching the editable-box pipeline, since
+  // these destinations are plain URL fields rather than canvas boxes.
+  const clearCropRequest = (): void => {
+    cropRequestRef.current = null;
+    setCropRequest(null);
+  };
+  const cancelCropRequest = (): void => {
+    cropRequestRef.current?.resolve(null);
+    clearCropRequest();
+  };
+  const requestCrop = useCallback(
+    (questionId: string, source: 'question' | 'solution'): Promise<string | null> =>
+      new Promise<string | null>((resolve) => {
+        cropRequestRef.current?.resolve(null); // supersede any prior pending request
+        setDrawTarget(null); // the editable-box draw and a field crop can't be armed at once
+        replaceUrl.current = null;
+        if (source === 'solution') setViewMode('solution'); // reveal the solution pane to crop from
+        const req: CropRequest = { questionId, source, resolve };
+        cropRequestRef.current = req;
+        setCropRequest(req);
+      }),
+    [],
+  );
+  // Crop `imageUrl` at `natural` (natural px), upload it against the pending request's question, and
+  // resolve the request with the new URL. Any failure resolves null so the caller's button just resets.
+  const fulfilCrop = async (imageUrl: string, natural: BoxRect): Promise<void> => {
+    const req = cropRequestRef.current;
+    if (!req) return;
+    clearCropRequest();
+    try {
+      const blob = await getCroppedBlob(imageUrl, natural);
+      const { url } = await questionsApi.uploadImage(req.questionId, `crop_${String(Date.now())}`, blob);
+      req.resolve(url);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+      req.resolve(null);
+    }
+  };
+  // The main canvas' draw handler serves a pending question-source crop first, else the box pipeline.
+  // (A solution-source request is fulfilled from the preview pane, so it falls through to handleDraw
+  // here — but handleDraw no-ops without a drawTarget, and none is armed while a crop request is.)
+  const handleCanvasDraw = (rect: BoxRect): void => {
+    const req = cropRequestRef.current;
+    if (req && req.source === 'question') {
+      const pageSize = sizeRef.current;
+      if (!pageSize || pageSize.displayWidth === 0) { cancelCropRequest(); return; }
+      const scaleX = pageSize.naturalWidth / pageSize.displayWidth;
+      const scaleY = pageSize.naturalHeight / pageSize.displayHeight;
+      void fulfilCrop(imageSrcRef.current, {
+        x: rect.x * scaleX,
+        y: rect.y * scaleY,
+        width: rect.width * scaleX,
+        height: rect.height * scaleY,
+      });
+      return;
+    }
+    handleDraw(rect);
+  };
+
+  // Esc also cancels a pending field crop.
+  useEffect(() => {
+    if (!cropRequest) return undefined;
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') cancelCropRequest();
+    };
+    window.document.addEventListener('keydown', onKey);
+    return () => { window.document.removeEventListener('keydown', onKey); };
+  }, [cropRequest]);
 
   // --- Adjust-to-resave: one history entry per grab, one (coalesced) save per release. ---
   const grabbed = useRef<Box[] | null>(null);
@@ -1331,6 +1421,12 @@ export function VerifyWorkspace({
   // What the magnifier zooms into: a crop being drawn takes priority, else the box being adjusted.
   const magnifierBox: BoxRect | null =
     drawPreview ?? (activeBoxId ? boxes.find((b) => b.id === activeBoxId) ?? null : null);
+  // The main canvas is armed either for a box draw (drawLabel) or for a question-source field crop.
+  const cropDrawLabel =
+    cropRequest && cropRequest.source === 'question'
+      ? `Crop image · Q${String(questionNumberById.get(cropRequest.questionId) ?? '?')}`
+      : null;
+  const activeDrawLabel = drawLabel ?? cropDrawLabel;
   // Cards list only the not-yet-saved manual regions (saving or needing a retry); a saved region's
   // presence in the card is its attached image, and adjustments happen on the canvas box itself.
   const cardBoxesFor = (questionId: string): CardBox[] =>
@@ -1440,10 +1536,10 @@ export function VerifyWorkspace({
             onUpdateBox={updateBox}
             onDeleteBox={deleteBox}
             onSize={handleSize}
-            draw={drawLabel !== null ? { label: drawLabel } : null}
-            onDraw={handleDraw}
+            draw={activeDrawLabel !== null ? { label: activeDrawLabel } : null}
+            onDraw={handleCanvasDraw}
             onDrawProgress={setDrawPreview}
-            onDrawCancel={() => { setDrawTarget(null); }}
+            onDrawCancel={() => { setDrawTarget(null); cancelCropRequest(); }}
             onBoxGrab={handleBoxGrab}
             onBoxRelease={handleBoxRelease}
           />
@@ -1648,6 +1744,7 @@ export function VerifyWorkspace({
                 solutionSource={solutionSource}
                 onDraftUpdate={(updater) => { drafts.updateDraft(question.id, updater); }}
                 onSave={() => { void drafts.save([question.id]); }}
+                onRequestCrop={requestCrop}
                 onDrawRegion={toggleDrawTarget}
                 onSaveBox={(boxId) => { void requestSave(boxId); }}
                 onDeleteBox={deleteBox}

@@ -2,7 +2,7 @@ import type { JSX } from 'react';
 import type { MatchColumn, MatchData, MatchEntry } from '@ingest/contracts';
 import { Button, IconButton, IconPlus, IconX } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
-import { AttachImageButton } from './attach-image-button.js';
+import { CropImageButton } from './crop-image-button.js';
 
 const FIELD_LABEL = 'text-[13px] font-medium text-ink-2';
 /** Default label pool per column: A,B,C… for the first column; p,q,r… for the rest (JEE convention). */
@@ -22,13 +22,13 @@ function nextLabel(taken: string[], pool: string): string {
 export function MatchTableEditor({
   value,
   onChange,
-  questionId,
+  onCropImage,
   disabled = false,
 }: {
   value: MatchData;
   onChange: (next: MatchData) => void;
-  /** The question the entries belong to — namespaces any image an entry attaches. */
-  questionId: string;
+  /** Arm a crop from the question page and resolve with the uploaded image URL (or `null` if cancelled). */
+  onCropImage: () => Promise<string | null>;
   disabled?: boolean;
 }): JSX.Element {
   const { columns, key } = value;
@@ -145,11 +145,11 @@ export function MatchTableEditor({
                           </Button>
                         </>
                       ) : (
-                        <AttachImageButton
-                          questionId={questionId}
+                        <CropImageButton
                           label="Image"
                           disabled={disabled}
-                          onUploaded={(url) => { patchEntry(colIndex, entryIndex, { ...entry, image: url }); }}
+                          onRequestCrop={onCropImage}
+                          onCropped={(url) => { patchEntry(colIndex, entryIndex, { ...entry, image: url }); }}
                         />
                       )}
                     </div>

@@ -53,6 +53,12 @@ type Props = {
    */
   onDraftUpdate: (updater: (prev: QuestionDraft) => QuestionDraft) => void;
   onSave: () => void;
+  /**
+   * Arm a one-shot image crop from a source page and resolve with the uploaded URL (or `null` when the
+   * operator cancels). `source` picks the page: `'question'` (the main canvas, e.g. a match entry) or
+   * `'solution'` (the sibling solution pane, e.g. an explanation figure). Reused by the crop buttons.
+   */
+  onRequestCrop: (questionId: string, source: 'question' | 'solution') => Promise<string | null>;
   /** Arm (or, on the armed target, cancel) draw mode — the drawn crop then saves automatically. */
   onDrawRegion: (question: Question, type: 'question' | 'option', optionIndex?: number) => void;
   /** Retry the auto-save of a region whose upload failed. */
@@ -196,6 +202,7 @@ export function EditableQuestionCard({
   solutionSource,
   onDraftUpdate,
   onSave,
+  onRequestCrop,
   onDrawRegion,
   onSaveBox,
   onDeleteBox,
@@ -531,7 +538,12 @@ export function EditableQuestionCard({
 
       {draft.match ? (
         <>
-            <MatchTableEditor value={draft.match} onChange={setMatch} questionId={question.id} disabled={saving} />
+            <MatchTableEditor
+              value={draft.match}
+              onChange={setMatch}
+              disabled={saving}
+              onCropImage={() => onRequestCrop(question.id, 'question')}
+            />
 
           {draft.options.length > 0 ? (
             <div className="flex flex-col gap-1.5">
