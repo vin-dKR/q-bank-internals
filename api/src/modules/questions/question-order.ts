@@ -8,6 +8,17 @@ import type { Question } from '@ingest/contracts';
  * Q1, Q2, Q3 everywhere.
  */
 export function compareByPdfOrder(a: Question, b: Question): number {
+  // Two sub-questions of the SAME comprehension group always order by their in-group position, so a
+  // group stays contiguous and in reading order even when the printed numbers are missing or noisy.
+  if (
+    a.groupId !== null &&
+    a.groupId === b.groupId &&
+    a.groupOrder !== null &&
+    b.groupOrder !== null &&
+    a.groupOrder !== b.groupOrder
+  ) {
+    return a.groupOrder - b.groupOrder;
+  }
   if (
     a.questionNumber !== null &&
     b.questionNumber !== null &&

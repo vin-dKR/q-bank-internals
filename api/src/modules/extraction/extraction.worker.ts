@@ -16,7 +16,7 @@ import type {
   ExtractedQuestion,
   VisionExtractor,
 } from './vision-extractor.js';
-import { collapseComprehension } from './collapse-comprehension.js';
+import { groupComprehensionDrafts } from './group-comprehension.js';
 import { mergeAnswers } from './merge-answers.js';
 import { topicBindingForPage } from './topic-lookup.js';
 
@@ -96,6 +96,9 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
       options: [],
       answer,
       match: { columns: draft.match.columns, key },
+      passage: draft.passage,
+      groupId: draft.groupId,
+      groupOrder: draft.groupOrder,
       explanation: draft.explanation,
       images: [],
       questionType: binding?.questionType ?? document.questionType,
@@ -121,6 +124,9 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
     })),
     answer: draft.answer ?? '',
     match: null,
+    passage: draft.passage,
+    groupId: draft.groupId,
+    groupOrder: draft.groupOrder,
     explanation: draft.explanation,
     images: [],
     questionType: binding?.questionType ?? document.questionType,
@@ -212,10 +218,11 @@ export class ExtractionWorker {
       // questions), so an abort that lands there would otherwise be lost — re-check the deadline
       // before persisting so a cancel/timeout still aborts instead of saving a half-answered result.
       controller.signal.throwIfAborted();
-      // Comprehension sub-questions are merged into one question per passage AFTER answers are folded
-      // in, so each sub-question's answer/explanation is already on it before they combine.
-      const collapsed = collapseComprehension(answered);
-      const rows = collapsed.map((draft) => toNewQuestion(document, draft));
+      // Comprehension sub-questions that share a passage are grouped (not collapsed) AFTER answers are
+      // folded in, so each sub-question keeps its own answer/explanation and is stamped with the group's
+      // shared id + order before it is persisted as its own row.
+      const grouped = groupComprehensionDrafts(answered, documentId);
+      const rows = grouped.map((draft) => toNewQuestion(document, draft));
       const count = await this.questions.replaceForDocument(documentId, rows);
 
       await this.documents.recordExtraction(documentId, { questionCount: count });

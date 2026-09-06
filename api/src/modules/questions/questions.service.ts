@@ -6,10 +6,13 @@ import type {
   PaperMetadata,
   Question,
   QuestionBatchUpdate,
+  ReExtractedGroup,
   ReExtractedQuestion,
+  ReExtractedSubQuestion,
   ReExtractSource,
   UpdateQuestion,
 } from '@ingest/contracts';
+import type { ReExtractedSubDraft } from './question-reextractor.js';
 import { mapWithConcurrency } from '../../shared/async/map-with-concurrency.js';
 import { errors } from '../../shared/errors/error-catalog.js';
 import { logger } from '../../shared/logger/logger.js';
@@ -174,7 +177,7 @@ export class QuestionsService {
     // When the operator has changed the type in verify (not yet saved), honour that choice so the
     // model extracts the right shape for it; otherwise fall back to the question's stored type.
     const questionType = questionTypeOverride ?? question.questionType;
-    const { stem, options, answer, explanation, match, usage } = await this.reExtractor.reExtract({
+    const { stem, options, answer, explanation, match, passage, usage } = await this.reExtractor.reExtract({
       png,
       questionNumber: question.questionNumber,
       stemHint: question.stem,
@@ -186,7 +189,51 @@ export class QuestionsService {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn({ err: message }, 'Failed to record question re-extract token usage');
     }
-    return { stem, options, answer, explanation, match };
+    return { stem, options, answer, explanation, match, passage };
+  }
+
+  /**
+   * Re-read a whole COMPREHENSION GROUP off its source page (BLA-125): the shared passage plus every
+   * sub-question at once. The group is resolved from its `groupId` within the document (its rows,
+   * their source page, and their printed numbers). Each re-extracted sub-question is matched back to
+   * the existing row it should update — by printed number, then by position — so the client can drop
+   * each straight onto the right card's draft; the passage applies to every row. `source` redirects
+   * the page read exactly as {@link reExtractQuestion} (e.g. read the sibling solution PDF); best-effort
+   * answer/explanation, since a question paper rarely prints them.
+   */
+  async reExtractGroup(
+    documentId: string,
+    groupId: string,
+    source?: ReExtractSource,
+    questionTypeOverride?: string | null,
+  ): Promise<ReExtractedGroup> {
+    const questions = await this.questions.findByDocument(documentId);
+    // findByDocument returns PDF reading order, which orders a group by groupOrder — so the group's
+    // rows arrive in the same order the model reads its sub-questions down the page.
+    const group = questions.filter((candidate) => candidate.groupId === groupId);
+    const first = group[0];
+    if (!first) throw errors.comprehensionGroupNotFound(groupId);
+    const sourceDocumentId = source?.documentId ?? documentId;
+    const sourcePage = source?.page ?? first.sourceRegion.page;
+    const png = await this.pages.renderPage(sourceDocumentId, sourcePage);
+    const { passage, subQuestions, usage } = await this.reExtractor.reExtractGroup({
+      png,
+      questionNumbers: group.map((question) => question.questionNumber),
+      passageHint: first.passage ?? first.stem,
+      questionType: questionTypeOverride ?? first.questionType,
+    });
+    try {
+      await this.usage.recordUsage({ source: 'reextract', documentId, ...usage });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn({ err: message }, 'Failed to record comprehension group re-extract token usage');
+    }
+    // Fall back to the group's existing passage if the model somehow returned an empty one.
+    const resolvedPassage = passage || (first.passage ?? '');
+    return {
+      passage: resolvedPassage,
+      subQuestions: matchGroupSubQuestions(group, subQuestions, resolvedPassage),
+    };
   }
 
   /**
@@ -217,4 +264,43 @@ export class QuestionsService {
     }
     return refined;
   }
+}
+
+/**
+ * Match a group's freshly re-extracted sub-questions back to the existing rows they should update. A
+ * row is paired with the re-read entry that carries its printed number; failing that (an unnumbered
+ * sub-question, or a number the model did not return) it takes the entry at the same position. Each
+ * pairing is consumed once, so two rows never claim the same entry. Rows with no matching entry are
+ * omitted — the client keeps their current draft rather than wiping it. Every returned entry carries
+ * the group `passage` so a per-question apply stays self-consistent with the group.
+ */
+function matchGroupSubQuestions(
+  group: Question[],
+  drafts: ReExtractedSubDraft[],
+  passage: string,
+): ReExtractedSubQuestion[] {
+  const used = new Set<number>();
+  const result: ReExtractedSubQuestion[] = [];
+  group.forEach((row, index) => {
+    let draftIndex = -1;
+    if (row.questionNumber !== null) {
+      draftIndex = drafts.findIndex(
+        (draft, i) => !used.has(i) && draft.questionNumber === row.questionNumber,
+      );
+    }
+    if (draftIndex === -1 && index < drafts.length && !used.has(index)) draftIndex = index;
+    const draft = draftIndex === -1 ? undefined : drafts[draftIndex];
+    if (!draft) return;
+    used.add(draftIndex);
+    result.push({
+      questionId: row.id,
+      stem: draft.stem,
+      options: draft.options,
+      answer: draft.answer,
+      explanation: draft.explanation,
+      match: draft.match,
+      passage,
+    });
+  });
+  return result;
 }

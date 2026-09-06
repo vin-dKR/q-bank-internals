@@ -19,6 +19,12 @@ export const CatalogQuestionSchema = z.object({
   section: z.string().nullable(),
   questionType: z.string().nullable(),
   topic: z.string().nullable(),
+  // Comprehension grouping (BLA-125): the shared passage (repeated on every sibling row), the group's
+  // stable id, and this sub-question's order within it. The browse list groups consecutive rows sharing
+  // `groupId` under one passage header. All null on ordinary questions and on legacy rows.
+  passage: z.string().nullable(),
+  groupId: z.string().nullable(),
+  groupOrder: z.number().int().nullable(),
   flagged: z.boolean(),
   // PYQ provenance stamped at publish: whether the question is a previous-year question, and the
   // exam + year it was asked in. `isPyq` is false and exam/year null on non-PYQ or legacy rows.

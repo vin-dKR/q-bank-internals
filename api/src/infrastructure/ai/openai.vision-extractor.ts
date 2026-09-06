@@ -195,6 +195,9 @@ export class OpenAiVisionExtractor implements VisionExtractor {
           pyqYear: asStringOrNull(raw.pyq_year),
           match: toMatchData(raw.columns, raw.match),
           passage: asStringOrNull(raw.passage),
+          // Grouping is assigned later by groupComprehensionDrafts (post answer-merge), not read here.
+          groupId: null,
+          groupOrder: null,
         });
       }
       pagesDone += 1;

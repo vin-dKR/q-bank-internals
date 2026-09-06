@@ -4,6 +4,7 @@ import {
   DetectFiguresBatchRequestSchema,
   DetectFiguresRequestSchema,
   QuestionListQuerySchema,
+  ReExtractGroupSchema,
   ReExtractQuestionSchema,
   RefineLatexSchema,
   UpdateQuestionSchema,
@@ -22,6 +23,7 @@ export function createQuestionsController(service: QuestionsService): {
   uploadImage: RequestHandler;
   refine: RequestHandler;
   reExtract: RequestHandler;
+  reExtractGroup: RequestHandler;
   detectFigures: RequestHandler;
   detectFiguresBatch: RequestHandler;
   extractPaperMetadata: RequestHandler;
@@ -50,6 +52,11 @@ export function createQuestionsController(service: QuestionsService): {
     reExtract: asyncHandler(async (req, res) => {
       const { documentId, questionId, source, questionType } = parseOrThrow(ReExtractQuestionSchema, req.body);
       ok(res, await service.reExtractQuestion(documentId, questionId, source, questionType));
+    }),
+
+    reExtractGroup: asyncHandler(async (req, res) => {
+      const { documentId, groupId, source, questionType } = parseOrThrow(ReExtractGroupSchema, req.body);
+      ok(res, await service.reExtractGroup(documentId, groupId, source, questionType));
     }),
 
     update: asyncHandler(async (req, res) => {

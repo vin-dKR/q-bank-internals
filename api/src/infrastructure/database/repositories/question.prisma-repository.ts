@@ -22,6 +22,10 @@ type QuestionRow = {
   answer: string;
   // Prisma `Json?`: the structured match data, validated back into shape by `toMatch`.
   match: unknown;
+  // Comprehension grouping (BLA-125): shared passage + stable group id + 0-based order within the group.
+  passage: string | null;
+  groupId: string | null;
+  groupOrder: number | null;
   explanation: string | null;
   images: { driveFileId: string; alt: string }[];
   isQuestionImage: boolean;
@@ -70,6 +74,9 @@ function toQuestion(row: QuestionRow): Question {
     options: row.options,
     answer: row.answer,
     match: toMatch(row.match),
+    passage: row.passage,
+    groupId: row.groupId,
+    groupOrder: row.groupOrder,
     explanation: row.explanation,
     images: row.images,
     isQuestionImage: row.isQuestionImage,
@@ -112,6 +119,9 @@ export class PrismaQuestionRepository implements QuestionRepository {
         options: question.options,
         answer: question.answer,
         match: question.match,
+        passage: question.passage,
+        groupId: question.groupId,
+        groupOrder: question.groupOrder,
         explanation: question.explanation,
         images: question.images,
         questionType: question.questionType,
@@ -149,6 +159,7 @@ export class PrismaQuestionRepository implements QuestionRepository {
         ...(patch.options !== undefined ? { options: patch.options } : {}),
         ...(patch.answer !== undefined ? { answer: patch.answer } : {}),
         ...(patch.match !== undefined ? { match: patch.match } : {}),
+        ...(patch.passage !== undefined ? { passage: patch.passage } : {}),
         ...(patch.explanation !== undefined ? { explanation: patch.explanation } : {}),
         ...(patch.images !== undefined ? { images: patch.images } : {}),
         ...(patch.isQuestionImage !== undefined ? { isQuestionImage: patch.isQuestionImage } : {}),

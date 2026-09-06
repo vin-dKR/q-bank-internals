@@ -5,6 +5,7 @@ import type {
   DetectedFiguresBatch,
   Question,
   QuestionBatchUpdate,
+  ReExtractedGroup,
   ReExtractedQuestion,
   ReExtractSource,
   UpdateQuestion,
@@ -15,6 +16,7 @@ import {
   DetectedFiguresSchema,
   PublishResultSchema,
   QuestionSchema,
+  ReExtractedGroupSchema,
   ReExtractedQuestionSchema,
 } from '@ingest/contracts';
 import { request } from '../../../shared/api/http-client.js';
@@ -95,6 +97,30 @@ export const questionsApi = {
         ...(questionType ? { questionType } : {}),
       },
       schema: ReExtractedQuestionSchema,
+    });
+  },
+
+  /**
+   * AI "re-read the whole passage": re-extract a comprehension group's shared passage and every
+   * sub-question in one call. Returns the passage (to apply to every row of the group) and the
+   * per-sub-question fields, each already matched to the `questionId` it should update. `source`
+   * redirects the read to a sibling answer/solution page exactly like {@link reExtract}.
+   */
+  reExtractGroup: (
+    documentId: string,
+    groupId: string,
+    source?: ReExtractSource,
+    questionType?: string | null,
+  ): Promise<ReExtractedGroup> => {
+    return request('/questions/re-extract-group', {
+      method: 'POST',
+      body: {
+        documentId,
+        groupId,
+        ...(source ? { source } : {}),
+        ...(questionType ? { questionType } : {}),
+      },
+      schema: ReExtractedGroupSchema,
     });
   },
 
