@@ -1,5 +1,6 @@
 import { type CSSProperties, type JSX, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { cn } from '../lib/cn.js';
 import { type BoxRect, DraggableBox } from './draggable-box.js';
 import { IconButton } from './icon-button.js';
 import { IconX, IconZoomIn, IconZoomOut } from './icons.js';
@@ -25,15 +26,28 @@ export type CanvasSize = {
 /** Smaller than this (display px) counts as a stray click, not a drawn region. */
 const MIN_DRAW_SIZE = 10;
 
+/** Build a normalized rect (positive width/height) from two drag endpoints in display pixels. */
+function rectFromPoints(from: { x: number; y: number }, to: { x: number; y: number }): BoxRect {
+  return {
+    x: Math.min(from.x, to.x),
+    y: Math.min(from.y, to.y),
+    width: Math.abs(to.x - from.x),
+    height: Math.abs(to.y - from.y),
+  };
+}
+
 /**
- * Hover magnifier (Amazon-style): how far it enlarges the fitted page, the biggest square side (px) the
- * zoom panel is allowed to take, its smallest side, and the gap it keeps from the image. The panel is
- * sized to the image height (capped to LENS_MAX) so it reads like a second, enlarged copy beside it.
+ * Drag-to-zoom magnifier: `LENS_ZOOM` is the fixed magnification the drawn region is shown at, so the
+ * preview panel is just the selection scaled by it — a bigger drag makes a bigger panel at the *same*
+ * zoom, a smaller drag a smaller one (never the fixed-square "bigger drag looks smaller" trap). It is
+ * capped so it never upscales past the page's native resolution, and the panel is capped to `LENS_MAX`
+ * and the viewport. `LENS_GAP` is the gap kept from the image/screen edges; `LENS_MIN_SEL` is the
+ * smallest drag (display px, either axis) that counts as a real region to enlarge.
  */
-const LENS_ZOOM = 2.4;
-const LENS_MAX = 480;
-const LENS_MIN = 240;
+const LENS_ZOOM = 3.5;
+const LENS_MAX = 720;
 const LENS_GAP = 12;
+const LENS_MIN_SEL = 8;
 
 type CropCanvasProps = {
   imageSrc: string;
@@ -131,10 +145,14 @@ export function CropCanvas({
   const drawStart = useRef<{ x: number; y: number } | null>(null);
   const [rubber, setRubber] = useState<BoxRect | null>(null);
 
-  // --- Hover magnifier: an Amazon-style zoom panel beside the page (off while drawing a crop) ---
-  // `lensPos` is the cursor in frame (display) pixels; the panel + on-image highlight derive from it.
+  // --- Drag-to-zoom magnifier: press and drag anywhere on the page to rubber-band a region; while the
+  // drag is held, an enlarged view of exactly that region shows in a panel beside the page, and a
+  // release dismisses it. `lensOn` is the feature toggle; `lensStart` holds the drag's origin (non-null
+  // only mid-drag, like the draw rubber-band); `lensSel` is the live selection rect in frame (display)
+  // pixels the panel + on-image marquee derive from. ---
   const [lensOn, setLensOn] = useState(true);
-  const [lensPos, setLensPos] = useState<{ x: number; y: number } | null>(null);
+  const lensStart = useRef<{ x: number; y: number } | null>(null);
+  const [lensSel, setLensSel] = useState<BoxRect | null>(null);
 
   const framePoint = useCallback((clientX: number, clientY: number): { x: number; y: number } => {
     const rect = frameRef.current?.getBoundingClientRect();
@@ -162,21 +180,15 @@ export function CropCanvas({
       onDrawProgress?.(null);
       return undefined;
     }
-    const toRect = (from: { x: number; y: number }, to: { x: number; y: number }): BoxRect => ({
-      x: Math.min(from.x, to.x),
-      y: Math.min(from.y, to.y),
-      width: Math.abs(to.x - from.x),
-      height: Math.abs(to.y - from.y),
-    });
     const onMove = (event: globalThis.MouseEvent): void => {
       if (!drawStart.current) return;
-      const rect = toRect(drawStart.current, framePoint(event.clientX, event.clientY));
+      const rect = rectFromPoints(drawStart.current, framePoint(event.clientX, event.clientY));
       setRubber(rect);
       onDrawProgress?.(rect);
     };
     const onUp = (event: globalThis.MouseEvent): void => {
       if (!drawStart.current) return;
-      const rect = toRect(drawStart.current, framePoint(event.clientX, event.clientY));
+      const rect = rectFromPoints(drawStart.current, framePoint(event.clientX, event.clientY));
       drawStart.current = null;
       setRubber(null);
       onDrawProgress?.(null);
@@ -191,38 +203,78 @@ export function CropCanvas({
     };
   }, [draw, onDraw, onDrawProgress, framePoint]);
 
+  // A press-drag on the bare page rubber-bands a zoom region. A mousedown on a crop box (or resize
+  // handle) stops propagation in DraggableBox, so this never fires there — box move/resize is
+  // untouched, and the zoom only ever begins on the empty page. Suppressed in draw mode / lens off.
+  const beginLensDrag = (event: ReactMouseEvent<HTMLDivElement>): void => {
+    if (event.button !== 0 || draw || !lensOn) return;
+    event.preventDefault();
+    const point = framePoint(event.clientX, event.clientY);
+    lensStart.current = point;
+    setLensSel({ x: point.x, y: point.y, width: 0, height: 0 });
+  };
+
+  // Track the rubber-band at the document level so a fast drag — or one that slips past the frame edge
+  // — keeps growing the selection, and a release anywhere clears it (mirrors the draw/box drag model).
+  useEffect(() => {
+    const onMove = (event: globalThis.MouseEvent): void => {
+      if (!lensStart.current) return;
+      setLensSel(rectFromPoints(lensStart.current, framePoint(event.clientX, event.clientY)));
+    };
+    const onUp = (): void => {
+      if (!lensStart.current) return;
+      lensStart.current = null;
+      setLensSel(null);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [framePoint]);
+
   const frameStyle: CSSProperties =
     displayWidth > 0 && displayHeight > 0 ? { width: displayWidth, height: displayHeight } : {};
 
-  // Amazon-style hover zoom: a square highlight over the source region + a large panel showing it
-  // enlarged, floated to the right of the image (flipped left when the viewport can't hold it there).
-  // The panel is `position: fixed` and portalled to <body> so it escapes the canvas' `overflow: hidden`
-  // and can overlay whatever sits beside the page. Recomputed each hover render from the frame's rect.
-  const magnifier: { panel: CSSProperties; highlight: CSSProperties } | null = (() => {
-    if (!lensOn || !lensPos || draw || loading || displayWidth <= 0 || displayHeight <= 0) return null;
+  // Drag-to-zoom: the operator's rubber-band marks the region; a large panel shows exactly that region
+  // enlarged (contain-fit into the square), floated to the right of the image and flipped left when the
+  // viewport can't hold it there. The panel is `position: fixed` and portalled to <body> so it escapes
+  // the canvas' `overflow: hidden`. `marquee` shows for the whole drag; `panel` only once the selection
+  // is a deliberate region — a stray click would otherwise blow a 1px sliver up to nonsense.
+  const magnifier: { marquee: CSSProperties; panel: CSSProperties } | null = (() => {
+    if (!lensOn || !lensSel || draw || loading || displayWidth <= 0 || displayHeight <= 0) return null;
+    if (lensSel.width < LENS_MIN_SEL || lensSel.height < LENS_MIN_SEL) return null;
     const frameEl = frameRef.current;
     if (!frameEl) return null;
     const rect = frameEl.getBoundingClientRect();
-    const side = Math.max(LENS_MIN, Math.min(LENS_MAX, Math.round(displayHeight)));
-    const win = side / LENS_ZOOM; // the source region (display px) the panel shows at LENS_ZOOM
-    const hx = Math.min(Math.max(lensPos.x - win / 2, 0), Math.max(displayWidth - win, 0));
-    const hy = Math.min(Math.max(lensPos.y - win / 2, 0), Math.max(displayHeight - win, 0));
     const viewportW = document.documentElement.clientWidth;
     const viewportH = document.documentElement.clientHeight;
+    // Fixed magnification: the panel is the selection scaled by LENS_ZOOM, so it grows/shrinks with the
+    // drag at a constant zoom. Capped so it never upscales past native resolution (1/scale) and never
+    // outgrows the panel cap or the viewport.
+    const nativeCap = scale ? 1 / scale : Number.POSITIVE_INFINITY;
+    const capW = Math.min(LENS_MAX, viewportW - 2 * LENS_GAP);
+    const capH = Math.min(LENS_MAX, viewportH - 2 * LENS_GAP);
+    const zoom = Math.min(LENS_ZOOM, nativeCap, capW / lensSel.width, capH / lensSel.height);
+    const panelW = lensSel.width * zoom;
+    const panelH = lensSel.height * zoom;
     const toRight = rect.right + LENS_GAP;
-    const left = toRight + side <= viewportW ? toRight : Math.max(LENS_GAP, rect.left - LENS_GAP - side);
-    const top = Math.min(Math.max(rect.top, LENS_GAP), Math.max(LENS_GAP, viewportH - side - LENS_GAP));
+    const left = toRight + panelW <= viewportW ? toRight : Math.max(LENS_GAP, rect.left - LENS_GAP - panelW);
+    const top = Math.min(Math.max(rect.top, LENS_GAP), Math.max(LENS_GAP, viewportH - panelH - LENS_GAP));
     return {
+      marquee: { left: lensSel.x, top: lensSel.y, width: lensSel.width, height: lensSel.height },
+      // The panel IS the selection scaled by `zoom` — no letterbox, so it shows exactly the drawn region
+      // at a constant magnification, sized to match the drag.
       panel: {
         left,
         top,
-        width: side,
-        height: side,
+        width: panelW,
+        height: panelH,
         backgroundImage: `url("${imageSrc}")`,
-        backgroundSize: `${String(displayWidth * LENS_ZOOM)}px ${String(displayHeight * LENS_ZOOM)}px`,
-        backgroundPosition: `${String(-hx * LENS_ZOOM)}px ${String(-hy * LENS_ZOOM)}px`,
+        backgroundSize: `${String(displayWidth * zoom)}px ${String(displayHeight * zoom)}px`,
+        backgroundPosition: `${String(-lensSel.x * zoom)}px ${String(-lensSel.y * zoom)}px`,
       },
-      highlight: { left: hx, top: hy, width: win, height: win },
     };
   })();
 
@@ -247,13 +299,12 @@ export function CropCanvas({
       ) : null}
       <div
         ref={frameRef}
-        className="crop-canvas__frame"
+        className={cn(
+          'crop-canvas__frame',
+          lensOn && !draw && !loading && 'crop-canvas__frame--zoomable',
+        )}
         style={frameStyle}
-        onMouseMove={(event) => {
-          if (draw || !lensOn) return;
-          setLensPos(framePoint(event.clientX, event.clientY));
-        }}
-        onMouseLeave={() => { setLensPos(null); }}
+        onMouseDown={beginLensDrag}
       >
         <img
           ref={imgRef}
@@ -293,9 +344,9 @@ export function CropCanvas({
             ) : null}
           </div>
         ) : null}
-        {/* Amazon-style magnifier: a square marks the region under the cursor; the enlarged view of it
-            renders in a portalled panel beside the image (below). Suppressed while drawing a crop. */}
-        {magnifier ? <div className="crop-canvas__lens-area" style={magnifier.highlight} /> : null}
+        {/* Drag-to-zoom: the rubber-band marks the region being magnified; its enlarged view renders in
+            a portalled panel beside the image (below), once the selection is a deliberate region. */}
+        {magnifier ? <div className="crop-canvas__lens-area" style={magnifier.marquee} /> : null}
       </div>
       {magnifier
         ? createPortal(<div className="crop-canvas__zoom" style={magnifier.panel} />, document.body)
@@ -305,7 +356,8 @@ export function CropCanvas({
           type="button"
           className="crop-canvas__lens-toggle btn btn--ghost btn--icon-only btn--icon-only-sm"
           aria-pressed={lensOn}
-          title={lensOn ? 'Turn off hover zoom' : 'Turn on hover zoom'}
+          aria-label={lensOn ? 'Turn off drag zoom' : 'Turn on drag zoom'}
+          title={lensOn ? 'Drag zoom on — drag a box on the page to magnify it' : 'Drag zoom off'}
           onClick={() => { setLensOn((on) => !on); }}
         >
           {lensOn ? <IconZoomIn /> : <IconZoomOut />}
