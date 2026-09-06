@@ -1,8 +1,34 @@
 import type { JSX } from 'react';
-import type { CatalogPage, UpdateBankText } from '@ingest/contracts';
+import type { CatalogPage, CatalogQuestion, UpdateBankText } from '@ingest/contracts';
 import type { UseInfiniteQueryResult } from '@tanstack/react-query';
-import { Button, EmptyState, IconFileText, Skeleton } from '../../../shared/ui/index.js';
+import { Button, EmptyState, IconFileText, IconLayers, Skeleton } from '../../../shared/ui/index.js';
+import { RenderLatex } from '../../../shared/lib/latex.js';
 import { QuestionCard } from './question-card.js';
+
+/**
+ * Group the flat browse list for rendering: consecutive published rows sharing a comprehension
+ * `groupId` (BLA-125) collapse under ONE read-only passage header; everything else is a standalone
+ * card. Rows arrive id-sorted, and a group's siblings were published with consecutive ids, so a single
+ * walk keeps them contiguous.
+ */
+type BrowseItem =
+  | { kind: 'single'; question: CatalogQuestion }
+  | { kind: 'group'; groupId: string; passage: string; questions: CatalogQuestion[] };
+
+function groupBrowseItems(questions: CatalogQuestion[]): BrowseItem[] {
+  const items: BrowseItem[] = [];
+  for (const question of questions) {
+    const groupId = question.groupId;
+    if (groupId === null) {
+      items.push({ kind: 'single', question });
+      continue;
+    }
+    const last = items[items.length - 1];
+    if (last && last.kind === 'group' && last.groupId === groupId) last.questions.push(question);
+    else items.push({ kind: 'group', groupId, passage: question.passage ?? '', questions: [question] });
+  }
+  return items;
+}
 
 /** Skeleton stand-ins matching the card shape, shown while the first page loads. */
 function LoadingSkeletons(): JSX.Element {
@@ -66,18 +92,39 @@ export function QuestionBrowseList({
     );
   }
 
+  const renderCard = (question: CatalogQuestion): JSX.Element => (
+    <QuestionCard
+      key={question.id}
+      question={question}
+      onToggleFlag={(flagged) => { onToggleFlag(question.id, flagged); }}
+      onFixText={(patch) => { onFixText(question.id, patch); }}
+      flagPending={flagPendingId === question.id}
+      fixPending={fixPendingId === question.id}
+    />
+  );
+
   return (
     <div className="flex flex-col gap-4">
-      {questions.map((question) => (
-        <QuestionCard
-          key={question.id}
-          question={question}
-          onToggleFlag={(flagged) => { onToggleFlag(question.id, flagged); }}
-          onFixText={(patch) => { onFixText(question.id, patch); }}
-          flagPending={flagPendingId === question.id}
-          fixPending={fixPendingId === question.id}
-        />
-      ))}
+      {groupBrowseItems(questions).map((item) =>
+        item.kind === 'single' ? (
+          renderCard(item.question)
+        ) : (
+          <div key={`group_${item.groupId}`} className="flex flex-col gap-3 rounded-xl border border-line bg-surface-2 p-4">
+            <div className="flex items-center gap-2 text-[13px] font-semibold text-ink-2">
+              <IconLayers /> Comprehension passage
+              <span className="text-xs font-normal text-ink-3">
+                · {item.questions.length} question{item.questions.length === 1 ? '' : 's'}
+              </span>
+            </div>
+            {item.passage ? (
+              <div className="text-sm leading-relaxed text-ink-1"><RenderLatex text={item.passage} /></div>
+            ) : null}
+            <div className="flex flex-col gap-4">
+              {item.questions.map((question) => renderCard(question))}
+            </div>
+          </div>
+        ),
+      )}
 
       {query.hasNextPage ? (
         <div className="flex justify-center pt-1">

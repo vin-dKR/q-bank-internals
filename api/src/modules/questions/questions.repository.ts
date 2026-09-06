@@ -17,6 +17,11 @@ export type NewQuestion = {
   options: QuestionOption[];
   answer: string;
   match: MatchData | null;
+  // Comprehension grouping (BLA-125): the shared passage (repeated on every sibling), the group's
+  // stable id, and this sub-question's 0-based order within it. All null on ordinary questions.
+  passage: string | null;
+  groupId: string | null;
+  groupOrder: number | null;
   explanation: string | null;
   images: QuestionImage[];
   questionType: string | null;

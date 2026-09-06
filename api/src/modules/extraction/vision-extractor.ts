@@ -32,12 +32,22 @@ export type ExtractedQuestion = {
    */
   match: MatchData | null;
   /**
-   * The shared comprehension passage this draft belongs under, returned VERBATIM and identical across
-   * every sub-question of the same passage — null for ordinary questions. It is the grouping key that
-   * {@link mergeAnswers}'s caller uses to collapse a comprehension block into ONE combined question,
-   * so the passage is stored once (never repeated per sub-question).
+   * The shared comprehension passage this draft belongs under, returned by the vision model VERBATIM
+   * and identical across every sub-question of the same passage — null for ordinary questions. It is
+   * the grouping key: {@link groupComprehensionDrafts} stamps every draft sharing a passage with a
+   * common {@link groupId} and a sequential {@link groupOrder}, then each sub-question is persisted as
+   * its OWN row (the passage repeated on each) rather than collapsed into one combined question.
    */
   passage: string | null;
+  /**
+   * Stable identity shared by every sub-question of one comprehension group, assigned by
+   * {@link groupComprehensionDrafts} (a hash of the normalized passage + documentId). Null until
+   * grouping runs and on every non-comprehension draft. Persisted so a group-aware renderer can
+   * dedupe siblings and whole-group re-extraction can fetch them.
+   */
+  groupId: string | null;
+  /** This sub-question's 0-based position within its comprehension group; null off a group. */
+  groupOrder: number | null;
 };
 
 /**

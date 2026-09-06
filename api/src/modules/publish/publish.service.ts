@@ -124,6 +124,14 @@ function toBankQuestion(question: Question, index: number, document: Document): 
     // mirrored `answer` string below, so nothing breaks if the bank ignores them.
     match_columns: question.match ? question.match.columns : null,
     match_key: question.match ? question.match.key : null,
+    // Comprehension grouping (BLA-125). Each sub-question is its own bank row; these link the group so
+    // the eduents renderer can show the passage ONCE above its ordered sub-questions. `passage` is the
+    // shared passage (repeated identically on every sibling row), `group_id` the group's stable id, and
+    // `group_order` this sub-question's 0-based position. All null on ordinary questions — new optional
+    // fields, so a flat reader that ignores them still shows a self-contained question.
+    passage: question.passage,
+    group_id: question.groupId,
+    group_order: question.groupOrder,
     section_name: question.sectionName ?? document.sectionName ?? question.path.section,
     question_type: question.questionType ?? document.questionType ?? null,
     topic: question.topic,

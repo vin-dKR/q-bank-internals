@@ -162,7 +162,8 @@ export function reExtractQuestionPrompt(target: {
   "columns": [ { "title": "Column I", "entries": [ { "label": "A", "body": "…" } ] } ],
   "match": { "A": ["p"], "B": ["q","s"] },
   "answer": "the correct option label(s) e.g. \\"A\\" or \\"AC\\", a numeric/text answer, or \\"\\" if the page does not state it",
-  "explanation": "the worked solution if the page prints one, else null"
+  "explanation": "the worked solution if the page prints one, else null",
+  "passage": "the FULL shared passage VERBATIM if this question is a comprehension sub-question, else null"
 }`,
     `RE-EXTRACT RULES:
 1. Extract ONLY the target question — ignore every other question on the page.
@@ -171,10 +172,57 @@ export function reExtractQuestionPrompt(target: {
 4. columns/match: leave "columns" as [] and OMIT "match" UNLESS this is a MATRIX MATCH question (see the type-specific rule).
 5. answer: use "" when the page does not indicate the correct answer (question papers usually do not).
 6. explanation: use null when no worked solution is printed on this page.
-7. Preserve all math as LaTeX. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`,
+7. passage: set it to the FULL shared passage VERBATIM ONLY when the target question sits under a shared comprehension passage; otherwise use null. Never copy the passage into "stem".
+8. Preserve all math as LaTeX. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`,
     isMatrix
       ? 'MATRIX MATCH: put ONLY the instruction/stem in "stem" — do NOT copy the columns into it. Fill "columns" — an array of EVERY printed column in order (usually two, sometimes three), each { "title": the heading, "entries": [ { "label": the printed label e.g. "A"/"p"/"t", "body": that entry\'s text with math as LaTeX } ] }. ALSO fill "options" with the printed multiple-choice ANSWERS (usually four), each { "label": one of "A"–"D" in printed order (normalize (1)(2)(3)(4)), "body": that choice\'s FULL matching text EXACTLY as printed, e.g. "A-i, B-ii, C-iii, D-iv, E-v", "is_correct": true only for the choice the page marks correct else false }. When the page prints the matching (or marks the correct option), add "match" mapping each first-column label to the labels it matches, e.g. { "A": ["iv"], "B": ["v"] }; omit "match" when no answer is shown.'
       : (typeRule ? `TYPE-SPECIFIC RULE:\n${typeRule}` : ''),
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+/**
+ * Re-extract a whole COMPREHENSION GROUP from its source page (BLA-125): the shared passage plus every
+ * sub-question at once. The verify screen's "re-read passage + all questions" action for a group. Unlike
+ * {@link reExtractQuestionPrompt} (one question), this returns the passage once and one entry PER
+ * sub-question, targeting the block whose passage begins with the given hint.
+ */
+export function reExtractGroupPrompt(target: {
+  questionNumbers: (number | null)[];
+  passageHint: string;
+}): string {
+  const hint = target.passageHint.replace(/\s+/g, ' ').trim().slice(0, 120);
+  const numbers = target.questionNumbers.filter((n): n is number => n !== null);
+  const numbersNote =
+    numbers.length > 0
+      ? `The sub-questions are printed as number(s) ${numbers.join(', ')} — return one entry per sub-question in that order.`
+      : 'Return one entry per printed sub-question, in the order they appear under the passage.';
+  return [
+    'You are given an image of one page from an exam question paper that contains a COMPREHENSION block: a shared passage followed by several sub-questions.',
+    `Re-read the comprehension block whose passage begins: "${hint}". ${numbersNote}`,
+    `Return ONLY this exact JSON shape:
+
+{
+  "passage": "the FULL shared passage VERBATIM, byte-for-byte as printed, math as LaTeX like \\\\( \\\\sqrt{3} \\\\)",
+  "questions": [
+    {
+      "question_number": 1,
+      "stem": "ONLY this sub-question's own text — do NOT copy the passage into it",
+      "options": [ { "label": "A", "body": "…", "is_correct": false } ],
+      "answer": "the correct option label(s) e.g. \\"A\\" or \\"AC\\", a numeric/text answer, or \\"\\" if the page does not state it",
+      "explanation": "the worked solution if the page prints one, else null"
+    }
+  ]
+}`,
+    `RE-EXTRACT RULES:
+1. "passage": the FULL shared passage exactly once, VERBATIM. NEVER repeat it inside any sub-question's "stem".
+2. "questions": one entry per sub-question under this passage, in printed order. Put ONLY that sub-question's own text in "stem".
+3. question_number: the sub-question's printed number when it has one, else null.
+4. options: one entry per printed choice. The "label" MUST be exactly one of "A","B","C","D" in printed order (normalize (1)(2)(3)(4) to A/B/C/D). NEVER repeat or merge labels. Set is_correct true only when the page marks that choice correct, else false. Use [] when a sub-question has no options.
+5. answer: use "" when the page does not state the correct answer. explanation: use null when no worked solution is printed.
+6. Ignore every question on the page that is NOT under this passage.
+7. Preserve all math as LaTeX. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`,
   ]
     .filter(Boolean)
     .join('\n\n');

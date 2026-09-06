@@ -1,20 +1,25 @@
 import { OpenAI } from 'openai';
 import type { MatchData, QuestionOption } from '@ingest/contracts';
 import type {
+  GroupReExtractInput,
+  GroupReExtraction,
   QuestionReExtraction,
   QuestionReExtractor,
+  ReExtractedSubDraft,
   ReExtractInput,
 } from '../../modules/questions/index.js';
 import type { AiTokenUsage } from '../../modules/usage/index.js';
 import { errors } from '../../shared/errors/error-catalog.js';
 import { logger } from '../../shared/logger/logger.js';
-import { reExtractQuestionPrompt } from './prompts/extraction-prompts.js';
+import { reExtractGroupPrompt, reExtractQuestionPrompt } from './prompts/extraction-prompts.js';
 
 /**
  * Output-token budget for the first re-extract attempt. Covers a reasoning model's hidden reasoning
- * AND the JSON reply for one question; the retry doubles it once if the model still truncates.
+ * AND the JSON reply; the retry doubles it once if the model still truncates. A whole-group re-read
+ * returns several sub-questions, so it starts from a larger budget.
  */
 const MAX_TOKENS = 16000;
+const GROUP_MAX_TOKENS = 32000;
 
 /** Shape the re-extract prompt asks the model to return, before we normalise each field. */
 type RawOption = { label?: unknown; body?: unknown; is_correct?: unknown };
@@ -25,10 +30,27 @@ type RawReExtract = {
   explanation?: unknown;
   columns?: unknown;
   match?: unknown;
+  passage?: unknown;
 };
+/** Shape the group re-extract prompt asks for: the shared passage plus one entry per sub-question. */
+type RawGroupQuestion = {
+  question_number?: unknown;
+  stem?: unknown;
+  options?: unknown;
+  answer?: unknown;
+  explanation?: unknown;
+};
+type RawGroupReExtract = { passage?: unknown; questions?: unknown };
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+/** Parse a model-supplied question number to an int, or null when it is missing/unreadable. */
+function toQuestionNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
+  const match = /\d+/.exec(asString(value));
+  return match ? Number(match[0]) : null;
 }
 
 /**
@@ -54,13 +76,13 @@ function asStringOrNull(value: unknown): string | null {
  * Parse the model's reply, tolerating the ways a vision model wraps JSON — a bare object, a ```json
  * fence, or an object with prose around it — so a stray wrapper never drops the whole re-extraction.
  */
-function parseReply(content: string): RawReExtract {
+function parseReply(content: string): unknown {
   const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
   const start = content.indexOf('{');
   const end = content.lastIndexOf('}');
   const candidate = fenced ?? (start !== -1 && end > start ? content.slice(start, end + 1) : content);
   try {
-    return JSON.parse(candidate) as RawReExtract;
+    return JSON.parse(candidate);
   } catch {
     return {};
   }
@@ -129,9 +151,10 @@ function stripMatchColumnsFromStem(stem: string): string {
 
 /**
  * {@link QuestionReExtractor} backed by an OpenAI vision model — one call re-reads a single question's
- * page image and returns its fields. Mirrors {@link OpenAiVisionExtractor}'s call shape
- * (`max_completion_tokens`, `response_format: json_object`) so the same code runs on gpt-4o and the
- * newer reasoning models. Runs on the API request path (interactive, one question at a time).
+ * page image and returns its fields; {@link reExtractGroup} re-reads a whole comprehension block.
+ * Mirrors {@link OpenAiVisionExtractor}'s call shape (`max_completion_tokens`,
+ * `response_format: json_object`) so the same code runs on gpt-4o and the newer reasoning models.
+ * Runs on the API request path (interactive).
  */
 export class OpenAiQuestionReExtractor implements QuestionReExtractor {
   private readonly client: OpenAI;
@@ -143,26 +166,26 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     this.client = new OpenAI({ apiKey });
   }
 
-  async reExtract(input: ReExtractInput): Promise<QuestionReExtraction> {
-    const prompt = reExtractQuestionPrompt({
-      questionNumber: input.questionNumber,
-      stemHint: input.stemHint,
-      questionType: input.questionType,
-    });
-    const imageUrl = `data:image/png;base64,${input.png.toString('base64')}`;
-
-    // Accumulate usage across attempts so a retry is billed honestly, not just the last call.
+  /**
+   * One vision call over a page image, with the shared truncation guard: a reasoning model can spend
+   * its whole output budget on hidden reasoning and return an empty/truncated reply (the "re-read
+   * returned nothing and wiped the field" bug). A bigger budget is the only thing that helps, so
+   * attempt once at `startTokens`, retry once at double if truncated/empty, then fail loudly. Usage is
+   * accumulated across attempts so a retry is billed honestly. Shared by the single and group re-reads.
+   */
+  private async callVision(
+    prompt: string,
+    png: Buffer,
+    startTokens: number,
+  ): Promise<{ content: string; usage: AiTokenUsage }> {
+    const imageUrl = `data:image/png;base64,${png.toString('base64')}`;
     let promptTokens = 0;
     let completionTokens = 0;
     let totalTokens = 0;
     let callCount = 0;
 
-    // A reasoning model can spend its whole output budget on hidden reasoning and return an empty (or
-    // truncated) reply — the intermittent "re-read returned nothing and wiped the field" bug. A bigger
-    // budget is the only thing that helps, so mirror the detector: attempt once at MAX_TOKENS, retry
-    // once at double if the reply came back truncated/empty, then fail loudly rather than wipe.
     let content = '';
-    let maxCompletionTokens = MAX_TOKENS;
+    let maxCompletionTokens = startTokens;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       const response = await this.client.chat.completions.create({
         model: this.model,
@@ -190,17 +213,29 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
 
       logger.warn(
         { attempt, maxCompletionTokens, finishReason: choice?.finish_reason, empty: !content },
-        'question re-extract reply truncated or empty — retrying at a larger token budget',
+        're-extract reply truncated or empty — retrying at a larger token budget',
       );
       if (attempt === 2) {
         throw errors.extractionFailed(
-          `The model returned ${truncated ? 'a truncated' : 'an empty'} reply while re-reading the question, even at ${String(maxCompletionTokens)} tokens. Please try again.`,
+          `The model returned ${truncated ? 'a truncated' : 'an empty'} reply while re-reading the page, even at ${String(maxCompletionTokens)} tokens. Please try again.`,
         );
       }
       maxCompletionTokens *= 2;
     }
 
-    const parsed = parseReply(content);
+    const usage: AiTokenUsage = { model: this.model, promptTokens, completionTokens, totalTokens, callCount };
+    return { content, usage };
+  }
+
+  async reExtract(input: ReExtractInput): Promise<QuestionReExtraction> {
+    const prompt = reExtractQuestionPrompt({
+      questionNumber: input.questionNumber,
+      stemHint: input.stemHint,
+      questionType: input.questionType,
+    });
+    const { content, usage } = await this.callVision(prompt, input.png, MAX_TOKENS);
+
+    const parsed = parseReply(content) as RawReExtract;
     // A MATRIX MATCH question stores structured columns instead of options — parse them first, and when
     // present clear options so the flat option array is never cluttered with leaked column entries
     // (the "1 4 1 2 3 4 / same value four times" garbage). Non-matrix replies leave match null.
@@ -215,18 +250,52 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     const stem = match ? stripMatchColumnsFromStem(rawStem) : rawStem;
     const answer = asString(parsed.answer).trim();
     const explanation = asStringOrNull(parsed.explanation);
+    // Comprehension sub-question re-read: the passage the page prints above it (null for other types).
+    const passage = asStringOrNull(parsed.passage);
     // A genuine question always has a stem, options, or a match table; a reply with none means the read
     // failed (bad JSON, wrong page, refusal) rather than a truly blank question — don't hand back a wipe.
-    if (!stem && options.length === 0 && !match && !answer && !explanation) {
+    if (!stem && options.length === 0 && !match && !answer && !explanation && !passage) {
       throw errors.extractionFailed(
         'The model could not read this question from the page. Please try again or edit the field manually.',
       );
     }
-    const usage: AiTokenUsage = { model: this.model, promptTokens, completionTokens, totalTokens, callCount };
     logger.info(
       { questionNumber: input.questionNumber, options: options.length, match: match !== null },
       'question re-extract done',
     );
-    return { stem, options, answer, explanation, match, usage };
+    return { stem, options, answer, explanation, match, passage, usage };
+  }
+
+  async reExtractGroup(input: GroupReExtractInput): Promise<GroupReExtraction> {
+    const prompt = reExtractGroupPrompt({
+      questionNumbers: input.questionNumbers,
+      passageHint: input.passageHint,
+    });
+    const { content, usage } = await this.callVision(prompt, input.png, GROUP_MAX_TOKENS);
+
+    const parsed = parseReply(content) as RawGroupReExtract;
+    const passage = asString(parsed.passage).trim();
+    const rawQuestions = Array.isArray(parsed.questions) ? (parsed.questions as RawGroupQuestion[]) : [];
+    const subQuestions: ReExtractedSubDraft[] = rawQuestions.map((raw) => ({
+      questionNumber: toQuestionNumber(raw.question_number),
+      stem: asString(raw.stem).trim(),
+      options: toOptions(raw.options),
+      answer: asString(raw.answer).trim(),
+      explanation: asStringOrNull(raw.explanation),
+      // A comprehension sub-question is never a matrix; keep the shape uniform with the single re-read.
+      match: null,
+    }));
+    // The read failed (bad JSON, wrong page, refusal) when it yields neither a passage nor any
+    // sub-question — surface it rather than wiping the group's drafts to blanks.
+    if (!passage && subQuestions.length === 0) {
+      throw errors.extractionFailed(
+        'The model could not read this comprehension passage from the page. Please try again or edit the fields manually.',
+      );
+    }
+    logger.info(
+      { subQuestions: subQuestions.length, passageChars: passage.length },
+      'comprehension group re-extract done',
+    );
+    return { passage, subQuestions, usage };
   }
 }

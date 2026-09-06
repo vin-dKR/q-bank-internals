@@ -114,6 +114,17 @@ export const QuestionSchema = z.object({
   // Structured match-the-column data (columns + correct matching) when this is a MATRIX MATCH
   // question; null for every other type. The flat `answer` above mirrors `match.key` as text.
   match: MatchDataSchema.nullable(),
+  // Comprehension grouping (BLA-125). A comprehension paper prints one shared passage followed by
+  // several sub-questions; each sub-question is persisted as its OWN row (so every flat renderer keeps
+  // working) and the three fields below link the group so a group-aware renderer can show the passage
+  // ONCE above its ordered sub-questions. All null on an ordinary question. `passage` carries the FULL
+  // shared passage VERBATIM and is repeated (identical) on every sibling row so each row is
+  // self-contained; `groupId` is a stable identity shared by every sibling (a hash of the normalized
+  // passage + documentId, so it is deterministic across re-publish); `groupOrder` is the sub-question's
+  // 0-based position within the group. Defaulted so rows written before this field still parse.
+  passage: z.string().nullable().default(null),
+  groupId: z.string().nullable().default(null),
+  groupOrder: z.number().int().nullable().default(null),
   // Bank-aligned image fields (mirrors the main Question collection so publish is a straight copy).
   // `questionImage` is a comma-separated list of Supabase URLs; `optionImages[i]` is the URL for option i.
   isQuestionImage: z.boolean(),
@@ -170,6 +181,9 @@ export const UpdateQuestionSchema = QuestionSchema.pick({
   options: true,
   answer: true,
   match: true,
+  // Editable on the Verify group container — the operator fixes the shared passage once and the client
+  // fans the same patch across every sibling row of the group so they stay identical.
+  passage: true,
   explanation: true,
   images: true,
   isQuestionImage: true,
@@ -265,8 +279,51 @@ export const ReExtractedQuestionSchema = z.object({
   // correct matching); null for every other type. Mirrors {@link QuestionSchema.match} so a matrix
   // re-extraction can drop straight into the verify card's match table instead of garbling `options`.
   match: MatchDataSchema.nullable(),
+  // The shared comprehension passage re-read off the page for a COMPREHENSION sub-question; null for
+  // every other type (and when the type override is not comprehension). Defaulted so a re-extraction
+  // reply that omits it — every non-comprehension re-read — still parses. Whole-group re-extraction
+  // uses {@link ReExtractedGroupSchema} instead; this is only the single-question path's best effort.
+  passage: z.string().nullable().default(null),
 });
 export type ReExtractedQuestion = z.infer<typeof ReExtractedQuestionSchema>;
+
+/**
+ * Ask the AI to re-read a whole COMPREHENSION GROUP off its source page (BLA-125): the shared passage
+ * plus every sub-question at once. Addressed by the group's stable `groupId` within its document; the
+ * service resolves the group's existing rows (and their source page) from it. `source` redirects the
+ * page read exactly as {@link ReExtractQuestionSchema} does (e.g. re-read answers/explanations from the
+ * sibling solution PDF). `questionType` is carried for symmetry but a group is comprehension by
+ * definition. This is the group companion to the single-question re-read.
+ */
+export const ReExtractGroupSchema = z.object({
+  documentId: z.string().min(1),
+  groupId: z.string().min(1),
+  source: ReExtractSourceSchema.optional(),
+  questionType: z.string().min(1).nullable().optional(),
+});
+export type ReExtractGroup = z.infer<typeof ReExtractGroupSchema>;
+
+/**
+ * One re-extracted sub-question of a group, already matched back to the existing row it should update
+ * (by printed number, else by position) so the Verify client can drop each straight onto the right
+ * card's draft. Extends the single-question re-extract shape with the target `questionId`.
+ */
+export const ReExtractedSubQuestionSchema = ReExtractedQuestionSchema.extend({
+  questionId: z.string(),
+});
+export type ReExtractedSubQuestion = z.infer<typeof ReExtractedSubQuestionSchema>;
+
+/**
+ * The result of a whole-group re-read: the freshly-read shared `passage` (applied to every row of the
+ * group by the client) and the per-sub-question fields, each carrying the `questionId` of the existing
+ * row it maps to. Sub-questions the model did not return keep their current draft; extras it invented
+ * (no matching row) are dropped server-side, so the array only ever addresses real rows.
+ */
+export const ReExtractedGroupSchema = z.object({
+  passage: z.string(),
+  subQuestions: z.array(ReExtractedSubQuestionSchema),
+});
+export type ReExtractedGroup = z.infer<typeof ReExtractedGroupSchema>;
 
 /** Result of publishing extracted questions into the main bank: how many rows were written. */
 export const PublishResultSchema = z.object({ published: z.number().int().nonnegative() });

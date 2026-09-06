@@ -25,6 +25,7 @@ export function createQuestionsRouter(service: QuestionsService): Router {
   router.post('/refine', controller.refine);
   router.post('/paper-metadata', upload.single('file'), controller.extractPaperMetadata);
   router.post('/re-extract', controller.reExtract);
+  router.post('/re-extract-group', controller.reExtractGroup);
   router.post('/detect-figures', controller.detectFigures);
   router.post('/detect-figures/batch', controller.detectFiguresBatch);
   // `/batch` must be declared before `/:id`, or Express would route it as id="batch".

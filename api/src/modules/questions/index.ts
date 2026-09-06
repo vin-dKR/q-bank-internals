@@ -14,8 +14,11 @@ export type {
   QuestionTop,
 } from './diagram-detector.js';
 export type {
+  GroupReExtractInput,
+  GroupReExtraction,
   QuestionReExtraction,
   QuestionReExtractor,
+  ReExtractedSubDraft,
   ReExtractInput,
 } from './question-reextractor.js';
 export type {

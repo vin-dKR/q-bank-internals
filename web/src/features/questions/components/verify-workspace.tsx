@@ -1,6 +1,6 @@
 import { type CSSProperties, type JSX, type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { DetectedFigure, ImageCrop, Question, ReExtractSource } from '@ingest/contracts';
+import type { DetectedFigure, ImageCrop, Question, ReExtractedGroup, ReExtractSource } from '@ingest/contracts';
 import { DETECT_FIGURES_MAX_PAGES } from '@ingest/contracts';
 import { getCroppedBlob } from '../../../shared/lib/crop-image.js';
 import { useDocument } from '../../documents/index.js';
@@ -36,6 +36,7 @@ import {
   type CardDrawTarget,
   EditableQuestionCard,
 } from './editable-question-card.js';
+import { ComprehensionGroupPanel } from './comprehension-group.js';
 import { SourcePreviewPane } from './source-preview-pane.js';
 import { useVerifySources } from '../hooks/use-verify-sources.js';
 
@@ -635,11 +636,63 @@ export function VerifyWorkspace({
     return map;
   }, [questions.data]);
 
+  // Group this page's questions for rendering: consecutive rows sharing a non-null comprehension
+  // groupId collapse under ONE passage header (BLA-125); everything else renders as a standalone card.
+  // The list arrives in PDF reading order (groups already contiguous, ordered by groupOrder), so a
+  // single walk preserves order.
+  type RenderItem =
+    | { kind: 'single'; question: Question }
+    | { kind: 'group'; groupId: string; first: Question; questions: Question[] };
+  const renderItems = useMemo<RenderItem[]>(() => {
+    const items: RenderItem[] = [];
+    for (const question of onThisPage) {
+      const groupId = question.groupId;
+      if (groupId === null) {
+        items.push({ kind: 'single', question });
+        continue;
+      }
+      const last = items[items.length - 1];
+      if (last && last.kind === 'group' && last.groupId === groupId) last.questions.push(question);
+      else items.push({ kind: 'group', groupId, first: question, questions: [question] });
+    }
+    return items;
+  }, [onThisPage]);
+
+  // Fan a passage edit across every sibling's draft so the whole group saves the identical passage.
+  const setGroupPassage = useCallback(
+    (groupQuestions: Question[], value: string): void => {
+      for (const q of groupQuestions) drafts.updateDraft(q.id, (prev) => ({ ...prev, passage: value }));
+    },
+    [drafts],
+  );
+
+  // Apply a whole-group re-read: the fresh passage onto every row, and each sub-question's fields onto
+  // the card it was matched to. Non-empty reads win; an empty answer/explanation is kept so a question
+  // paper that prints neither never wipes a good value (mirrors the single-question reExtractWhole).
+  const applyGroupReExtract = useCallback(
+    (groupQuestions: Question[], result: ReExtractedGroup): void => {
+      const byId = new Map(result.subQuestions.map((sub) => [sub.questionId, sub]));
+      for (const q of groupQuestions) {
+        const sub = byId.get(q.id);
+        drafts.updateDraft(q.id, (prev) => {
+          const next: typeof prev = { ...prev, passage: result.passage };
+          if (!sub) return next;
+          if (sub.stem.trim() !== '') next.stem = sub.stem;
+          if (sub.options.length > 0) next.options = sub.options;
+          if (sub.answer.trim() !== '') next.answer = sub.answer;
+          if (sub.explanation && sub.explanation.trim() !== '') next.explanation = sub.explanation;
+          return next;
+        });
+      }
+    },
+    [drafts],
+  );
+
   // Question numbers the extractor appears to have skipped: gaps in the min..max run of the numbers it
   // read across the whole document. Surfaced so a missing question is visible instead of silently
-  // absent. Suppressed for comprehension (its sub-questions collapse into one card, so their numbers
-  // legitimately disappear and would read as false gaps) and for garbled numbering (a stray large
-  // number that would paint the whole range as missing).
+  // absent. Suppressed for comprehension (a shared-passage block's sub-questions are often numbered
+  // irregularly — restarting per passage, or sharing one printed number — which would read as false
+  // gaps) and for garbled numbering (a stray large number that would paint the whole range as missing).
   const missingNumbers = useMemo<number[]>(() => {
     const data = questions.data ?? [];
     if (data.some((q) => q.questionType === 'comprehension')) return [];
@@ -1438,6 +1491,39 @@ export function VerifyWorkspace({
       ? { type: drawTarget.type, optionIndex: drawTarget.optionIndex }
       : null;
 
+  // One question's editable card, wrapped for scroll-to/ring — shared by the standalone and the
+  // grouped (comprehension) render paths so a card looks identical either way.
+  const renderCard = (question: Question): JSX.Element => (
+    <div
+      key={question.id}
+      ref={(el) => {
+        if (el) cardRefs.current.set(question.id, el);
+        else cardRefs.current.delete(question.id);
+      }}
+      className={highlightId === question.id ? 'q-card-wrap is-highlighted' : 'q-card-wrap'}
+    >
+      <EditableQuestionCard
+        question={question}
+        number={questionNumberById.get(question.id) ?? 1}
+        draft={drafts.draftFor(question)}
+        dirty={drafts.dirtyIds.has(question.id)}
+        saving={drafts.savingIds.has(question.id)}
+        boxes={cardBoxesFor(question.id)}
+        drawTarget={cardDrawTargetFor(question.id)}
+        cropDisabled={runActive}
+        answerSource={answerSource}
+        solutionSource={solutionSource}
+        onDraftUpdate={(updater) => { drafts.updateDraft(question.id, updater); }}
+        onSave={() => { void drafts.save([question.id]); }}
+        onRequestCrop={requestCrop}
+        onDrawRegion={toggleDrawTarget}
+        onSaveBox={(boxId) => { void requestSave(boxId); }}
+        onDeleteBox={deleteBox}
+        onEditCrop={(type, optionIndex, url) => { editCrop(question.id, type, optionIndex, url); }}
+      />
+    </div>
+  );
+
   if (questions.isPending) {
     return (
       <div className="card">
@@ -1727,36 +1813,26 @@ export function VerifyWorkspace({
             body="Use the page arrows above the source page to move to a page with extracted questions."
           />
         ) : (
-          onThisPage.map((question, index) => (
-            <div
-              key={question.id}
-              ref={(el) => {
-                if (el) cardRefs.current.set(question.id, el);
-                else cardRefs.current.delete(question.id);
-              }}
-              className={highlightId === question.id ? 'q-card-wrap is-highlighted' : 'q-card-wrap'}
-            >
-              <EditableQuestionCard
-                question={question}
-                number={questionNumberById.get(question.id) ?? index + 1}
-                draft={drafts.draftFor(question)}
-                dirty={drafts.dirtyIds.has(question.id)}
-                saving={drafts.savingIds.has(question.id)}
-                boxes={cardBoxesFor(question.id)}
-                drawTarget={cardDrawTargetFor(question.id)}
-                cropDisabled={runActive}
-                answerSource={answerSource}
-                solutionSource={solutionSource}
-                onDraftUpdate={(updater) => { drafts.updateDraft(question.id, updater); }}
-                onSave={() => { void drafts.save([question.id]); }}
-                onRequestCrop={requestCrop}
-                onDrawRegion={toggleDrawTarget}
-                onSaveBox={(boxId) => { void requestSave(boxId); }}
-                onDeleteBox={deleteBox}
-                onEditCrop={(type, optionIndex, url) => { editCrop(question.id, type, optionIndex, url); }}
-              />
-            </div>
-          ))
+          renderItems.map((item) =>
+            item.kind === 'single' ? (
+              renderCard(item.question)
+            ) : (
+              <div key={`group_${item.groupId}`} className="flex flex-col gap-3">
+                <ComprehensionGroupPanel
+                  documentId={documentId}
+                  groupId={item.groupId}
+                  count={item.questions.length}
+                  passage={drafts.draftFor(item.first).passage}
+                  dirty={item.questions.some((q) => drafts.dirtyIds.has(q.id))}
+                  questionType={drafts.draftFor(item.first).questionType || null}
+                  disabled={runActive}
+                  onPassageChange={(value) => { setGroupPassage(item.questions, value); }}
+                  onReExtracted={(result) => { applyGroupReExtract(item.questions, result); }}
+                />
+                {item.questions.map((question) => renderCard(question))}
+              </div>
+            ),
+          )
         )}
       </div>
     </div>

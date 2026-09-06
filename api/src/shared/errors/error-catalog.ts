@@ -17,6 +17,13 @@ export const errors = {
   questionNotFound: (id: string): AppError =>
     new AppError('QUESTION_NOT_FOUND', 404, `No question with id "${id}".`),
 
+  comprehensionGroupNotFound: (groupId: string): AppError =>
+    new AppError(
+      'COMPREHENSION_GROUP_NOT_FOUND',
+      404,
+      `No comprehension group with id "${groupId}" in this document.`,
+    ),
+
   bankQuestionNotFound: (questionId: string): AppError =>
     new AppError(
       'BANK_QUESTION_NOT_FOUND',

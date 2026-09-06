@@ -31,6 +31,10 @@ const RawCatalogQuestionSchema = z
     section_name: z.string().nullable().catch(null),
     question_type: z.string().nullable().catch(null),
     topic: z.string().nullable().catch(null),
+    // Comprehension grouping (BLA-125), stamped at publish; null/absent on ordinary and legacy rows.
+    passage: z.string().nullable().catch(null),
+    group_id: z.string().nullable().catch(null),
+    group_order: ejsonNumber.nullable().catch(null),
     flagged: ejsonBool.catch(false),
     // PYQ provenance stamped at publish; absent/false on non-PYQ and legacy rows.
     is_pyq: ejsonBool.catch(false),
@@ -58,6 +62,9 @@ const RawCatalogQuestionSchema = z
       section: doc.section_name,
       questionType: doc.question_type,
       topic: doc.topic,
+      passage: doc.passage,
+      groupId: doc.group_id,
+      groupOrder: doc.group_order,
       flagged: doc.flagged,
       isPyq: doc.is_pyq,
       pyqExam: doc.pyq_exam,
