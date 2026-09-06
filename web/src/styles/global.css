@@ -1189,6 +1189,12 @@
     @apply relative leading-none;
     user-select: none;
   }
+  /* Drag-to-zoom affordance: a crosshair over the page when the magnifier is armed, so it reads as
+     "drag a box to magnify". Crop boxes carry their own move/resize cursors, which win over this on
+     the box itself. */
+  .crop-canvas__frame--zoomable {
+    cursor: crosshair;
+  }
   .crop-canvas__img {
     @apply block h-full w-full select-none;
     -webkit-user-drag: none;
@@ -1207,8 +1213,8 @@
     @apply pointer-events-none absolute border-2 border-dashed border-brand;
     background: color-mix(in srgb, var(--color-brand) 10%, transparent);
   }
-  /* Amazon-style hover magnifier: a square highlights the region under the cursor, and a large panel
-     (portalled to <body>, positioned inline) shows that region enlarged beside the image. */
+  /* Drag-to-zoom magnifier: the operator's rubber-band marks the region being magnified, and a large
+     panel (portalled to <body>, positioned inline) shows that exact region enlarged beside the image. */
   .crop-canvas__lens-area {
     @apply pointer-events-none absolute z-30 rounded-[2px];
     border: 2px solid var(--color-brand);
