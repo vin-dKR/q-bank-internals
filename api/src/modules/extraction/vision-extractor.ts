@@ -16,6 +16,9 @@ export type ExtractedQuestion = {
   answer: string | null;
   explanation: string | null;
   sectionName: string | null;
+  // For a comprehension member this is the model's per-sub-question REAL type (a group holds questions
+  // of any type); for an ordinary question the operator's binding fixes the type in `toNewQuestion`, so
+  // this draft value is only consulted for comprehension members.
   questionType: string | null;
   sourcePage: number;
   /**
@@ -34,18 +37,18 @@ export type ExtractedQuestion = {
   /**
    * The shared comprehension passage this draft belongs under, returned by the vision model VERBATIM
    * and identical across every sub-question of the same passage — null for ordinary questions. It is
-   * the grouping key: {@link groupComprehensionDrafts} stamps every draft sharing a passage with a
-   * common {@link groupId} and a sequential {@link groupOrder}, then each sub-question is persisted as
-   * its OWN row (the passage repeated on each) rather than collapsed into one combined question.
+   * the grouping SIGNAL: {@link materializePassages} dedups the drafts that share a passage into ONE
+   * passage row and stamps each with that row's {@link passageId} + a sequential {@link groupOrder}.
+   * The passage TEXT then lives once on the passage row, never copied onto the question row.
    */
   passage: string | null;
   /**
-   * Stable identity shared by every sub-question of one comprehension group, assigned by
-   * {@link groupComprehensionDrafts} (a hash of the normalized passage + documentId). Null until
-   * grouping runs and on every non-comprehension draft. Persisted so a group-aware renderer can
-   * dedupe siblings and whole-group re-extraction can fetch them.
+   * The passage row's stable id (BLA-125 v2), assigned by {@link materializePassages}: shared by every
+   * sub-question of one comprehension group, null until grouping runs and on every non-comprehension
+   * draft. Persisted as the question's `passageId` so a group-aware renderer + whole-group re-extraction
+   * can resolve the group.
    */
-  groupId: string | null;
+  passageId: string | null;
   /** This sub-question's 0-based position within its comprehension group; null off a group. */
   groupOrder: number | null;
 };

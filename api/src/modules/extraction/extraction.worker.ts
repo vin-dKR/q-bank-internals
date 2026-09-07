@@ -16,7 +16,7 @@ import type {
   ExtractedQuestion,
   VisionExtractor,
 } from './vision-extractor.js';
-import { groupComprehensionDrafts } from './group-comprehension.js';
+import { materializePassages } from './group-comprehension.js';
 import { mergeAnswers } from './merge-answers.js';
 import { topicBindingForPage } from './topic-lookup.js';
 
@@ -80,6 +80,18 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
     paper: document.paper,
   };
 
+  // A comprehension member (has a passageId) carries its OWN real type read by the model — the group
+  // CONTAINER is `comprehension`, each row is a normal type. Default to single_correct when the model
+  // gave nothing usable (or echoed the container type). Ordinary questions keep the operator's binding,
+  // so the model can never mislabel a non-comprehension type.
+  const boundType = binding?.questionType ?? document.questionType;
+  const questionType =
+    draft.passageId !== null
+      ? draft.questionType && draft.questionType !== 'comprehension'
+        ? draft.questionType
+        : 'single_correct'
+      : boundType;
+
   // A match-the-column question persists its structured columns instead of options: the stem is the
   // bare instruction, options stays empty, and the flat `answer` mirrors the match key. The question
   // page rarely prints the matching, so back-fill an empty key from the merged answer sheet string.
@@ -96,12 +108,11 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
       options: [],
       answer,
       match: { columns: draft.match.columns, key },
-      passage: draft.passage,
-      groupId: draft.groupId,
+      passageId: draft.passageId,
       groupOrder: draft.groupOrder,
       explanation: draft.explanation,
       images: [],
-      questionType: binding?.questionType ?? document.questionType,
+      questionType,
       sectionName: document.sectionName ?? document.path.section,
       topic: binding?.topicName ?? null,
       subject: binding?.subject ?? null,
@@ -124,12 +135,11 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
     })),
     answer: draft.answer ?? '',
     match: null,
-    passage: draft.passage,
-    groupId: draft.groupId,
+    passageId: draft.passageId,
     groupOrder: draft.groupOrder,
     explanation: draft.explanation,
     images: [],
-    questionType: binding?.questionType ?? document.questionType,
+    questionType,
     sectionName: binding?.sectionName ?? document.sectionName ?? document.path.section,
     topic: binding?.topicName ?? null,
     subject: binding?.subject ?? null,
@@ -218,12 +228,13 @@ export class ExtractionWorker {
       // questions), so an abort that lands there would otherwise be lost — re-check the deadline
       // before persisting so a cancel/timeout still aborts instead of saving a half-answered result.
       controller.signal.throwIfAborted();
-      // Comprehension sub-questions that share a passage are grouped (not collapsed) AFTER answers are
-      // folded in, so each sub-question keeps its own answer/explanation and is stamped with the group's
-      // shared id + order before it is persisted as its own row.
-      const grouped = groupComprehensionDrafts(answered, documentId);
+      // Comprehension sub-questions that share a passage are materialized into ONE passage row + N
+      // stamped sub-question rows AFTER answers are folded in, so each sub-question keeps its own
+      // answer/explanation and carries its group's passageId + order. Passages are persisted alongside
+      // the questions in one wholesale replace (passages first, so every passageId resolves).
+      const { drafts: grouped, passages } = materializePassages(answered, documentId);
       const rows = grouped.map((draft) => toNewQuestion(document, draft));
-      const count = await this.questions.replaceForDocument(documentId, rows);
+      const count = await this.questions.replaceDocument(documentId, passages, rows);
 
       await this.documents.recordExtraction(documentId, { questionCount: count });
       await this.jobs.update(jobId, {

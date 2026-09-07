@@ -30,7 +30,6 @@ type RawReExtract = {
   explanation?: unknown;
   columns?: unknown;
   match?: unknown;
-  passage?: unknown;
 };
 /** Shape the group re-extract prompt asks for: the shared passage plus one entry per sub-question. */
 type RawGroupQuestion = {
@@ -250,11 +249,9 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     const stem = match ? stripMatchColumnsFromStem(rawStem) : rawStem;
     const answer = asString(parsed.answer).trim();
     const explanation = asStringOrNull(parsed.explanation);
-    // Comprehension sub-question re-read: the passage the page prints above it (null for other types).
-    const passage = asStringOrNull(parsed.passage);
     // A genuine question always has a stem, options, or a match table; a reply with none means the read
     // failed (bad JSON, wrong page, refusal) rather than a truly blank question — don't hand back a wipe.
-    if (!stem && options.length === 0 && !match && !answer && !explanation && !passage) {
+    if (!stem && options.length === 0 && !match && !answer && !explanation) {
       throw errors.extractionFailed(
         'The model could not read this question from the page. Please try again or edit the field manually.',
       );
@@ -263,7 +260,7 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
       { questionNumber: input.questionNumber, options: options.length, match: match !== null },
       'question re-extract done',
     );
-    return { stem, options, answer, explanation, match, passage, usage };
+    return { stem, options, answer, explanation, match, usage };
   }
 
   async reExtractGroup(input: GroupReExtractInput): Promise<GroupReExtraction> {

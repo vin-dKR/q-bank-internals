@@ -1,13 +1,31 @@
 import { randomUUID } from 'node:crypto';
-import type { Question, UpdateQuestion } from '@ingest/contracts';
-import { type NewQuestion, type QuestionRepository, sortByPdfOrder } from '../../../modules/questions/index.js';
+import type { Passage, Question, UpdatePassage, UpdateQuestion } from '@ingest/contracts';
+import {
+  type NewPassage,
+  type NewQuestion,
+  type QuestionRepository,
+  sortByPdfOrder,
+} from '../../../modules/questions/index.js';
 
-/** Dev/test adapter for {@link QuestionRepository}. Holds extracted questions per document in a Map. */
+/** Dev/test adapter for {@link QuestionRepository}. Holds extracted questions + passages per document. */
 export class InMemoryQuestionRepository implements QuestionRepository {
   private readonly byDocument = new Map<string, Question[]>();
+  private readonly passagesByDocument = new Map<string, Passage[]>();
 
-  replaceForDocument(documentId: string, questions: NewQuestion[]): Promise<number> {
+  replaceDocument(documentId: string, passages: NewPassage[], questions: NewQuestion[]): Promise<number> {
     const now = new Date().toISOString();
+    this.passagesByDocument.set(
+      documentId,
+      passages.map((passage) => ({
+        id: passage.id,
+        documentId,
+        text: passage.text,
+        passageImage: passage.passageImage,
+        imageCrops: passage.imageCrops,
+        createdAt: now,
+        updatedAt: now,
+      })),
+    );
     const rows: Question[] = questions.map((question) => ({
       id: randomUUID(),
       documentId,
@@ -17,8 +35,7 @@ export class InMemoryQuestionRepository implements QuestionRepository {
       options: question.options,
       answer: question.answer,
       match: question.match,
-      passage: question.passage,
-      groupId: question.groupId,
+      passageId: question.passageId,
       groupOrder: question.groupOrder,
       explanation: question.explanation,
       images: question.images,
@@ -49,8 +66,13 @@ export class InMemoryQuestionRepository implements QuestionRepository {
     return Promise.resolve(sortByPdfOrder(this.byDocument.get(documentId) ?? []));
   }
 
+  findPassagesByDocument(documentId: string): Promise<Passage[]> {
+    return Promise.resolve([...(this.passagesByDocument.get(documentId) ?? [])]);
+  }
+
   deleteByDocument(documentId: string): Promise<void> {
     this.byDocument.delete(documentId);
+    this.passagesByDocument.delete(documentId);
     return Promise.resolve();
   }
 
@@ -65,7 +87,6 @@ export class InMemoryQuestionRepository implements QuestionRepository {
         ...(patch.options !== undefined ? { options: patch.options } : {}),
         ...(patch.answer !== undefined ? { answer: patch.answer } : {}),
         ...(patch.match !== undefined ? { match: patch.match } : {}),
-        ...(patch.passage !== undefined ? { passage: patch.passage } : {}),
         ...(patch.explanation !== undefined ? { explanation: patch.explanation } : {}),
         ...(patch.images !== undefined ? { images: patch.images } : {}),
         ...(patch.isQuestionImage !== undefined ? { isQuestionImage: patch.isQuestionImage } : {}),
@@ -89,5 +110,72 @@ export class InMemoryQuestionRepository implements QuestionRepository {
       return Promise.resolve(updated);
     }
     throw new Error(`Question ${id} not found in the in-memory store.`);
+  }
+
+  updatePassage(id: string, patch: UpdatePassage): Promise<Passage> {
+    for (const [documentId, rows] of this.passagesByDocument) {
+      const existing = rows.find((row) => row.id === id);
+      if (!existing) continue;
+      const index = rows.indexOf(existing);
+      const updated: Passage = {
+        ...existing,
+        ...(patch.text !== undefined ? { text: patch.text } : {}),
+        ...(patch.passageImage !== undefined ? { passageImage: patch.passageImage } : {}),
+        ...(patch.imageCrops !== undefined ? { imageCrops: patch.imageCrops } : {}),
+        updatedAt: new Date().toISOString(),
+      };
+      const next = [...rows];
+      next[index] = updated;
+      this.passagesByDocument.set(documentId, next);
+      return Promise.resolve(updated);
+    }
+    throw new Error(`Passage ${id} not found in the in-memory store.`);
+  }
+
+  groupQuestions(documentId: string, passageId: string, questionIds: string[]): Promise<Passage> {
+    const now = new Date().toISOString();
+    const passage: Passage = {
+      id: passageId,
+      documentId,
+      text: '',
+      passageImage: null,
+      imageCrops: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    const existing = (this.passagesByDocument.get(documentId) ?? []).filter((p) => p.id !== passageId);
+    this.passagesByDocument.set(documentId, [...existing, passage]);
+
+    const order = new Map(questionIds.map((id, index) => [id, index] as const));
+    const rows = (this.byDocument.get(documentId) ?? []).map((q) =>
+      order.has(q.id) ? { ...q, passageId, groupOrder: order.get(q.id) ?? null } : q,
+    );
+    this.byDocument.set(documentId, rows);
+    this.pruneEmptyPassages(documentId);
+    return Promise.resolve(passage);
+  }
+
+  ungroupPassage(passageId: string): Promise<void> {
+    for (const [documentId, passages] of this.passagesByDocument) {
+      if (!passages.some((p) => p.id === passageId)) continue;
+      const rows = (this.byDocument.get(documentId) ?? []).map((q) =>
+        q.passageId === passageId ? { ...q, passageId: null, groupOrder: null } : q,
+      );
+      this.byDocument.set(documentId, rows);
+      this.passagesByDocument.set(documentId, passages.filter((p) => p.id !== passageId));
+      break;
+    }
+    return Promise.resolve();
+  }
+
+  /** Drop passages that no question references any more (e.g. after a regroup emptied an old group). */
+  private pruneEmptyPassages(documentId: string): void {
+    const used = new Set(
+      (this.byDocument.get(documentId) ?? [])
+        .map((q) => q.passageId)
+        .filter((id): id is string => id !== null),
+    );
+    const kept = (this.passagesByDocument.get(documentId) ?? []).filter((p) => used.has(p.id));
+    this.passagesByDocument.set(documentId, kept);
   }
 }

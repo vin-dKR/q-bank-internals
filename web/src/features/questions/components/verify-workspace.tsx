@@ -1,12 +1,13 @@
 import { type CSSProperties, type JSX, type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { DetectedFigure, ImageCrop, Question, ReExtractedGroup, ReExtractSource } from '@ingest/contracts';
+import type { DetectedFigure, ImageCrop, Question, QuestionListResponse, ReExtractedGroup, ReExtractSource } from '@ingest/contracts';
 import { DETECT_FIGURES_MAX_PAGES } from '@ingest/contracts';
 import { getCroppedBlob } from '../../../shared/lib/crop-image.js';
 import { useDocument } from '../../documents/index.js';
 import { questionsApi } from '../api/questions.api.js';
-import { questionsQueryKey, usePageCount, useQuestions, useUpdateQuestion } from '../hooks/use-questions.js';
+import { questionsQueryKey, useGroupQuestions, usePageCount, usePassages, useQuestions, useUngroupPassage, useUpdatePassage, useUpdateQuestion } from '../hooks/use-questions.js';
 import { useQuestionDrafts } from '../hooks/use-question-drafts.js';
+import { usePassageDrafts } from '../hooks/use-passage-drafts.js';
 import {
   type BoxRect,
   Button,
@@ -186,7 +187,11 @@ function specToCrop(spec: SavedBoxSpec): ImageCrop {
 
 /** Rebuild the session's natural-pixel specs for a question from the crops persisted on it. */
 function cropsToSpecs(question: Question, number: number): SavedBoxSpec[] {
-  return question.imageCrops.map((crop, index) => ({
+  // A question's crops only ever target its own question/option destinations; passage crops live on the
+  // Passage entity, so filter them out here (the type predicate also narrows to SavedBoxSpec's union).
+  return question.imageCrops
+    .filter((crop): crop is ImageCrop & { type: 'question' | 'option' } => crop.type !== 'passage')
+    .map((crop, index) => ({
     id: `persist_${question.id}_${crop.type}_${String(crop.optionIndex)}_${String(index)}`,
     questionId: question.id,
     type: crop.type,
@@ -440,6 +445,38 @@ export function VerifyWorkspace({
     pyqExam: document.data?.pyqExam ?? null,
     pyqYear: document.data?.pyqYear ?? null,
   });
+  // Comprehension passages (BLA-125, v2) are a separate entity, edited once in the group panel.
+  const passages = usePassages(documentId);
+  const passageDrafts = usePassageDrafts(documentId, passages.data);
+  // The shared passage figure saves immediately on crop (like question images), not through the draft.
+  const passageImageUpdate = useUpdatePassage(documentId);
+  // Auto-attach a detected shared-passage figure: crop the bbox off `sourcePage`, upload, and save it as
+  // the passage image — unless the passage already has one. Shared by the single-page + whole-doc runs.
+  const attachPassageFigure = useCallback(
+    async (passageId: string, sourcePage: number, bbox: [number, number, number, number]): Promise<boolean> => {
+      const existing = (passages.data ?? []).find((p) => p.id === passageId);
+      if (existing?.passageImage) return false;
+      const [x, y, w, h] = bbox;
+      const blob = await getCroppedBlob(questionsApi.pageImageUrl(documentId, sourcePage), { x, y, width: w, height: h });
+      const { url } = await questionsApi.uploadImage(passageId, `passage_${String(Date.now())}`, blob);
+      await passageImageUpdate.mutateAsync({ id: passageId, patch: { passageImage: url } });
+      return true;
+    },
+    [documentId, passages.data, passageImageUpdate],
+  );
+  // Manual grouping (BLA-125, v2): select standalone question cards → group them into a comprehension.
+  const groupMutation = useGroupQuestions(documentId);
+  const ungroupMutation = useUngroupPassage(documentId);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  useEffect(() => { setSelectedIds(new Set()); }, [documentId]);
+  const toggleSelect = useCallback((id: string): void => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   const [page, setPage] = useState(initialPage ?? 1);
   // The sibling answer/solution sources for this unit, resolved for the page currently on screen so
@@ -531,9 +568,11 @@ export function VerifyWorkspace({
   // save (or a card edit) of the same question always sees the post-patch record, never a stale one.
   const readQuestion = useCallback(
     (questionId: string): Question | undefined =>
+      // getQueryData returns the RAW cached value (a QuestionListResponse), NOT a `select` slice — so
+      // read `.questions` off it, never treat the cache as a bare Question[].
       queryClient
-        .getQueryData<Question[]>(questionsQueryKey(documentId))
-        ?.find((q) => q.id === questionId),
+        .getQueryData<QuestionListResponse>(questionsQueryKey(documentId))
+        ?.questions.find((q) => q.id === questionId),
     [queryClient, documentId],
   );
 
@@ -637,46 +676,58 @@ export function VerifyWorkspace({
   }, [questions.data]);
 
   // Group this page's questions for rendering: consecutive rows sharing a non-null comprehension
-  // groupId collapse under ONE passage header (BLA-125); everything else renders as a standalone card.
+  // passageId collapse under ONE passage header (BLA-125); everything else renders as a standalone card.
   // The list arrives in PDF reading order (groups already contiguous, ordered by groupOrder), so a
   // single walk preserves order.
   type RenderItem =
     | { kind: 'single'; question: Question }
-    | { kind: 'group'; groupId: string; first: Question; questions: Question[] };
+    | { kind: 'group'; passageId: string; first: Question; questions: Question[] };
   const renderItems = useMemo<RenderItem[]>(() => {
     const items: RenderItem[] = [];
+    // Coalesce by passageId (not just consecutive rows): a manually-grouped, non-contiguous set must
+    // still render as exactly ONE group card (unique key), anchored at its first member's position.
+    const groupByPassage = new Map<string, Extract<RenderItem, { kind: 'group' }>>();
     for (const question of onThisPage) {
-      const groupId = question.groupId;
-      if (groupId === null) {
+      const passageId = question.passageId;
+      if (passageId === null) {
         items.push({ kind: 'single', question });
         continue;
       }
-      const last = items[items.length - 1];
-      if (last && last.kind === 'group' && last.groupId === groupId) last.questions.push(question);
-      else items.push({ kind: 'group', groupId, first: question, questions: [question] });
+      const existing = groupByPassage.get(passageId);
+      if (existing) {
+        existing.questions.push(question);
+        continue;
+      }
+      const group: Extract<RenderItem, { kind: 'group' }> = {
+        kind: 'group',
+        passageId,
+        first: question,
+        questions: [question],
+      };
+      groupByPassage.set(passageId, group);
+      items.push(group);
     }
     return items;
   }, [onThisPage]);
 
-  // Fan a passage edit across every sibling's draft so the whole group saves the identical passage.
-  const setGroupPassage = useCallback(
-    (groupQuestions: Question[], value: string): void => {
-      for (const q of groupQuestions) drafts.updateDraft(q.id, (prev) => ({ ...prev, passage: value }));
-    },
-    [drafts],
+  // The passage entity for each group, so the panel shows its text (draft) + shared image.
+  const passageById = useMemo(
+    () => new Map((passages.data ?? []).map((passage) => [passage.id, passage] as const)),
+    [passages.data],
   );
 
-  // Apply a whole-group re-read: the fresh passage onto every row, and each sub-question's fields onto
-  // the card it was matched to. Non-empty reads win; an empty answer/explanation is kept so a question
-  // paper that prints neither never wipes a good value (mirrors the single-question reExtractWhole).
+  // Apply a whole-group re-read: the fresh passage onto the group's Passage draft (edited in one place),
+  // and each sub-question's fields onto the card it was matched to. Non-empty reads win; an empty
+  // answer/explanation is kept so a question paper that prints neither never wipes a good value.
   const applyGroupReExtract = useCallback(
-    (groupQuestions: Question[], result: ReExtractedGroup): void => {
+    (passageId: string, groupQuestions: Question[], result: ReExtractedGroup): void => {
+      passageDrafts.setText(passageId, result.passage);
       const byId = new Map(result.subQuestions.map((sub) => [sub.questionId, sub]));
       for (const q of groupQuestions) {
         const sub = byId.get(q.id);
+        if (!sub) continue;
         drafts.updateDraft(q.id, (prev) => {
-          const next: typeof prev = { ...prev, passage: result.passage };
-          if (!sub) return next;
+          const next = { ...prev };
           if (sub.stem.trim() !== '') next.stem = sub.stem;
           if (sub.options.length > 0) next.options = sub.options;
           if (sub.answer.trim() !== '') next.answer = sub.answer;
@@ -685,8 +736,18 @@ export function VerifyWorkspace({
         });
       }
     },
-    [drafts],
+    [drafts, passageDrafts],
   );
+
+  // The selected questions in PDF reading order (so a manual group's groupOrder follows the sheet).
+  const orderedSelection = useMemo(
+    () => (questions.data ?? []).filter((q) => selectedIds.has(q.id)).map((q) => q.id),
+    [questions.data, selectedIds],
+  );
+  const groupSelected = useCallback((): void => {
+    if (orderedSelection.length < 2) return;
+    groupMutation.mutate(orderedSelection, { onSuccess: () => { setSelectedIds(new Set()); } });
+  }, [groupMutation, orderedSelection]);
 
   // Question numbers the extractor appears to have skipped: gaps in the min..max run of the numbers it
   // read across the whole document. Surfaced so a missing question is visible instead of silently
@@ -695,7 +756,7 @@ export function VerifyWorkspace({
   // gaps) and for garbled numbering (a stray large number that would paint the whole range as missing).
   const missingNumbers = useMemo<number[]>(() => {
     const data = questions.data ?? [];
-    if (data.some((q) => q.questionType === 'comprehension')) return [];
+    if (data.some((q) => q.passageId !== null)) return [];
     const present = new Set<number>();
     for (const q of data) if (q.questionNumber !== null) present.add(q.questionNumber);
     if (present.size < 2) return [];
@@ -1212,8 +1273,19 @@ export function VerifyWorkspace({
       const sx = size.displayWidth / imageWidth;
       const sy = size.displayHeight / imageHeight;
       let skipped = 0;
+      // Shared-passage figures attach straight to the passage, not the question-box pipeline.
+      for (const figure of figures) {
+        if (figure.target !== 'passage' || figure.passageId === null) continue;
+        try {
+          await attachPassageFigure(figure.passageId, page, figure.bbox);
+        } catch (caught) {
+          setAiError(caught instanceof Error ? caught.message : String(caught));
+        }
+      }
       const placed: Box[] = [];
-      figures.forEach((figure, index) => {
+      figures
+        .filter((f): f is DetectedFigure & { target: 'question' | 'option' } => f.target !== 'passage')
+        .forEach((figure, index) => {
         const question = questionById.get(figure.questionId);
         if (question && targetHasImage(question, figure.target, figure.optionIndex)) {
           skipped += 1;
@@ -1247,7 +1319,7 @@ export function VerifyWorkspace({
       setAiBusy(false);
     }
     // commit/questionNumberById are stable enough; guarded single-run via effect below for autoRun.
-  }, [documentId, page, size, questionById, questionNumberById]);
+  }, [documentId, page, size, questionById, questionNumberById, attachPassageFigure]);
 
   // --- Whole-document detection (detect + attach across ALL pages in one run). ---
   /**
@@ -1301,12 +1373,34 @@ export function VerifyWorkspace({
 
       // Re-read the questions before building patches: detection can take minutes and a patch built
       // from the run-start snapshot would silently erase anything saved in the meantime.
-      const freshQuestions = await questionsApi.listByDocument(documentId);
+      const freshQuestions = (await questionsApi.listByDocument(documentId)).questions;
       const freshById = new Map(freshQuestions.map((q) => [q.id, q]));
 
-      let skipped = 0;
-      const byQuestion = new Map<string, { page: number; figure: DetectedFigure }[]>();
+      // Shared-passage figures attach straight to their passage; the rest go through the question
+      // pipeline. Dedup per passageId (first-wins across pages) so one passage is attached at most once
+      // per run — the per-page matcher only dedups within its own page.
+      const passageFirst = new Map<string, { page: number; bbox: [number, number, number, number] }>();
       for (const entry of detected) {
+        if (entry.figure.target !== 'passage' || entry.figure.passageId === null) continue;
+        if (!passageFirst.has(entry.figure.passageId)) {
+          passageFirst.set(entry.figure.passageId, { page: entry.page, bbox: entry.figure.bbox });
+        }
+      }
+      for (const [passageId, { page: sourcePage, bbox }] of passageFirst) {
+        try {
+          await attachPassageFigure(passageId, sourcePage, bbox);
+        } catch (caught) {
+          firstFailure ??= caught instanceof Error ? caught.message : String(caught);
+        }
+      }
+      const questionDetected = detected.filter(
+        (e): e is { page: number; figure: DetectedFigure & { target: 'question' | 'option' } } =>
+          e.figure.target !== 'passage',
+      );
+
+      let skipped = 0;
+      const byQuestion = new Map<string, { page: number; figure: DetectedFigure & { target: 'question' | 'option' } }[]>();
+      for (const entry of questionDetected) {
         const question = freshById.get(entry.figure.questionId);
         if (!question) continue;
         if (targetHasImage(question, entry.figure.target, entry.figure.optionIndex)) {
@@ -1431,7 +1525,7 @@ export function VerifyWorkspace({
       runActiveRef.current = false;
       setAllProgress(null);
     }
-  }, [documentId, questions.data, patchQuestion, questionNumberById, applyBoxes, applySavedUrls]);
+  }, [documentId, questions.data, patchQuestion, questionNumberById, applyBoxes, applySavedUrls, attachPassageFigure]);
 
   // Auto-detect once on arrival when the session pushed us here with ?auto=1 (still only marks).
   const autoStarted = useRef(false);
@@ -1493,7 +1587,7 @@ export function VerifyWorkspace({
 
   // One question's editable card, wrapped for scroll-to/ring — shared by the standalone and the
   // grouped (comprehension) render paths so a card looks identical either way.
-  const renderCard = (question: Question): JSX.Element => (
+  const renderCard = (question: Question, nested = false): JSX.Element => (
     <div
       key={question.id}
       ref={(el) => {
@@ -1511,6 +1605,7 @@ export function VerifyWorkspace({
         boxes={cardBoxesFor(question.id)}
         drawTarget={cardDrawTargetFor(question.id)}
         cropDisabled={runActive}
+        nested={nested}
         answerSource={answerSource}
         solutionSource={solutionSource}
         onDraftUpdate={(updater) => { drafts.updateDraft(question.id, updater); }}
@@ -1698,19 +1793,32 @@ export function VerifyWorkspace({
             </div>
             <div className="verify__session-row">
               <span className="text-sm text-ink-2">
-                {drafts.dirtyIds.size > 0
-                  ? `${String(drafts.dirtyIds.size)} question(s) with unsaved edits`
+                {drafts.dirtyIds.size + passageDrafts.dirtyIds.size > 0
+                  ? `${String(drafts.dirtyIds.size + passageDrafts.dirtyIds.size)} item(s) with unsaved edits`
                   : 'All edits saved'}
               </span>
               <Button
                 size="xs"
                 className="ml-auto flex-none"
-                disabled={drafts.dirtyIds.size === 0 || drafts.isSaving}
-                onClick={() => { void drafts.save([...drafts.dirtyIds]); }}
+                disabled={
+                  drafts.dirtyIds.size + passageDrafts.dirtyIds.size === 0 ||
+                  drafts.isSaving ||
+                  passageDrafts.isSaving
+                }
+                onClick={() => {
+                  void drafts.save([...drafts.dirtyIds]);
+                  void passageDrafts.save([...passageDrafts.dirtyIds]);
+                }}
               >
-                {drafts.isSaving
-                  ? <><Spinner /> Saving…</>
-                  : `Update all${drafts.dirtyIds.size > 0 ? ` (${String(drafts.dirtyIds.size)})` : ''}`}
+                {drafts.isSaving || passageDrafts.isSaving ? (
+                  <><Spinner /> Saving…</>
+                ) : (
+                  `Update all${
+                    drafts.dirtyIds.size + passageDrafts.dirtyIds.size > 0
+                      ? ` (${String(drafts.dirtyIds.size + passageDrafts.dirtyIds.size)})`
+                      : ''
+                  }`
+                )}
               </Button>
             </div>
             {missingNumbers.length > 0 ? (
@@ -1815,25 +1923,61 @@ export function VerifyWorkspace({
         ) : (
           renderItems.map((item) =>
             item.kind === 'single' ? (
-              renderCard(item.question)
+              <div key={item.question.id} className="flex items-start gap-2.5">
+                <input
+                  type="checkbox"
+                  className="mt-4 w-auto"
+                  checked={selectedIds.has(item.question.id)}
+                  onChange={() => { toggleSelect(item.question.id); }}
+                  title="Select to group into a comprehension"
+                  aria-label="Select question to group into a comprehension"
+                />
+                <div className="min-w-0 flex-1">{renderCard(item.question)}</div>
+              </div>
             ) : (
-              <div key={`group_${item.groupId}`} className="flex flex-col gap-3">
+              // ONE card for the whole comprehension: the passage on top, then its sub-questions
+              // nested inside (flattened cards, divider-separated).
+              <div
+                key={`group_${item.passageId}`}
+                className="flex flex-col gap-3 rounded-xl border border-line bg-surface p-4"
+              >
                 <ComprehensionGroupPanel
                   documentId={documentId}
-                  groupId={item.groupId}
+                  passageId={item.passageId}
                   count={item.questions.length}
-                  passage={drafts.draftFor(item.first).passage}
-                  dirty={item.questions.some((q) => drafts.dirtyIds.has(q.id))}
+                  passage={passageDrafts.textFor(item.passageId)}
+                  passageImage={passageById.get(item.passageId)?.passageImage ?? null}
+                  dirty={passageDrafts.dirtyIds.has(item.passageId)}
                   questionType={drafts.draftFor(item.first).questionType || null}
                   disabled={runActive}
-                  onPassageChange={(value) => { setGroupPassage(item.questions, value); }}
-                  onReExtracted={(result) => { applyGroupReExtract(item.questions, result); }}
+                  onPassageChange={(value) => { passageDrafts.setText(item.passageId, value); }}
+                  onReExtracted={(result) => { applyGroupReExtract(item.passageId, item.questions, result); }}
+                  onUngroup={() => { ungroupMutation.mutate(item.passageId); }}
+                  onRequestCrop={() => requestCrop(item.passageId, 'question')}
+                  onImageChange={(url) => {
+                    void passageImageUpdate.mutateAsync({ id: item.passageId, patch: { passageImage: url } });
+                  }}
                 />
-                {item.questions.map((question) => renderCard(question))}
+                {item.questions.map((question) => (
+                  <div key={question.id} className="border-t border-line pt-3">
+                    {renderCard(question, true)}
+                  </div>
+                ))}
               </div>
             ),
           )
         )}
+        {orderedSelection.length >= 2 ? (
+          <div className="fixed bottom-5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full border border-line bg-surface px-4 py-2 shadow-lg">
+            <span className="text-sm text-ink-2">{orderedSelection.length} selected</span>
+            <Button size="xs" disabled={groupMutation.isPending} onClick={groupSelected}>
+              {groupMutation.isPending ? <><Spinner /> Grouping…</> : 'Group into comprehension'}
+            </Button>
+            <Button size="xs" variant="ghost" onClick={() => { setSelectedIds(new Set()); }}>
+              Cancel
+            </Button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

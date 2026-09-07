@@ -3,18 +3,23 @@ import type {
   BatchUpdateQuestionsResult,
   DetectedFigures,
   DetectedFiguresBatch,
+  Passage,
   Question,
   QuestionBatchUpdate,
+  QuestionListResponse,
   ReExtractedGroup,
   ReExtractedQuestion,
   ReExtractSource,
+  UpdatePassage,
   UpdateQuestion,
 } from '@ingest/contracts';
 import {
   BatchUpdateQuestionsResultSchema,
   DetectedFiguresBatchSchema,
   DetectedFiguresSchema,
+  PassageSchema,
   PublishResultSchema,
+  QuestionListResponseSchema,
   QuestionSchema,
   ReExtractedGroupSchema,
   ReExtractedQuestionSchema,
@@ -24,17 +29,37 @@ import { uploadCrop } from '../../../shared/api/upload-crop.js';
 import { fetchPageCount, pageImageUrl } from '../../../shared/api/pages.js';
 import { refineLatex } from '../../../shared/api/refine.js';
 
-const QuestionListSchema = z.array(QuestionSchema);
+const OkSchema = z.object({ ok: z.boolean() });
 
 /** Feature-scoped calls to the questions + pages endpoints. The only place this feature hits the network. */
 export const questionsApi = {
-  listByDocument: (documentId: string): Promise<Question[]> => {
+  /** A document's extracted questions PLUS the comprehension passages they reference (verify/preview). */
+  listByDocument: (documentId: string): Promise<QuestionListResponse> => {
     const query = new URLSearchParams({ documentId });
-    return request(`/questions?${query.toString()}`, { schema: QuestionListSchema });
+    return request(`/questions?${query.toString()}`, { schema: QuestionListResponseSchema });
   },
 
   update: (id: string, patch: UpdateQuestion): Promise<Question> => {
     return request(`/questions/${id}`, { method: 'PATCH', body: patch, schema: QuestionSchema });
+  },
+
+  /** Apply verify-screen edits (text / shared image) to one comprehension passage — a single PATCH. */
+  updatePassage: (id: string, patch: UpdatePassage): Promise<Passage> => {
+    return request(`/questions/passages/${id}`, { method: 'PATCH', body: patch, schema: PassageSchema });
+  },
+
+  /** Manually group the given questions into a new comprehension passage; returns the created passage. */
+  groupQuestions: (documentId: string, questionIds: string[]): Promise<Passage> => {
+    return request('/questions/group', {
+      method: 'POST',
+      body: { documentId, questionIds },
+      schema: PassageSchema,
+    });
+  },
+
+  /** Dissolve a comprehension group back into standalone questions. */
+  ungroupPassage: async (passageId: string): Promise<void> => {
+    await request(`/questions/passages/${passageId}`, { method: 'DELETE', schema: OkSchema });
   },
 
   /** Push several questions' verify edits in one call; returns per-question success/failure. */
@@ -102,13 +127,14 @@ export const questionsApi = {
 
   /**
    * AI "re-read the whole passage": re-extract a comprehension group's shared passage and every
-   * sub-question in one call. Returns the passage (to apply to every row of the group) and the
-   * per-sub-question fields, each already matched to the `questionId` it should update. `source`
-   * redirects the read to a sibling answer/solution page exactly like {@link reExtract}.
+   * sub-question in one call, addressed by the group's `passageId`. Returns the passage (to apply to
+   * the group's passage record) and the per-sub-question fields, each already matched to the
+   * `questionId` it should update. `source` redirects the read to a sibling answer/solution page
+   * exactly like {@link reExtract}.
    */
   reExtractGroup: (
     documentId: string,
-    groupId: string,
+    passageId: string,
     source?: ReExtractSource,
     questionType?: string | null,
   ): Promise<ReExtractedGroup> => {
@@ -116,7 +142,7 @@ export const questionsApi = {
       method: 'POST',
       body: {
         documentId,
-        groupId,
+        passageId,
         ...(source ? { source } : {}),
         ...(questionType ? { questionType } : {}),
       },

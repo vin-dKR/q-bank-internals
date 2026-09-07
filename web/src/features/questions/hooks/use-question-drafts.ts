@@ -8,11 +8,6 @@ export type QuestionDraft = {
   stem: string;
   answer: string;
   explanation: string;
-  /**
-   * The shared comprehension passage (BLA-125), edited once on the group panel and fanned across
-   * every sibling's draft so they save identically. Empty on a non-comprehension question.
-   */
-  passage: string;
   questionType: string;
   sectionName: string;
   topic: string;
@@ -37,7 +32,6 @@ function toQuestionDraft(question: Question, fallbacks: DraftFallbacks): Questio
     stem: question.stem,
     answer: question.answer,
     explanation: question.explanation ?? '',
-    passage: question.passage ?? '',
     questionType: question.questionType ?? fallbacks.questionType ?? '',
     sectionName: question.sectionName ?? fallbacks.sectionName ?? '',
     topic: question.topic ?? '',
@@ -63,7 +57,6 @@ function draftEquals(a: QuestionDraft, b: QuestionDraft): boolean {
     a.stem === b.stem &&
     a.answer === b.answer &&
     a.explanation === b.explanation &&
-    a.passage === b.passage &&
     a.questionType === b.questionType &&
     a.sectionName === b.sectionName &&
     a.topic === b.topic &&
@@ -83,7 +76,6 @@ function draftToPatch(draft: QuestionDraft): UpdateQuestion {
     stem: draft.stem,
     answer: draft.answer,
     explanation: draft.explanation || null,
-    passage: draft.passage || null,
     options: draft.options,
     match: draft.match,
     questionType: draft.questionType || null,

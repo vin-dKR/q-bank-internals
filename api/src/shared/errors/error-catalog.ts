@@ -24,6 +24,13 @@ export const errors = {
       `No comprehension group with id "${groupId}" in this document.`,
     ),
 
+  passageNotResolved: (questionId: string, passageId: string): AppError =>
+    new AppError(
+      'PASSAGE_NOT_RESOLVED',
+      500,
+      `Question "${questionId}" references comprehension passage "${passageId}", which was not found in this document. Re-extract the document before publishing.`,
+    ),
+
   bankQuestionNotFound: (questionId: string): AppError =>
     new AppError(
       'BANK_QUESTION_NOT_FOUND',

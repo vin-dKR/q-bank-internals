@@ -28,6 +28,9 @@ type RawQuestion = {
   options?: unknown;
   /** Only present for comprehension questions — the shared passage, repeated on each sub-question. */
   passage?: unknown;
+  /** Only present for comprehension sub-questions — that sub-question's OWN real type (a group holds
+   *  questions of any type: single_correct, multi_correct, matrix, …). */
+  question_type?: unknown;
   /** Only present for matrix-match questions — the ordered columns and (optionally) the answer key. */
   columns?: unknown;
   match?: unknown;
@@ -189,14 +192,17 @@ export class OpenAiVisionExtractor implements VisionExtractor {
           answer: asStringOrNull(raw.answer),
           explanation: asStringOrNull(raw.explanation),
           sectionName: input.document.sectionName,
-          questionType: input.document.questionType,
+          // A comprehension member returns its OWN real type; ordinary pages don't emit question_type,
+          // so this falls back to the document type (only consulted for comprehension members in
+          // toNewQuestion — the operator's binding fixes an ordinary question's type).
+          questionType: asStringOrNull(raw.question_type) ?? input.document.questionType,
           sourcePage: page.pageNumber,
           pyqExam: asStringOrNull(raw.pyq_exam),
           pyqYear: asStringOrNull(raw.pyq_year),
           match: toMatchData(raw.columns, raw.match),
           passage: asStringOrNull(raw.passage),
-          // Grouping is assigned later by groupComprehensionDrafts (post answer-merge), not read here.
-          groupId: null,
+          // passageId/groupOrder are assigned later by materializePassages (post answer-merge), not here.
+          passageId: null,
           groupOrder: null,
         });
       }

@@ -20,12 +20,6 @@ export type QuestionReExtraction = {
   explanation: string | null;
   /** Structured columns + matching for a MATRIX MATCH re-read; null for every other type. */
   match: MatchData | null;
-  /**
-   * The shared comprehension passage re-read off the page for a COMPREHENSION sub-question; null for
-   * every other type (and when the page did not print one). Whole-group re-reads use
-   * {@link reExtractGroup} instead; this is the single-question path's best effort.
-   */
-  passage: string | null;
   usage: AiTokenUsage;
 };
 

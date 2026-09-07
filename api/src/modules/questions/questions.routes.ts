@@ -26,10 +26,15 @@ export function createQuestionsRouter(service: QuestionsService): Router {
   router.post('/paper-metadata', upload.single('file'), controller.extractPaperMetadata);
   router.post('/re-extract', controller.reExtract);
   router.post('/re-extract-group', controller.reExtractGroup);
+  router.post('/group', controller.group);
   router.post('/detect-figures', controller.detectFigures);
   router.post('/detect-figures/batch', controller.detectFiguresBatch);
   // `/batch` must be declared before `/:id`, or Express would route it as id="batch".
   router.patch('/batch', controller.batchUpdate);
+  // Edit / dissolve one comprehension passage (its own collection); the two-segment path never
+  // collides with /:id.
+  router.patch('/passages/:id', controller.updatePassage);
+  router.delete('/passages/:id', controller.ungroup);
   router.patch('/:id', controller.update);
   router.post('/:id/images', upload.single('file'), controller.uploadImage);
 
