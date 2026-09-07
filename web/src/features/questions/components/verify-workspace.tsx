@@ -5,7 +5,7 @@ import { DETECT_FIGURES_MAX_PAGES } from '@ingest/contracts';
 import { getCroppedBlob } from '../../../shared/lib/crop-image.js';
 import { useDocument } from '../../documents/index.js';
 import { questionsApi } from '../api/questions.api.js';
-import { questionsQueryKey, useGroupQuestions, usePageCount, usePassages, useQuestions, useUngroupPassage, useUpdateQuestion } from '../hooks/use-questions.js';
+import { questionsQueryKey, useGroupQuestions, usePageCount, usePassages, useQuestions, useUngroupPassage, useUpdatePassage, useUpdateQuestion } from '../hooks/use-questions.js';
 import { useQuestionDrafts } from '../hooks/use-question-drafts.js';
 import { usePassageDrafts } from '../hooks/use-passage-drafts.js';
 import {
@@ -448,6 +448,8 @@ export function VerifyWorkspace({
   // Comprehension passages (BLA-125, v2) are a separate entity, edited once in the group panel.
   const passages = usePassages(documentId);
   const passageDrafts = usePassageDrafts(documentId, passages.data);
+  // The shared passage figure saves immediately on crop (like question images), not through the draft.
+  const passageImageUpdate = useUpdatePassage(documentId);
   // Manual grouping (BLA-125, v2): select standalone question cards → group them into a comprehension.
   const groupMutation = useGroupQuestions(documentId);
   const ungroupMutation = useUngroupPassage(documentId);
@@ -1904,6 +1906,10 @@ export function VerifyWorkspace({
                   onPassageChange={(value) => { passageDrafts.setText(item.passageId, value); }}
                   onReExtracted={(result) => { applyGroupReExtract(item.passageId, item.questions, result); }}
                   onUngroup={() => { ungroupMutation.mutate(item.passageId); }}
+                  onRequestCrop={() => requestCrop(item.passageId, 'question')}
+                  onImageChange={(url) => {
+                    void passageImageUpdate.mutateAsync({ id: item.passageId, patch: { passageImage: url } });
+                  }}
                 />
                 {item.questions.map((question) => (
                   <div key={question.id} className="border-t border-line pt-3">

@@ -4,6 +4,7 @@ import type { ReExtractedGroup, ReExtractSource } from '@ingest/contracts';
 import { Badge, Button, IconLayers, IconScan, useToast } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { questionsApi } from '../api/questions.api.js';
+import { CropImageButton } from './crop-image-button.js';
 
 type Props = {
   documentId: string;
@@ -29,6 +30,10 @@ type Props = {
   onReExtracted: (result: ReExtractedGroup) => void;
   /** Dissolve this comprehension group back into standalone question cards. */
   onUngroup: () => void;
+  /** Arm a one-shot crop of the shared passage figure from the page; resolves with the uploaded URL. */
+  onRequestCrop: () => Promise<string | null>;
+  /** Save (`url`) or clear (`null`) the shared passage figure. */
+  onImageChange: (url: string | null) => void;
 };
 
 /**
@@ -52,6 +57,8 @@ export function ComprehensionGroupPanel({
   onPassageChange,
   onReExtracted,
   onUngroup,
+  onRequestCrop,
+  onImageChange,
 }: Props): JSX.Element {
   const toast = useToast();
   const [reading, setReading] = useState(false);
@@ -119,12 +126,40 @@ export function ComprehensionGroupPanel({
         placeholder="Click to edit the shared passage"
       />
       {passageImage ? (
-        <img
-          src={passageImage}
-          alt="Shared passage figure"
-          className="mt-1 max-h-64 w-auto self-start rounded-md border border-line"
-        />
-      ) : null}
+        <div className="mt-1 flex items-start gap-3">
+          <img
+            src={passageImage}
+            alt="Shared passage figure"
+            className="max-h-64 w-auto rounded-md border border-line"
+          />
+          <div className="flex flex-col items-start gap-1.5">
+            <CropImageButton
+              label="Replace image"
+              disabled={disabled}
+              onRequestCrop={onRequestCrop}
+              onCropped={onImageChange}
+            />
+            <Button
+              variant="ghost"
+              size="xs"
+              disabled={disabled}
+              title="Remove the shared passage figure"
+              onClick={() => { onImageChange(null); }}
+            >
+              Remove image
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-1">
+          <CropImageButton
+            label="Crop passage image from page"
+            disabled={disabled}
+            onRequestCrop={onRequestCrop}
+            onCropped={onImageChange}
+          />
+        </div>
+      )}
     </div>
   );
 }
