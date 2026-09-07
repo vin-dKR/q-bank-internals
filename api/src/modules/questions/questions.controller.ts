@@ -7,6 +7,7 @@ import {
   ReExtractGroupSchema,
   ReExtractQuestionSchema,
   RefineLatexSchema,
+  UpdatePassageSchema,
   UpdateQuestionSchema,
 } from '@ingest/contracts';
 import { asyncHandler } from '../../shared/http/async-handler.js';
@@ -19,6 +20,7 @@ import type { QuestionsService } from './questions.service.js';
 export function createQuestionsController(service: QuestionsService): {
   list: RequestHandler;
   update: RequestHandler;
+  updatePassage: RequestHandler;
   batchUpdate: RequestHandler;
   uploadImage: RequestHandler;
   refine: RequestHandler;
@@ -55,13 +57,18 @@ export function createQuestionsController(service: QuestionsService): {
     }),
 
     reExtractGroup: asyncHandler(async (req, res) => {
-      const { documentId, groupId, source, questionType } = parseOrThrow(ReExtractGroupSchema, req.body);
-      ok(res, await service.reExtractGroup(documentId, groupId, source, questionType));
+      const { documentId, passageId, source, questionType } = parseOrThrow(ReExtractGroupSchema, req.body);
+      ok(res, await service.reExtractGroup(documentId, passageId, source, questionType));
     }),
 
     update: asyncHandler(async (req, res) => {
       const patch = parseOrThrow(UpdateQuestionSchema, req.body);
       ok(res, await service.update(requiredParam(req, 'id'), patch));
+    }),
+
+    updatePassage: asyncHandler(async (req, res) => {
+      const patch = parseOrThrow(UpdatePassageSchema, req.body);
+      ok(res, await service.updatePassage(requiredParam(req, 'id'), patch));
     }),
 
     batchUpdate: asyncHandler(async (req, res) => {

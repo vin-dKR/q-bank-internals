@@ -1,10 +1,13 @@
 import type {
+  ImageCrop,
   MatchData,
   PaperMetadata,
+  Passage,
   Question,
   QuestionImage,
   QuestionOption,
   SourcePath,
+  UpdatePassage,
   UpdateQuestion,
 } from '@ingest/contracts';
 
@@ -17,10 +20,10 @@ export type NewQuestion = {
   options: QuestionOption[];
   answer: string;
   match: MatchData | null;
-  // Comprehension grouping (BLA-125): the shared passage (repeated on every sibling), the group's
-  // stable id, and this sub-question's 0-based order within it. All null on ordinary questions.
-  passage: string | null;
-  groupId: string | null;
+  // Comprehension grouping (BLA-125, v2): the id of the shared {@link NewPassage} this sub-question
+  // belongs to (null on ordinary questions), and its 0-based order within that group. The passage
+  // text/image live ONCE on the Passage row, never copied onto the question.
+  passageId: string | null;
   groupOrder: number | null;
   explanation: string | null;
   images: QuestionImage[];
@@ -39,21 +42,44 @@ export type NewQuestion = {
 };
 
 /**
- * Persistence PORT for extracted questions (§3). Deliberately small: the worker re-extracts a whole
- * document at once, so it replaces that document's questions wholesale — which also makes re-running
- * a document idempotent. Implemented in-memory (dev) and via Prisma (prod).
+ * A shared comprehension passage ready to persist (BLA-125, v2) — one per group in a document. `id` is
+ * the group's deterministic identity (also stamped as the bank group_id on publish); `contentHash` is
+ * the within-document dedup key. The passage text/image are stored here ONCE, not on every sub-question.
+ */
+export type NewPassage = {
+  id: string;
+  documentId: string;
+  text: string;
+  contentHash: string;
+  passageImage: string | null;
+  imageCrops: ImageCrop[];
+};
+
+/**
+ * Persistence PORT for extracted questions + their comprehension passages (§3). Deliberately small: the
+ * worker re-extracts a whole document at once, so it replaces that document's questions AND passages
+ * wholesale — which also makes re-running a document idempotent. Implemented in-memory (dev) and via
+ * Prisma (prod).
  */
 export interface QuestionRepository {
-  /** Replace all questions for a document with the given drafts; returns how many were written. */
-  replaceForDocument(documentId: string, questions: NewQuestion[]): Promise<number>;
+  /**
+   * Replace all questions AND passages for a document with the given drafts (wholesale). Passages are
+   * written before questions so every `passageId` resolves. Returns how many QUESTIONS were written —
+   * passages are group metadata and are never counted as questions.
+   */
+  replaceDocument(documentId: string, passages: NewPassage[], questions: NewQuestion[]): Promise<number>;
   /**
    * Read back the questions extracted from a document, in PDF reading order (printed question
-   * number, falling back to page + position — see `question-order.ts`). Verify and publish both
-   * rely on this order matching the sheet.
+   * number, falling back to page + position — see `question-order.ts`, with a comprehension group
+   * ordered by `groupOrder`). Verify and publish both rely on this order matching the sheet.
    */
   findByDocument(documentId: string): Promise<Question[]>;
+  /** Read the comprehension passages for a document (empty when the document has no groups). */
+  findPassagesByDocument(documentId: string): Promise<Passage[]>;
   /** Apply verify-screen edits (image flags/urls, stem, options, answer) to one question. */
   update(id: string, patch: UpdateQuestion): Promise<Question>;
-  /** Remove all questions for a document (called when the document/session is deleted). */
+  /** Apply verify-screen edits (text / shared image) to one comprehension passage — fixed in ONE place. */
+  updatePassage(id: string, patch: UpdatePassage): Promise<Passage>;
+  /** Remove all questions AND passages for a document (called when the document/session is deleted). */
   deleteByDocument(documentId: string): Promise<void>;
 }

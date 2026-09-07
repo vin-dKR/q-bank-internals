@@ -7,13 +7,15 @@ import { questionsApi } from '../api/questions.api.js';
 
 type Props = {
   documentId: string;
-  /** The comprehension group's stable id — the whole-group re-read is addressed by it. */
-  groupId: string;
+  /** The comprehension group's passage id — the whole-group re-read + passage edit are addressed by it. */
+  passageId: string;
   /** How many sub-questions share this passage (shown as context). */
   count: number;
-  /** The current shared-passage draft value (from the first sibling's draft). */
+  /** The current shared-passage draft text (from the passage entity). */
   passage: string;
-  /** True when any sibling in the group has unsaved edits — shows the indicator. */
+  /** The shared passage figure (Supabase URL), or null when none is attached. */
+  passageImage: string | null;
+  /** True when this passage has unsaved edits — shows the indicator. */
   dirty: boolean;
   /** The group's question type, passed through to the re-read for symmetry with the single path. */
   questionType: string | null;
@@ -21,25 +23,26 @@ type Props = {
   disabled?: boolean;
   /** Redirect the page read to a sibling answer/solution page, exactly like the single re-extract. */
   reExtractSource?: ReExtractSource | undefined;
-  /** Write the edited passage back onto EVERY sibling's draft so they save identically. */
+  /** Edit the shared passage in ONE place (the group's passage record) — no more sibling fan-out. */
   onPassageChange: (value: string) => void;
-  /** Apply a whole-group re-read: the fresh passage (to all rows) + each sub-question's fields. */
+  /** Apply a whole-group re-read: the fresh passage (to the passage record) + each sub-question's fields. */
   onReExtracted: (result: ReExtractedGroup) => void;
 };
 
 /**
- * The shared-passage header for a comprehension group on the Verify screen (BLA-125). Renders once
- * above the group's sub-question cards: the passage is edited here (one editor, fanned across every
- * sibling's draft by {@link Props.onPassageChange}) and a single "re-extract passage + all questions"
- * action re-reads the whole block from the page — the group companion to the card's per-question
- * "re-extract with this type". Errors are toasted; the passage/questions only change on a successful
- * read, so a failed re-read never wipes the current values.
+ * The shared-passage header for a comprehension group on the Verify screen (BLA-125, v2). Renders once
+ * above the group's sub-question cards: the passage is a first-class entity, edited HERE in one place
+ * (no more copying it onto every sibling) and saved with a single PATCH. A single "re-extract passage +
+ * all questions" action re-reads the whole block from the page — the group companion to the card's
+ * per-question "re-extract with this type". Errors are toasted; the passage/questions only change on a
+ * successful read, so a failed re-read never wipes the current values.
  */
 export function ComprehensionGroupPanel({
   documentId,
-  groupId,
+  passageId,
   count,
   passage,
+  passageImage,
   dirty,
   questionType,
   disabled = false,
@@ -55,7 +58,7 @@ export function ComprehensionGroupPanel({
     try {
       const result = await questionsApi.reExtractGroup(
         documentId,
-        groupId,
+        passageId,
         reExtractSource,
         questionType,
       );
@@ -103,6 +106,13 @@ export function ComprehensionGroupPanel({
         multiline
         placeholder="Click to edit the shared passage"
       />
+      {passageImage ? (
+        <img
+          src={passageImage}
+          alt="Shared passage figure"
+          className="mt-1 max-h-64 w-auto self-start rounded-md border border-line"
+        />
+      ) : null}
     </div>
   );
 }

@@ -28,7 +28,7 @@ const TYPE_RULES: Record<string, string> = {
   matrix:
     'This is a MATRIX MATCH (match-the-column) type. Return ONE JSON entry for the whole question. Put ONLY the instruction/stem (e.g. "Match Column I with Columns II and III") in question_text — do NOT copy the columns into it — and leave options as an empty array []. Add a "columns" field: an array of EVERY column in printed order (there are usually TWO, sometimes THREE), each { "title": the column heading e.g. "Column I (Velocity)", "entries": [ { "label": the printed label e.g. "A"/"p"/"t", "body": that entry\'s text with math as LaTeX } ] }. If the page prints the correct matching, also add a "match" field mapping each FIRST-column label to the labels it matches, e.g. { "A": ["p","t"], "B": ["q","u"] }; omit it when the answer is not shown on the question page.',
   comprehension:
-    'This is a COMPREHENSION type: a shared passage is followed by several sub-questions. Return ONE JSON entry PER SUB-QUESTION. Put ONLY that sub-question\'s own text in question_text — do NOT copy the passage into it. Add a "passage" field to every sub-question carrying the FULL shared passage VERBATIM, byte-for-byte IDENTICAL across all sub-questions that share it (this is how they are grouped into one question). question_number is each sub-question\'s printed number; options are that sub-question\'s own choices.',
+    'This is a COMPREHENSION type: a shared passage is followed by several sub-questions of ANY type. Return ONE JSON entry PER SUB-QUESTION. Put ONLY that sub-question\'s own text in question_text — do NOT copy the passage into it. Add a "passage" field to every sub-question carrying the FULL shared passage VERBATIM, byte-for-byte IDENTICAL across all sub-questions that share it (this is how they are grouped). Add a "question_type" field to EACH sub-question naming ITS OWN type — one of "single_correct", "multi_correct", "integer", "matrix", "assertion_reason", "true_false", "fill_blank", "subjective" — because a comprehension group can mix types; use "single_correct" when unsure. question_number is each sub-question\'s printed number; options are that sub-question\'s own choices.',
   assertion_reason:
     'This is an ASSERTION-REASON type: question_text contains both the Assertion (A) and the Reason (R) statements; options are the four standard evaluations of A and R.',
   true_false:
@@ -162,8 +162,7 @@ export function reExtractQuestionPrompt(target: {
   "columns": [ { "title": "Column I", "entries": [ { "label": "A", "body": "…" } ] } ],
   "match": { "A": ["p"], "B": ["q","s"] },
   "answer": "the correct option label(s) e.g. \\"A\\" or \\"AC\\", a numeric/text answer, or \\"\\" if the page does not state it",
-  "explanation": "the worked solution if the page prints one, else null",
-  "passage": "the FULL shared passage VERBATIM if this question is a comprehension sub-question, else null"
+  "explanation": "the worked solution if the page prints one, else null"
 }`,
     `RE-EXTRACT RULES:
 1. Extract ONLY the target question — ignore every other question on the page.
@@ -172,8 +171,7 @@ export function reExtractQuestionPrompt(target: {
 4. columns/match: leave "columns" as [] and OMIT "match" UNLESS this is a MATRIX MATCH question (see the type-specific rule).
 5. answer: use "" when the page does not indicate the correct answer (question papers usually do not).
 6. explanation: use null when no worked solution is printed on this page.
-7. passage: set it to the FULL shared passage VERBATIM ONLY when the target question sits under a shared comprehension passage; otherwise use null. Never copy the passage into "stem".
-8. Preserve all math as LaTeX. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`,
+7. Preserve all math as LaTeX. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`,
     isMatrix
       ? 'MATRIX MATCH: put ONLY the instruction/stem in "stem" — do NOT copy the columns into it. Fill "columns" — an array of EVERY printed column in order (usually two, sometimes three), each { "title": the heading, "entries": [ { "label": the printed label e.g. "A"/"p"/"t", "body": that entry\'s text with math as LaTeX } ] }. ALSO fill "options" with the printed multiple-choice ANSWERS (usually four), each { "label": one of "A"–"D" in printed order (normalize (1)(2)(3)(4)), "body": that choice\'s FULL matching text EXACTLY as printed, e.g. "A-i, B-ii, C-iii, D-iv, E-v", "is_correct": true only for the choice the page marks correct else false }. When the page prints the matching (or marks the correct option), add "match" mapping each first-column label to the labels it matches, e.g. { "A": ["iv"], "B": ["v"] }; omit "match" when no answer is shown.'
       : (typeRule ? `TYPE-SPECIFIC RULE:\n${typeRule}` : ''),

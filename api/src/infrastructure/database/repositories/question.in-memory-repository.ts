@@ -1,13 +1,31 @@
 import { randomUUID } from 'node:crypto';
-import type { Question, UpdateQuestion } from '@ingest/contracts';
-import { type NewQuestion, type QuestionRepository, sortByPdfOrder } from '../../../modules/questions/index.js';
+import type { Passage, Question, UpdatePassage, UpdateQuestion } from '@ingest/contracts';
+import {
+  type NewPassage,
+  type NewQuestion,
+  type QuestionRepository,
+  sortByPdfOrder,
+} from '../../../modules/questions/index.js';
 
-/** Dev/test adapter for {@link QuestionRepository}. Holds extracted questions per document in a Map. */
+/** Dev/test adapter for {@link QuestionRepository}. Holds extracted questions + passages per document. */
 export class InMemoryQuestionRepository implements QuestionRepository {
   private readonly byDocument = new Map<string, Question[]>();
+  private readonly passagesByDocument = new Map<string, Passage[]>();
 
-  replaceForDocument(documentId: string, questions: NewQuestion[]): Promise<number> {
+  replaceDocument(documentId: string, passages: NewPassage[], questions: NewQuestion[]): Promise<number> {
     const now = new Date().toISOString();
+    this.passagesByDocument.set(
+      documentId,
+      passages.map((passage) => ({
+        id: passage.id,
+        documentId,
+        text: passage.text,
+        passageImage: passage.passageImage,
+        imageCrops: passage.imageCrops,
+        createdAt: now,
+        updatedAt: now,
+      })),
+    );
     const rows: Question[] = questions.map((question) => ({
       id: randomUUID(),
       documentId,
@@ -17,8 +35,7 @@ export class InMemoryQuestionRepository implements QuestionRepository {
       options: question.options,
       answer: question.answer,
       match: question.match,
-      passage: question.passage,
-      groupId: question.groupId,
+      passageId: question.passageId,
       groupOrder: question.groupOrder,
       explanation: question.explanation,
       images: question.images,
@@ -49,8 +66,13 @@ export class InMemoryQuestionRepository implements QuestionRepository {
     return Promise.resolve(sortByPdfOrder(this.byDocument.get(documentId) ?? []));
   }
 
+  findPassagesByDocument(documentId: string): Promise<Passage[]> {
+    return Promise.resolve([...(this.passagesByDocument.get(documentId) ?? [])]);
+  }
+
   deleteByDocument(documentId: string): Promise<void> {
     this.byDocument.delete(documentId);
+    this.passagesByDocument.delete(documentId);
     return Promise.resolve();
   }
 
@@ -65,7 +87,6 @@ export class InMemoryQuestionRepository implements QuestionRepository {
         ...(patch.options !== undefined ? { options: patch.options } : {}),
         ...(patch.answer !== undefined ? { answer: patch.answer } : {}),
         ...(patch.match !== undefined ? { match: patch.match } : {}),
-        ...(patch.passage !== undefined ? { passage: patch.passage } : {}),
         ...(patch.explanation !== undefined ? { explanation: patch.explanation } : {}),
         ...(patch.images !== undefined ? { images: patch.images } : {}),
         ...(patch.isQuestionImage !== undefined ? { isQuestionImage: patch.isQuestionImage } : {}),
@@ -89,5 +110,25 @@ export class InMemoryQuestionRepository implements QuestionRepository {
       return Promise.resolve(updated);
     }
     throw new Error(`Question ${id} not found in the in-memory store.`);
+  }
+
+  updatePassage(id: string, patch: UpdatePassage): Promise<Passage> {
+    for (const [documentId, rows] of this.passagesByDocument) {
+      const existing = rows.find((row) => row.id === id);
+      if (!existing) continue;
+      const index = rows.indexOf(existing);
+      const updated: Passage = {
+        ...existing,
+        ...(patch.text !== undefined ? { text: patch.text } : {}),
+        ...(patch.passageImage !== undefined ? { passageImage: patch.passageImage } : {}),
+        ...(patch.imageCrops !== undefined ? { imageCrops: patch.imageCrops } : {}),
+        updatedAt: new Date().toISOString(),
+      };
+      const next = [...rows];
+      next[index] = updated;
+      this.passagesByDocument.set(documentId, next);
+      return Promise.resolve(updated);
+    }
+    throw new Error(`Passage ${id} not found in the in-memory store.`);
   }
 }

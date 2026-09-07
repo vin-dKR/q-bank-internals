@@ -4,12 +4,15 @@ import type {
   DetectedFiguresBatch,
   DetectedFiguresPage,
   PaperMetadata,
+  Passage,
   Question,
   QuestionBatchUpdate,
+  QuestionListResponse,
   ReExtractedGroup,
   ReExtractedQuestion,
   ReExtractedSubQuestion,
   ReExtractSource,
+  UpdatePassage,
   UpdateQuestion,
 } from '@ingest/contracts';
 import type { ReExtractedSubDraft } from './question-reextractor.js';
@@ -51,14 +54,23 @@ export class QuestionsService {
     private readonly paperMetadata: PaperMetadataExtractor,
   ) {}
 
-  /** The questions extracted from a single document, in PDF reading order. */
-  listByDocument(documentId: string): Promise<Question[]> {
-    return this.questions.findByDocument(documentId);
+  /** The questions extracted from a single document (PDF reading order) + the passages they reference. */
+  async listByDocument(documentId: string): Promise<QuestionListResponse> {
+    const [questions, passages] = await Promise.all([
+      this.questions.findByDocument(documentId),
+      this.questions.findPassagesByDocument(documentId),
+    ]);
+    return { questions, passages };
   }
 
   /** Apply verify-screen edits (image flags/urls, stem, options, answer) to a question. */
   update(id: string, patch: UpdateQuestion): Promise<Question> {
     return this.questions.update(id, patch);
+  }
+
+  /** Apply verify-screen edits (text / shared image) to one comprehension passage — fixed in ONE place. */
+  updatePassage(id: string, patch: UpdatePassage): Promise<Passage> {
+    return this.questions.updatePassage(id, patch);
   }
 
   /**
@@ -177,7 +189,7 @@ export class QuestionsService {
     // When the operator has changed the type in verify (not yet saved), honour that choice so the
     // model extracts the right shape for it; otherwise fall back to the question's stored type.
     const questionType = questionTypeOverride ?? question.questionType;
-    const { stem, options, answer, explanation, match, passage, usage } = await this.reExtractor.reExtract({
+    const { stem, options, answer, explanation, match, usage } = await this.reExtractor.reExtract({
       png,
       questionNumber: question.questionNumber,
       stemHint: question.stem,
@@ -189,7 +201,7 @@ export class QuestionsService {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn({ err: message }, 'Failed to record question re-extract token usage');
     }
-    return { stem, options, answer, explanation, match, passage };
+    return { stem, options, answer, explanation, match };
   }
 
   /**
@@ -203,23 +215,27 @@ export class QuestionsService {
    */
   async reExtractGroup(
     documentId: string,
-    groupId: string,
+    passageId: string,
     source?: ReExtractSource,
     questionTypeOverride?: string | null,
   ): Promise<ReExtractedGroup> {
-    const questions = await this.questions.findByDocument(documentId);
+    const [questions, passages] = await Promise.all([
+      this.questions.findByDocument(documentId),
+      this.questions.findPassagesByDocument(documentId),
+    ]);
     // findByDocument returns PDF reading order, which orders a group by groupOrder — so the group's
     // rows arrive in the same order the model reads its sub-questions down the page.
-    const group = questions.filter((candidate) => candidate.groupId === groupId);
+    const group = questions.filter((candidate) => candidate.passageId === passageId);
     const first = group[0];
-    if (!first) throw errors.comprehensionGroupNotFound(groupId);
+    if (!first) throw errors.comprehensionGroupNotFound(passageId);
+    const passageRow = passages.find((candidate) => candidate.id === passageId);
     const sourceDocumentId = source?.documentId ?? documentId;
     const sourcePage = source?.page ?? first.sourceRegion.page;
     const png = await this.pages.renderPage(sourceDocumentId, sourcePage);
     const { passage, subQuestions, usage } = await this.reExtractor.reExtractGroup({
       png,
       questionNumbers: group.map((question) => question.questionNumber),
-      passageHint: first.passage ?? first.stem,
+      passageHint: passageRow?.text ?? first.stem,
       questionType: questionTypeOverride ?? first.questionType,
     });
     try {
@@ -228,11 +244,12 @@ export class QuestionsService {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn({ err: message }, 'Failed to record comprehension group re-extract token usage');
     }
-    // Fall back to the group's existing passage if the model somehow returned an empty one.
-    const resolvedPassage = passage || (first.passage ?? '');
+    // Fall back to the group's existing passage if the model somehow returned an empty one. The client
+    // applies this passage to the group's Passage record (a single PATCH), not to every sub-question.
+    const resolvedPassage = passage || (passageRow?.text ?? '');
     return {
       passage: resolvedPassage,
-      subQuestions: matchGroupSubQuestions(group, subQuestions, resolvedPassage),
+      subQuestions: matchGroupSubQuestions(group, subQuestions),
     };
   }
 
@@ -271,13 +288,12 @@ export class QuestionsService {
  * row is paired with the re-read entry that carries its printed number; failing that (an unnumbered
  * sub-question, or a number the model did not return) it takes the entry at the same position. Each
  * pairing is consumed once, so two rows never claim the same entry. Rows with no matching entry are
- * omitted — the client keeps their current draft rather than wiping it. Every returned entry carries
- * the group `passage` so a per-question apply stays self-consistent with the group.
+ * omitted — the client keeps their current draft rather than wiping it. The shared passage is applied
+ * separately to the group's Passage record, so sub-questions no longer each carry a passage copy.
  */
 function matchGroupSubQuestions(
   group: Question[],
   drafts: ReExtractedSubDraft[],
-  passage: string,
 ): ReExtractedSubQuestion[] {
   const used = new Set<number>();
   const result: ReExtractedSubQuestion[] = [];
@@ -299,7 +315,6 @@ function matchGroupSubQuestions(
       answer: draft.answer,
       explanation: draft.explanation,
       match: draft.match,
-      passage,
     });
   });
   return result;

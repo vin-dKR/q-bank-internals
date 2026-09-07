@@ -4,6 +4,7 @@ import {
   matchKeyToAnswer,
   PAPER_METADATA_FIELDS,
   type PaperMetadata,
+  type Passage,
   type PublishSessionResult,
   type Question,
 } from '@ingest/contracts';
@@ -40,7 +41,15 @@ export class PublishService {
     const questions = await this.questions.findByDocument(documentId);
     if (questions.length === 0) return { published: 0 };
 
-    const rows = questions.map((question, index) => toBankQuestion(question, index, document));
+    // Comprehension passages are normalized in staging; collapse each group's shared passage text (and
+    // image) back onto every sub-question's bank row here, so the bank stays self-contained and the
+    // eduents renderer/counter needs no change. group_id == the passage's stable id.
+    const passages = await this.questions.findPassagesByDocument(documentId);
+    const passageById = new Map(passages.map((passage) => [passage.id, passage] as const));
+
+    const rows = questions.map((question, index) =>
+      toBankQuestion(question, index, document, passageById),
+    );
     // Ordered: the bank write must be confirmed complete (upsertQuestions throws on any partial or
     // failed write) BEFORE status flips to `published`, so a failed write never marks a document done.
     const published = await this.bank.upsertQuestions(rows);
@@ -105,7 +114,21 @@ function toBankPaper(paper: PaperMetadata | null): Record<string, string> | null
 }
 
 /** Map one ingest question into the main bank's Question document shape. */
-function toBankQuestion(question: Question, index: number, document: Document): BankQuestion {
+function toBankQuestion(
+  question: Question,
+  index: number,
+  document: Document,
+  passageById: Map<string, Passage>,
+): BankQuestion {
+  // Resolve this row's comprehension passage (null on ordinary questions). A comprehension member has a
+  // passageId (v2) — or, on a row extracted under v1 before the passage was normalized, a non-null
+  // groupOrder whose old passage columns are now unmapped. Either way, if we cannot resolve its Passage
+  // the group linkage is lost, so fail the publish LOUDLY (re-extracting the document regenerates the v2
+  // shape) instead of silently writing a null passage with a dangling group_order.
+  const passage = question.passageId !== null ? passageById.get(question.passageId) : null;
+  if (!passage && (question.passageId !== null || question.groupOrder !== null)) {
+    throw errors.passageNotResolved(question.id, question.passageId ?? '(legacy pre-v2 row)');
+  }
   return {
     // The shared admin bank: ingest publishes for every org to read. eduents' tenancy read filter
     // (`{ organizationId: null }`) matches a row only when the field EXISTS and is null — a row that
@@ -125,12 +148,15 @@ function toBankQuestion(question: Question, index: number, document: Document): 
     match_columns: question.match ? question.match.columns : null,
     match_key: question.match ? question.match.key : null,
     // Comprehension grouping (BLA-125). Each sub-question is its own bank row; these link the group so
-    // the eduents renderer can show the passage ONCE above its ordered sub-questions. `passage` is the
-    // shared passage (repeated identically on every sibling row), `group_id` the group's stable id, and
-    // `group_order` this sub-question's 0-based position. All null on ordinary questions — new optional
-    // fields, so a flat reader that ignores them still shows a self-contained question.
-    passage: question.passage,
-    group_id: question.groupId,
+    // the eduents renderer shows the passage ONCE above its ordered sub-questions and COUNTS each
+    // sub-question (never the group). The passage text/image are normalized in staging and COLLAPSED
+    // back here — `passage` is the shared text (repeated identically on every sibling row, so the bank
+    // shape is unchanged), `group_id` the passage's stable id, `group_order` this sub-question's 0-based
+    // position. All null on ordinary questions.
+    passage: passage?.text ?? null,
+    // The passage's shared figure, carried through for the eduents renderer (rendering is a follow-up).
+    passage_image: passage?.passageImage ?? null,
+    group_id: question.passageId,
     group_order: question.groupOrder,
     section_name: question.sectionName ?? document.sectionName ?? question.path.section,
     question_type: question.questionType ?? document.questionType ?? null,

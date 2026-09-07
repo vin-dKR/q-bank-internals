@@ -1,46 +1,56 @@
 import { createHash } from 'node:crypto';
+import type { NewPassage } from '../questions/index.js';
 import type { ExtractedQuestion } from './vision-extractor.js';
 
+/** Annotated drafts (each comprehension member stamped with its passageId + order) + the passage rows. */
+export type MaterializedPassages = {
+  drafts: ExtractedQuestion[];
+  passages: NewPassage[];
+};
+
 /**
- * Annotate comprehension sub-questions that share a passage into a GROUP (BLA-125), WITHOUT collapsing
- * them.
+ * Normalize a comprehension block into ONE shared passage per group plus its sub-question rows (BLA-125,
+ * v2), WITHOUT copying the passage text onto every sibling.
  *
  * A comprehension paper prints a passage followed by several sub-questions. The extractor returns one
- * draft per sub-question, each tagged with the same verbatim `passage`. This used to fold every group
- * that shares a passage into ONE flat question (passage + inline renumbered sub-questions), which
- * destroyed the structure — the printed numbers, the per-sub-question options/answer/explanation, and
- * any way to render the passage once above its questions. Instead, this now KEEPS every sub-question as
- * its own draft and stamps each with a shared {@link ExtractedQuestion.groupId} and a sequential
- * {@link ExtractedQuestion.groupOrder}, and canonicalizes the `passage` to the group's first verbatim
- * passage so every sibling row is byte-identical.
+ * draft per sub-question, each tagged with the same verbatim `passage`. This dedups the drafts that
+ * share a passage into a single {@link NewPassage} row (keyed by the normalized passage text, with a
+ * deterministic id), and annotates each member draft with that row's `passageId` and a sequential
+ * 0-based `groupOrder`. The passage TEXT lives once on the passage row — a single edit in verify is
+ * atomic, and siblings can never drift.
  *
- * The result is N drafts (unchanged in count and order) that a downstream renderer can group by
- * `groupId` to show the passage once, while a flat renderer that ignores the new fields still shows N
- * self-contained questions (each carries the passage). Runs AFTER the answer merge so each
- * sub-question already carries its own answer/explanation. Drafts without a passage (every
- * non-comprehension question) pass through untouched with `groupId`/`groupOrder` left null.
+ * Runs AFTER the answer merge so each sub-question already carries its own answer/explanation. Drafts
+ * without a passage (every non-comprehension question) pass through with `passageId`/`groupOrder` null
+ * and produce no passage row. The count and order of drafts are unchanged — this stamps, never collapses.
  */
-export function groupComprehensionDrafts(
+export function materializePassages(
   drafts: ExtractedQuestion[],
   documentId: string,
-): ExtractedQuestion[] {
-  // First-seen canonical passage + stable groupId per normalized passage, and a running per-group order.
-  const canonical = new Map<string, { passage: string; groupId: string }>();
+): MaterializedPassages {
+  // First-seen passage row per normalized passage, and a running per-group order.
+  const byKey = new Map<string, NewPassage>();
   const order = new Map<string, number>();
-  return drafts.map((draft) => {
+  const annotated = drafts.map((draft) => {
     const passage = (draft.passage ?? '').trim();
-    if (passage.length === 0) return draft;
+    if (passage.length === 0) return { ...draft, passageId: null, groupOrder: null };
     const key = passageKey(passage);
-    let meta = canonical.get(key);
-    if (!meta) {
-      meta = { passage, groupId: makeGroupId(documentId, key) };
-      canonical.set(key, meta);
+    let row = byKey.get(key);
+    if (!row) {
+      row = {
+        id: makeGroupId(documentId, key),
+        documentId,
+        text: passage, // first-seen verbatim passage, stored ONCE
+        contentHash: createHash('sha1').update(key).digest('hex'),
+        passageImage: null, // the operator attaches the shared figure later, in verify
+        imageCrops: [],
+      };
+      byKey.set(key, row);
     }
     const groupOrder = order.get(key) ?? 0;
     order.set(key, groupOrder + 1);
-    // Canonicalize the passage to the group's first, so every sibling row stores the identical text.
-    return { ...draft, passage: meta.passage, groupId: meta.groupId, groupOrder };
+    return { ...draft, passageId: row.id, groupOrder };
   });
+  return { drafts: annotated, passages: [...byKey.values()] };
 }
 
 /** Normalize a passage so trivially-different whitespace/case still groups its sub-questions together. */
@@ -49,9 +59,10 @@ function passageKey(passage: string): string {
 }
 
 /**
- * A stable group id: a hash of the document id + the normalized passage. Deterministic — re-extracting
- * or re-publishing the same document yields the same groupId for the same passage, so the group's
- * identity survives across runs and the bank upsert stays idempotent.
+ * A stable passage/group id: a hash of the document id + the normalized passage. Deterministic —
+ * re-extracting or re-publishing the same document yields the same id for the same passage, so the
+ * group's identity survives across runs, the passage image attached in verify re-associates, and the
+ * bank upsert (which stamps this as group_id) stays idempotent.
  */
 function makeGroupId(documentId: string, key: string): string {
   return createHash('sha1').update(`${documentId}\n${key}`).digest('hex').slice(0, 24);

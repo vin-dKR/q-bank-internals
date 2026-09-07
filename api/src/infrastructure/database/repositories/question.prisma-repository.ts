@@ -4,11 +4,18 @@ import {
   ImageCropSchema,
   type MatchData,
   MatchDataSchema,
+  type Passage,
   type Question,
+  type UpdatePassage,
   type UpdateQuestion,
 } from '@ingest/contracts';
 import { z } from 'zod';
-import { type NewQuestion, type QuestionRepository, sortByPdfOrder } from '../../../modules/questions/index.js';
+import {
+  type NewPassage,
+  type NewQuestion,
+  type QuestionRepository,
+  sortByPdfOrder,
+} from '../../../modules/questions/index.js';
 import { type PaperMetadataRow, toContractPaper, toPrismaPaper } from './paper-metadata-row.js';
 
 // Prisma's row shape for a Question, narrowed to what we map back to the contract shape.
@@ -22,9 +29,8 @@ type QuestionRow = {
   answer: string;
   // Prisma `Json?`: the structured match data, validated back into shape by `toMatch`.
   match: unknown;
-  // Comprehension grouping (BLA-125): shared passage + stable group id + 0-based order within the group.
-  passage: string | null;
-  groupId: string | null;
+  // Comprehension grouping (BLA-125, v2): the shared passage's id (null off a group) + 0-based order.
+  passageId: string | null;
   groupOrder: number | null;
   explanation: string | null;
   images: { driveFileId: string; alt: string }[];
@@ -45,6 +51,18 @@ type QuestionRow = {
   pyqYear: string | null;
   paper: PaperMetadataRow | null;
   sourceRegion: { page: number; bbox: number[] };
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+// Prisma's row shape for a Passage, narrowed to what we map back to the contract shape (contentHash is
+// a persistence-only dedup key and is not surfaced on the contract).
+type PassageRow = {
+  id: string;
+  documentId: string;
+  text: string;
+  passageImage: string | null;
+  imageCrops: unknown;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -74,8 +92,7 @@ function toQuestion(row: QuestionRow): Question {
     options: row.options,
     answer: row.answer,
     match: toMatch(row.match),
-    passage: row.passage,
-    groupId: row.groupId,
+    passageId: row.passageId,
     groupOrder: row.groupOrder,
     explanation: row.explanation,
     images: row.images,
@@ -100,15 +117,48 @@ function toQuestion(row: QuestionRow): Question {
   };
 }
 
+function toPassage(row: PassageRow): Passage {
+  return {
+    id: row.id,
+    documentId: row.documentId,
+    text: row.text,
+    passageImage: row.passageImage,
+    imageCrops: toImageCrops(row.imageCrops),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
 /**
  * Production adapter for {@link QuestionRepository}, backed by MongoDB via Prisma. Replaces a
- * document's questions wholesale (delete-then-insert) so re-extracting a document is idempotent.
+ * document's questions + passages wholesale (delete-then-insert) so re-extracting a document is
+ * idempotent.
  */
 export class PrismaQuestionRepository implements QuestionRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
-  async replaceForDocument(documentId: string, questions: NewQuestion[]): Promise<number> {
+  async replaceDocument(
+    documentId: string,
+    passages: NewPassage[],
+    questions: NewQuestion[],
+  ): Promise<number> {
+    // Wholesale replace: clear both collections, then write passages BEFORE questions so every
+    // question's passageId resolves. Mongo-via-Prisma has no multi-doc transaction, but the whole run
+    // is idempotent — a re-extract wholesale-replaces again with the same deterministic passage ids.
     await this.prisma.question.deleteMany({ where: { documentId } });
+    await this.prisma.passage.deleteMany({ where: { documentId } });
+    if (passages.length > 0) {
+      await this.prisma.passage.createMany({
+        data: passages.map((passage) => ({
+          id: passage.id,
+          documentId: passage.documentId,
+          text: passage.text,
+          contentHash: passage.contentHash,
+          passageImage: passage.passageImage,
+          imageCrops: passage.imageCrops,
+        })),
+      });
+    }
     if (questions.length === 0) return 0;
     await this.prisma.question.createMany({
       data: questions.map((question) => ({
@@ -119,8 +169,7 @@ export class PrismaQuestionRepository implements QuestionRepository {
         options: question.options,
         answer: question.answer,
         match: question.match,
-        passage: question.passage,
-        groupId: question.groupId,
+        passageId: question.passageId,
         groupOrder: question.groupOrder,
         explanation: question.explanation,
         images: question.images,
@@ -147,8 +196,17 @@ export class PrismaQuestionRepository implements QuestionRepository {
     return sortByPdfOrder(rows.map(toQuestion));
   }
 
+  async findPassagesByDocument(documentId: string): Promise<Passage[]> {
+    const rows = await this.prisma.passage.findMany({
+      where: { documentId },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map(toPassage);
+  }
+
   async deleteByDocument(documentId: string): Promise<void> {
     await this.prisma.question.deleteMany({ where: { documentId } });
+    await this.prisma.passage.deleteMany({ where: { documentId } });
   }
 
   async update(id: string, patch: UpdateQuestion): Promise<Question> {
@@ -159,7 +217,6 @@ export class PrismaQuestionRepository implements QuestionRepository {
         ...(patch.options !== undefined ? { options: patch.options } : {}),
         ...(patch.answer !== undefined ? { answer: patch.answer } : {}),
         ...(patch.match !== undefined ? { match: patch.match } : {}),
-        ...(patch.passage !== undefined ? { passage: patch.passage } : {}),
         ...(patch.explanation !== undefined ? { explanation: patch.explanation } : {}),
         ...(patch.images !== undefined ? { images: patch.images } : {}),
         ...(patch.isQuestionImage !== undefined ? { isQuestionImage: patch.isQuestionImage } : {}),
@@ -178,5 +235,17 @@ export class PrismaQuestionRepository implements QuestionRepository {
       },
     });
     return toQuestion(row);
+  }
+
+  async updatePassage(id: string, patch: UpdatePassage): Promise<Passage> {
+    const row = await this.prisma.passage.update({
+      where: { id },
+      data: {
+        ...(patch.text !== undefined ? { text: patch.text } : {}),
+        ...(patch.passageImage !== undefined ? { passageImage: patch.passageImage } : {}),
+        ...(patch.imageCrops !== undefined ? { imageCrops: patch.imageCrops } : {}),
+      },
+    });
+    return toPassage(row);
   }
 }

@@ -30,6 +30,8 @@ export function createQuestionsRouter(service: QuestionsService): Router {
   router.post('/detect-figures/batch', controller.detectFiguresBatch);
   // `/batch` must be declared before `/:id`, or Express would route it as id="batch".
   router.patch('/batch', controller.batchUpdate);
+  // Edit one comprehension passage (its own collection); the two-segment path never collides with /:id.
+  router.patch('/passages/:id', controller.updatePassage);
   router.patch('/:id', controller.update);
   router.post('/:id/images', upload.single('file'), controller.uploadImage);
 
