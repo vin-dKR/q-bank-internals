@@ -80,6 +80,14 @@ export interface QuestionRepository {
   update(id: string, patch: UpdateQuestion): Promise<Question>;
   /** Apply verify-screen edits (text / shared image) to one comprehension passage — fixed in ONE place. */
   updatePassage(id: string, patch: UpdatePassage): Promise<Passage>;
+  /**
+   * Manually group `questionIds` (in the given order) into a NEW comprehension passage `passageId`
+   * (empty text). Points each question's passageId at it and stamps groupOrder 0..n-1; any passage left
+   * with no members is removed. Returns the created passage. The verify "group into comprehension" fix-up.
+   */
+  groupQuestions(documentId: string, passageId: string, questionIds: string[]): Promise<Passage>;
+  /** Dissolve a comprehension group: clear passageId/groupOrder on its members and delete the passage. */
+  ungroupPassage(passageId: string): Promise<void>;
   /** Remove all questions AND passages for a document (called when the document/session is deleted). */
   deleteByDocument(documentId: string): Promise<void>;
 }

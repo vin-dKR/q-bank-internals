@@ -131,4 +131,51 @@ export class InMemoryQuestionRepository implements QuestionRepository {
     }
     throw new Error(`Passage ${id} not found in the in-memory store.`);
   }
+
+  groupQuestions(documentId: string, passageId: string, questionIds: string[]): Promise<Passage> {
+    const now = new Date().toISOString();
+    const passage: Passage = {
+      id: passageId,
+      documentId,
+      text: '',
+      passageImage: null,
+      imageCrops: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    const existing = (this.passagesByDocument.get(documentId) ?? []).filter((p) => p.id !== passageId);
+    this.passagesByDocument.set(documentId, [...existing, passage]);
+
+    const order = new Map(questionIds.map((id, index) => [id, index] as const));
+    const rows = (this.byDocument.get(documentId) ?? []).map((q) =>
+      order.has(q.id) ? { ...q, passageId, groupOrder: order.get(q.id) ?? null } : q,
+    );
+    this.byDocument.set(documentId, rows);
+    this.pruneEmptyPassages(documentId);
+    return Promise.resolve(passage);
+  }
+
+  ungroupPassage(passageId: string): Promise<void> {
+    for (const [documentId, passages] of this.passagesByDocument) {
+      if (!passages.some((p) => p.id === passageId)) continue;
+      const rows = (this.byDocument.get(documentId) ?? []).map((q) =>
+        q.passageId === passageId ? { ...q, passageId: null, groupOrder: null } : q,
+      );
+      this.byDocument.set(documentId, rows);
+      this.passagesByDocument.set(documentId, passages.filter((p) => p.id !== passageId));
+      break;
+    }
+    return Promise.resolve();
+  }
+
+  /** Drop passages that no question references any more (e.g. after a regroup emptied an old group). */
+  private pruneEmptyPassages(documentId: string): void {
+    const used = new Set(
+      (this.byDocument.get(documentId) ?? [])
+        .map((q) => q.passageId)
+        .filter((id): id is string => id !== null),
+    );
+    const kept = (this.passagesByDocument.get(documentId) ?? []).filter((p) => used.has(p.id));
+    this.passagesByDocument.set(documentId, kept);
+  }
 }

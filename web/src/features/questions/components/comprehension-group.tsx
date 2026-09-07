@@ -27,6 +27,8 @@ type Props = {
   onPassageChange: (value: string) => void;
   /** Apply a whole-group re-read: the fresh passage (to the passage record) + each sub-question's fields. */
   onReExtracted: (result: ReExtractedGroup) => void;
+  /** Dissolve this comprehension group back into standalone question cards. */
+  onUngroup: () => void;
 };
 
 /**
@@ -49,6 +51,7 @@ export function ComprehensionGroupPanel({
   reExtractSource,
   onPassageChange,
   onReExtracted,
+  onUngroup,
 }: Props): JSX.Element {
   const toast = useToast();
   const [reading, setReading] = useState(false);
@@ -79,7 +82,7 @@ export function ComprehensionGroupPanel({
   };
 
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-line bg-surface-2 p-4">
+    <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2.5">
         <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-soft px-2.5 py-0.5 text-[13px] font-bold text-brand">
           <IconLayers /> Passage
@@ -88,7 +91,7 @@ export function ComprehensionGroupPanel({
           {count} question{count === 1 ? '' : 's'} share this passage
         </span>
         {dirty ? <Badge tone="progress">Unsaved</Badge> : null}
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
           <Button
             variant="ghost"
             size="xs"
@@ -97,6 +100,15 @@ export function ComprehensionGroupPanel({
             onClick={() => { void reExtract(); }}
           >
             {reading ? '…' : <><IconScan /> Re-extract passage + all questions</>}
+          </Button>
+          <Button
+            variant="ghost"
+            size="xs"
+            disabled={disabled}
+            title="Dissolve this group back into standalone questions"
+            onClick={onUngroup}
+          >
+            Ungroup
           </Button>
         </div>
       </div>

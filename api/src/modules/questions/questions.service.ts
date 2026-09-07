@@ -15,6 +15,7 @@ import type {
   UpdatePassage,
   UpdateQuestion,
 } from '@ingest/contracts';
+import { createHash } from 'node:crypto';
 import type { ReExtractedSubDraft } from './question-reextractor.js';
 import { mapWithConcurrency } from '../../shared/async/map-with-concurrency.js';
 import { errors } from '../../shared/errors/error-catalog.js';
@@ -71,6 +72,20 @@ export class QuestionsService {
   /** Apply verify-screen edits (text / shared image) to one comprehension passage — fixed in ONE place. */
   updatePassage(id: string, patch: UpdatePassage): Promise<Passage> {
     return this.questions.updatePassage(id, patch);
+  }
+
+  /**
+   * Manually group already-extracted questions into a new comprehension (the verify "group" action, for
+   * a page whose passage the extractor missed). Creates the shared passage and links the questions; the
+   * operator then re-extracts the group to read the passage off the page.
+   */
+  groupQuestions(documentId: string, questionIds: string[]): Promise<Passage> {
+    return this.questions.groupQuestions(documentId, makePassageId(documentId, questionIds), questionIds);
+  }
+
+  /** Dissolve a comprehension group back into standalone questions (the verify "ungroup" action). */
+  ungroupPassage(passageId: string): Promise<void> {
+    return this.questions.ungroupPassage(passageId);
   }
 
   /**
@@ -291,6 +306,16 @@ export class QuestionsService {
  * omitted — the client keeps their current draft rather than wiping it. The shared passage is applied
  * separately to the group's Passage record, so sub-questions no longer each carry a passage copy.
  */
+/**
+ * A stable id for a manually-created comprehension passage, derived from the document + its member
+ * question ids (sorted, so it is order-independent and re-grouping the same set is idempotent). Distinct
+ * from the extraction path's text-derived id — a manual group has no passage text until it is re-read.
+ */
+function makePassageId(documentId: string, questionIds: string[]): string {
+  const seed = [...questionIds].sort().join(',');
+  return createHash('sha1').update(`${documentId}\n${seed}`).digest('hex').slice(0, 24);
+}
+
 function matchGroupSubQuestions(
   group: Question[],
   drafts: ReExtractedSubDraft[],

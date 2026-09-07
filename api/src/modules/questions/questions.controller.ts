@@ -3,6 +3,7 @@ import {
   BatchUpdateQuestionsSchema,
   DetectFiguresBatchRequestSchema,
   DetectFiguresRequestSchema,
+  GroupQuestionsSchema,
   QuestionListQuerySchema,
   ReExtractGroupSchema,
   ReExtractQuestionSchema,
@@ -21,6 +22,8 @@ export function createQuestionsController(service: QuestionsService): {
   list: RequestHandler;
   update: RequestHandler;
   updatePassage: RequestHandler;
+  group: RequestHandler;
+  ungroup: RequestHandler;
   batchUpdate: RequestHandler;
   uploadImage: RequestHandler;
   refine: RequestHandler;
@@ -69,6 +72,16 @@ export function createQuestionsController(service: QuestionsService): {
     updatePassage: asyncHandler(async (req, res) => {
       const patch = parseOrThrow(UpdatePassageSchema, req.body);
       ok(res, await service.updatePassage(requiredParam(req, 'id'), patch));
+    }),
+
+    group: asyncHandler(async (req, res) => {
+      const { documentId, questionIds } = parseOrThrow(GroupQuestionsSchema, req.body);
+      ok(res, await service.groupQuestions(documentId, questionIds), 201);
+    }),
+
+    ungroup: asyncHandler(async (req, res) => {
+      await service.ungroupPassage(requiredParam(req, 'id'));
+      ok(res, { ok: true });
     }),
 
     batchUpdate: asyncHandler(async (req, res) => {

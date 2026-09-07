@@ -33,6 +33,8 @@ type Props = {
    * manual save cannot race the run's own patches (each would clobber the other's image fields).
    */
   cropDisabled?: boolean;
+  /** Render flattened (no card border/background/padding) as a section inside a comprehension group card. */
+  nested?: boolean;
   /** Session-level context, surfaced read-only so the operator sees where this question is filed. */
   exam?: string | null;
   subject?: string | null;
@@ -194,6 +196,7 @@ export function EditableQuestionCard({
   boxes,
   drawTarget,
   cropDisabled = false,
+  nested = false,
   exam,
   subject,
   sectionOptions = [],
@@ -446,7 +449,7 @@ export function EditableQuestionCard({
   };
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-line bg-surface p-4">
+    <div className={nested ? 'flex flex-col gap-3' : 'flex flex-col gap-3 rounded-xl border border-line bg-surface p-4'}>
       <div className="flex items-center gap-2.5">
         <span className="rounded-full bg-brand-soft px-2.5 py-0.5 text-[13px] font-bold text-brand">Q{number}</span>
         {dirty ? <Badge tone="progress">Unsaved</Badge> : null}

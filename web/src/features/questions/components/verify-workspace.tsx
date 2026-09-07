@@ -5,7 +5,7 @@ import { DETECT_FIGURES_MAX_PAGES } from '@ingest/contracts';
 import { getCroppedBlob } from '../../../shared/lib/crop-image.js';
 import { useDocument } from '../../documents/index.js';
 import { questionsApi } from '../api/questions.api.js';
-import { questionsQueryKey, usePageCount, usePassages, useQuestions, useUpdateQuestion } from '../hooks/use-questions.js';
+import { questionsQueryKey, useGroupQuestions, usePageCount, usePassages, useQuestions, useUngroupPassage, useUpdateQuestion } from '../hooks/use-questions.js';
 import { useQuestionDrafts } from '../hooks/use-question-drafts.js';
 import { usePassageDrafts } from '../hooks/use-passage-drafts.js';
 import {
@@ -448,6 +448,19 @@ export function VerifyWorkspace({
   // Comprehension passages (BLA-125, v2) are a separate entity, edited once in the group panel.
   const passages = usePassages(documentId);
   const passageDrafts = usePassageDrafts(documentId, passages.data);
+  // Manual grouping (BLA-125, v2): select standalone question cards → group them into a comprehension.
+  const groupMutation = useGroupQuestions(documentId);
+  const ungroupMutation = useUngroupPassage(documentId);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  useEffect(() => { setSelectedIds(new Set()); }, [documentId]);
+  const toggleSelect = useCallback((id: string): void => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   const [page, setPage] = useState(initialPage ?? 1);
   // The sibling answer/solution sources for this unit, resolved for the page currently on screen so
@@ -655,15 +668,28 @@ export function VerifyWorkspace({
     | { kind: 'group'; passageId: string; first: Question; questions: Question[] };
   const renderItems = useMemo<RenderItem[]>(() => {
     const items: RenderItem[] = [];
+    // Coalesce by passageId (not just consecutive rows): a manually-grouped, non-contiguous set must
+    // still render as exactly ONE group card (unique key), anchored at its first member's position.
+    const groupByPassage = new Map<string, Extract<RenderItem, { kind: 'group' }>>();
     for (const question of onThisPage) {
       const passageId = question.passageId;
       if (passageId === null) {
         items.push({ kind: 'single', question });
         continue;
       }
-      const last = items[items.length - 1];
-      if (last && last.kind === 'group' && last.passageId === passageId) last.questions.push(question);
-      else items.push({ kind: 'group', passageId, first: question, questions: [question] });
+      const existing = groupByPassage.get(passageId);
+      if (existing) {
+        existing.questions.push(question);
+        continue;
+      }
+      const group: Extract<RenderItem, { kind: 'group' }> = {
+        kind: 'group',
+        passageId,
+        first: question,
+        questions: [question],
+      };
+      groupByPassage.set(passageId, group);
+      items.push(group);
     }
     return items;
   }, [onThisPage]);
@@ -696,6 +722,16 @@ export function VerifyWorkspace({
     },
     [drafts, passageDrafts],
   );
+
+  // The selected questions in PDF reading order (so a manual group's groupOrder follows the sheet).
+  const orderedSelection = useMemo(
+    () => (questions.data ?? []).filter((q) => selectedIds.has(q.id)).map((q) => q.id),
+    [questions.data, selectedIds],
+  );
+  const groupSelected = useCallback((): void => {
+    if (orderedSelection.length < 2) return;
+    groupMutation.mutate(orderedSelection, { onSuccess: () => { setSelectedIds(new Set()); } });
+  }, [groupMutation, orderedSelection]);
 
   // Question numbers the extractor appears to have skipped: gaps in the min..max run of the numbers it
   // read across the whole document. Surfaced so a missing question is visible instead of silently
@@ -1502,7 +1538,7 @@ export function VerifyWorkspace({
 
   // One question's editable card, wrapped for scroll-to/ring — shared by the standalone and the
   // grouped (comprehension) render paths so a card looks identical either way.
-  const renderCard = (question: Question): JSX.Element => (
+  const renderCard = (question: Question, nested = false): JSX.Element => (
     <div
       key={question.id}
       ref={(el) => {
@@ -1520,6 +1556,7 @@ export function VerifyWorkspace({
         boxes={cardBoxesFor(question.id)}
         drawTarget={cardDrawTargetFor(question.id)}
         cropDisabled={runActive}
+        nested={nested}
         answerSource={answerSource}
         solutionSource={solutionSource}
         onDraftUpdate={(updater) => { drafts.updateDraft(question.id, updater); }}
@@ -1837,9 +1874,24 @@ export function VerifyWorkspace({
         ) : (
           renderItems.map((item) =>
             item.kind === 'single' ? (
-              renderCard(item.question)
+              <div key={item.question.id} className="flex items-start gap-2.5">
+                <input
+                  type="checkbox"
+                  className="mt-4 w-auto"
+                  checked={selectedIds.has(item.question.id)}
+                  onChange={() => { toggleSelect(item.question.id); }}
+                  title="Select to group into a comprehension"
+                  aria-label="Select question to group into a comprehension"
+                />
+                <div className="min-w-0 flex-1">{renderCard(item.question)}</div>
+              </div>
             ) : (
-              <div key={`group_${item.passageId}`} className="flex flex-col gap-3">
+              // ONE card for the whole comprehension: the passage on top, then its sub-questions
+              // nested inside (flattened cards, divider-separated).
+              <div
+                key={`group_${item.passageId}`}
+                className="flex flex-col gap-3 rounded-xl border border-line bg-surface p-4"
+              >
                 <ComprehensionGroupPanel
                   documentId={documentId}
                   passageId={item.passageId}
@@ -1851,12 +1903,28 @@ export function VerifyWorkspace({
                   disabled={runActive}
                   onPassageChange={(value) => { passageDrafts.setText(item.passageId, value); }}
                   onReExtracted={(result) => { applyGroupReExtract(item.passageId, item.questions, result); }}
+                  onUngroup={() => { ungroupMutation.mutate(item.passageId); }}
                 />
-                {item.questions.map((question) => renderCard(question))}
+                {item.questions.map((question) => (
+                  <div key={question.id} className="border-t border-line pt-3">
+                    {renderCard(question, true)}
+                  </div>
+                ))}
               </div>
             ),
           )
         )}
+        {orderedSelection.length >= 2 ? (
+          <div className="fixed bottom-5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full border border-line bg-surface px-4 py-2 shadow-lg">
+            <span className="text-sm text-ink-2">{orderedSelection.length} selected</span>
+            <Button size="xs" disabled={groupMutation.isPending} onClick={groupSelected}>
+              {groupMutation.isPending ? <><Spinner /> Grouping…</> : 'Group into comprehension'}
+            </Button>
+            <Button size="xs" variant="ghost" onClick={() => { setSelectedIds(new Set()); }}>
+              Cancel
+            </Button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

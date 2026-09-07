@@ -204,6 +204,18 @@ export const QuestionListResponseSchema = z.object({
 });
 export type QuestionListResponse = z.infer<typeof QuestionListResponseSchema>;
 
+/**
+ * Manually group already-extracted questions into a NEW comprehension (BLA-125, v2). The verify screen
+ * sends the selected question ids (in reading order); the server creates one shared {@link PassageSchema}
+ * (empty text until the operator re-extracts it off the page), points each question's `passageId` at it,
+ * and stamps `groupOrder` in the given order. The fix-up for a page whose passage the extractor missed.
+ */
+export const GroupQuestionsSchema = z.object({
+  documentId: z.string().min(1),
+  questionIds: z.array(z.string().min(1)).min(1),
+});
+export type GroupQuestions = z.infer<typeof GroupQuestionsSchema>;
+
 /** Query for reading the questions extracted from one document (the verify/preview screen). */
 export const QuestionListQuerySchema = z.object({
   documentId: z.string().min(1),

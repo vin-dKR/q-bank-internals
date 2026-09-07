@@ -141,3 +141,31 @@ export function useUpdatePassage(
     },
   });
 }
+
+/** Manually group questions into a comprehension (verify "group into comprehension"); refreshes the doc. */
+export function useGroupQuestions(documentId: string): UseMutationResult<Passage, Error, string[]> {
+  const queryClient = useQueryClient();
+  const { success, error } = useToast();
+  return useMutation({
+    mutationFn: (questionIds: string[]) => questionsApi.groupQuestions(documentId, questionIds),
+    onSuccess: () => {
+      success('Grouped into comprehension', 'Re-extract the passage to read it off the page.');
+      void queryClient.invalidateQueries({ queryKey: questionsQueryKey(documentId) });
+    },
+    onError: (err) => { error('Could not group', err.message); },
+  });
+}
+
+/** Dissolve a comprehension group back into standalone questions (verify "ungroup"); refreshes the doc. */
+export function useUngroupPassage(documentId: string): UseMutationResult<void, Error, string> {
+  const queryClient = useQueryClient();
+  const { success, error } = useToast();
+  return useMutation({
+    mutationFn: (passageId: string) => questionsApi.ungroupPassage(passageId),
+    onSuccess: () => {
+      success('Ungrouped', 'Those questions are standalone again.');
+      void queryClient.invalidateQueries({ queryKey: questionsQueryKey(documentId) });
+    },
+    onError: (err) => { error('Could not ungroup', err.message); },
+  });
+}

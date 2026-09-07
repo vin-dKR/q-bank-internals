@@ -248,4 +248,51 @@ export class PrismaQuestionRepository implements QuestionRepository {
     });
     return toPassage(row);
   }
+
+  async groupQuestions(
+    documentId: string,
+    passageId: string,
+    questionIds: string[],
+  ): Promise<Passage> {
+    // Create (or reuse) the empty shared passage (text filled later by re-extract), then point each
+    // question at it in the given order. Per-question updates because Mongo updateMany can't set a
+    // distinct groupOrder. upsert (not create) keeps re-grouping the same set idempotent — the
+    // passageId is deterministic, so a retry/double-click must not collide on the unique _id. `update: {}`
+    // preserves any passage text/image already read for this group.
+    await this.prisma.passage.upsert({
+      where: { id: passageId },
+      update: {},
+      create: { id: passageId, documentId, text: '', contentHash: passageId, passageImage: null, imageCrops: [] },
+    });
+    let index = 0;
+    for (const questionId of questionIds) {
+      await this.prisma.question.update({
+        where: { id: questionId },
+        data: { passageId, groupOrder: index },
+      });
+      index += 1;
+    }
+    await this.pruneEmptyPassages(documentId);
+    const row = await this.prisma.passage.findUniqueOrThrow({ where: { id: passageId } });
+    return toPassage(row);
+  }
+
+  async ungroupPassage(passageId: string): Promise<void> {
+    await this.prisma.question.updateMany({
+      where: { passageId },
+      data: { passageId: null, groupOrder: null },
+    });
+    await this.prisma.passage.deleteMany({ where: { id: passageId } });
+  }
+
+  /** Drop passages that no question references any more (e.g. after a regroup emptied an old group). */
+  private async pruneEmptyPassages(documentId: string): Promise<void> {
+    const passages = await this.prisma.passage.findMany({ where: { documentId }, select: { id: true } });
+    for (const passage of passages) {
+      const members = await this.prisma.question.count({
+        where: { documentId, passageId: passage.id },
+      });
+      if (members === 0) await this.prisma.passage.delete({ where: { id: passage.id } });
+    }
+  }
 }

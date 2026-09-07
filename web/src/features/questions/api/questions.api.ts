@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type {
   BatchUpdateQuestionsResult,
   DetectedFigures,
@@ -28,6 +29,8 @@ import { uploadCrop } from '../../../shared/api/upload-crop.js';
 import { fetchPageCount, pageImageUrl } from '../../../shared/api/pages.js';
 import { refineLatex } from '../../../shared/api/refine.js';
 
+const OkSchema = z.object({ ok: z.boolean() });
+
 /** Feature-scoped calls to the questions + pages endpoints. The only place this feature hits the network. */
 export const questionsApi = {
   /** A document's extracted questions PLUS the comprehension passages they reference (verify/preview). */
@@ -43,6 +46,20 @@ export const questionsApi = {
   /** Apply verify-screen edits (text / shared image) to one comprehension passage — a single PATCH. */
   updatePassage: (id: string, patch: UpdatePassage): Promise<Passage> => {
     return request(`/questions/passages/${id}`, { method: 'PATCH', body: patch, schema: PassageSchema });
+  },
+
+  /** Manually group the given questions into a new comprehension passage; returns the created passage. */
+  groupQuestions: (documentId: string, questionIds: string[]): Promise<Passage> => {
+    return request('/questions/group', {
+      method: 'POST',
+      body: { documentId, questionIds },
+      schema: PassageSchema,
+    });
+  },
+
+  /** Dissolve a comprehension group back into standalone questions. */
+  ungroupPassage: async (passageId: string): Promise<void> => {
+    await request(`/questions/passages/${passageId}`, { method: 'DELETE', schema: OkSchema });
   },
 
   /** Push several questions' verify edits in one call; returns per-question success/failure. */
