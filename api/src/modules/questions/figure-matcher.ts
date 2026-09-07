@@ -63,6 +63,18 @@ function questionNumberAboveFigure(
   return sameColumnOwner ?? anyColumnOwner;
 }
 
+/** The printed number of the nearest question whose first line sits BELOW the figure's centre, or null. */
+function questionNumberBelowFigure(
+  sortedTops: QuestionTop[],
+  bbox: [number, number, number, number],
+): number | null {
+  const probeY = bbox[1] + bbox[3] / 2;
+  for (const top of sortedTops) {
+    if (top.yTop > probeY) return top.qNo; // sorted top→bottom: first one below the figure
+  }
+  return null;
+}
+
 /**
  * Strip an option label down to its printed token: "(A)" / "a." / "[B]" / " C )" → "A"/"B"/"C",
  * "(2)" → "2". Detector output and extracted labels come from two different model passes, so both
@@ -153,6 +165,24 @@ export function matchFiguresToQuestions(
   /** Option figures whose printed label did not resolve, grouped for the positional fallback. */
   const unresolvedOptions = new Map<string, { question: Question; detections: DiagramDetection[] }>();
 
+  // The FIRST sub-question (lowest groupOrder) of each comprehension group on the page → its passageId,
+  // keyed by that sub-question's printed number. A figure with nothing above it whose nearest question
+  // below is a group's first sub-question is the shared PASSAGE figure (it sits under the paragraph).
+  const passageByFirstMemberQNo = new Map<number, string>();
+  {
+    const membersByPassage = new Map<string, Question[]>();
+    for (const question of questions) {
+      if (question.passageId === null) continue;
+      const list = membersByPassage.get(question.passageId) ?? [];
+      list.push(question);
+      membersByPassage.set(question.passageId, list);
+    }
+    for (const [passageId, members] of membersByPassage) {
+      const first = [...members].sort((a, b) => (a.groupOrder ?? 0) - (b.groupOrder ?? 0))[0];
+      if (first && first.questionNumber !== null) passageByFirstMemberQNo.set(first.questionNumber, passageId);
+    }
+  }
+
   const claim = (question: Question, target: 'question' | 'option', optionIndex: number, detection: DiagramDetection): void => {
     const targetKey = `${question.id}:${target}:${String(optionIndex)}`;
     if (claimed.has(targetKey)) return;
@@ -161,6 +191,7 @@ export function matchFiguresToQuestions(
       questionId: question.id,
       target,
       optionIndex,
+      passageId: null,
       bbox: detection.bbox,
       snippet: detection.questionText,
     });
@@ -180,6 +211,31 @@ export function matchFiguresToQuestions(
     }
 
     const ownerQNo = questionNumberAboveFigure(sortedTops, detection.bbox, pageWidth);
+    // Shared-passage figure: the nearest question BELOW the figure is a comprehension group's FIRST
+    // sub-question (the figure sits under that group's paragraph), with no strong snippet match to a
+    // real stem, and the question ABOVE it (if any) belongs to a DIFFERENT group — so a second group's
+    // passage figure lower on the page is still caught, without stealing a preceding question's figure.
+    if (textScore < STRONG_TEXT_OVERLAP) {
+      const belowQNo = questionNumberBelowFigure(sortedTops, detection.bbox);
+      const passageId = belowQNo === null ? undefined : passageByFirstMemberQNo.get(belowQNo);
+      const ownerPassageId =
+        ownerQNo === null ? null : (questions.find((q) => q.questionNumber === ownerQNo)?.passageId ?? null);
+      if (passageId !== undefined && (ownerQNo === null || ownerPassageId !== passageId)) {
+        const key = `passage:${passageId}`;
+        if (!claimed.has(key)) {
+          claimed.add(key);
+          figures.push({
+            questionId: '',
+            target: 'passage',
+            optionIndex: 0,
+            passageId,
+            bbox: detection.bbox,
+            snippet: detection.questionText,
+          });
+        }
+        continue;
+      }
+    }
     // A long verbatim OCR snippet is the most direct proof of ownership. For less certain snippets,
     // retain the page-layout anchor: it is what separates two questions in adjacent columns.
     let match = textScore >= STRONG_TEXT_OVERLAP ? textMatch : null;

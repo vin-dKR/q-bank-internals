@@ -398,10 +398,14 @@ export type DetectFiguresRequest = z.infer<typeof DetectFiguresRequestSchema>;
 
 /** One detected figure and its intended destination in the extracted question. */
 export const DetectedFigureSchema = z.object({
+  // The extracted question this figure attaches to (its stem or an option). Empty string when `target`
+  // is `passage` — a shared comprehension figure attaches to `passageId` instead of a question.
   questionId: z.string(),
-  target: z.enum(['question', 'option']).default('question'),
+  target: z.enum(['question', 'option', 'passage']).default('question'),
   /** Zero-based option position when `target` is `option`. */
   optionIndex: z.number().int().nonnegative().default(0),
+  // The comprehension passage this figure attaches to, when `target` is `passage`; null otherwise.
+  passageId: z.string().nullable().default(null),
   bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]), // [x, y, width, height]
   /**
    * The verbatim first line the detector read directly above the figure ("line above"). Lets the

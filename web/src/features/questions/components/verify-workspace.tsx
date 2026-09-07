@@ -450,6 +450,20 @@ export function VerifyWorkspace({
   const passageDrafts = usePassageDrafts(documentId, passages.data);
   // The shared passage figure saves immediately on crop (like question images), not through the draft.
   const passageImageUpdate = useUpdatePassage(documentId);
+  // Auto-attach a detected shared-passage figure: crop the bbox off `sourcePage`, upload, and save it as
+  // the passage image — unless the passage already has one. Shared by the single-page + whole-doc runs.
+  const attachPassageFigure = useCallback(
+    async (passageId: string, sourcePage: number, bbox: [number, number, number, number]): Promise<boolean> => {
+      const existing = (passages.data ?? []).find((p) => p.id === passageId);
+      if (existing?.passageImage) return false;
+      const [x, y, w, h] = bbox;
+      const blob = await getCroppedBlob(questionsApi.pageImageUrl(documentId, sourcePage), { x, y, width: w, height: h });
+      const { url } = await questionsApi.uploadImage(passageId, `passage_${String(Date.now())}`, blob);
+      await passageImageUpdate.mutateAsync({ id: passageId, patch: { passageImage: url } });
+      return true;
+    },
+    [documentId, passages.data, passageImageUpdate],
+  );
   // Manual grouping (BLA-125, v2): select standalone question cards → group them into a comprehension.
   const groupMutation = useGroupQuestions(documentId);
   const ungroupMutation = useUngroupPassage(documentId);
@@ -1259,8 +1273,19 @@ export function VerifyWorkspace({
       const sx = size.displayWidth / imageWidth;
       const sy = size.displayHeight / imageHeight;
       let skipped = 0;
+      // Shared-passage figures attach straight to the passage, not the question-box pipeline.
+      for (const figure of figures) {
+        if (figure.target !== 'passage' || figure.passageId === null) continue;
+        try {
+          await attachPassageFigure(figure.passageId, page, figure.bbox);
+        } catch (caught) {
+          setAiError(caught instanceof Error ? caught.message : String(caught));
+        }
+      }
       const placed: Box[] = [];
-      figures.forEach((figure, index) => {
+      figures
+        .filter((f): f is DetectedFigure & { target: 'question' | 'option' } => f.target !== 'passage')
+        .forEach((figure, index) => {
         const question = questionById.get(figure.questionId);
         if (question && targetHasImage(question, figure.target, figure.optionIndex)) {
           skipped += 1;
@@ -1294,7 +1319,7 @@ export function VerifyWorkspace({
       setAiBusy(false);
     }
     // commit/questionNumberById are stable enough; guarded single-run via effect below for autoRun.
-  }, [documentId, page, size, questionById, questionNumberById]);
+  }, [documentId, page, size, questionById, questionNumberById, attachPassageFigure]);
 
   // --- Whole-document detection (detect + attach across ALL pages in one run). ---
   /**
@@ -1351,9 +1376,31 @@ export function VerifyWorkspace({
       const freshQuestions = (await questionsApi.listByDocument(documentId)).questions;
       const freshById = new Map(freshQuestions.map((q) => [q.id, q]));
 
-      let skipped = 0;
-      const byQuestion = new Map<string, { page: number; figure: DetectedFigure }[]>();
+      // Shared-passage figures attach straight to their passage; the rest go through the question
+      // pipeline. Dedup per passageId (first-wins across pages) so one passage is attached at most once
+      // per run — the per-page matcher only dedups within its own page.
+      const passageFirst = new Map<string, { page: number; bbox: [number, number, number, number] }>();
       for (const entry of detected) {
+        if (entry.figure.target !== 'passage' || entry.figure.passageId === null) continue;
+        if (!passageFirst.has(entry.figure.passageId)) {
+          passageFirst.set(entry.figure.passageId, { page: entry.page, bbox: entry.figure.bbox });
+        }
+      }
+      for (const [passageId, { page: sourcePage, bbox }] of passageFirst) {
+        try {
+          await attachPassageFigure(passageId, sourcePage, bbox);
+        } catch (caught) {
+          firstFailure ??= caught instanceof Error ? caught.message : String(caught);
+        }
+      }
+      const questionDetected = detected.filter(
+        (e): e is { page: number; figure: DetectedFigure & { target: 'question' | 'option' } } =>
+          e.figure.target !== 'passage',
+      );
+
+      let skipped = 0;
+      const byQuestion = new Map<string, { page: number; figure: DetectedFigure & { target: 'question' | 'option' } }[]>();
+      for (const entry of questionDetected) {
         const question = freshById.get(entry.figure.questionId);
         if (!question) continue;
         if (targetHasImage(question, entry.figure.target, entry.figure.optionIndex)) {
@@ -1478,7 +1525,7 @@ export function VerifyWorkspace({
       runActiveRef.current = false;
       setAllProgress(null);
     }
-  }, [documentId, questions.data, patchQuestion, questionNumberById, applyBoxes, applySavedUrls]);
+  }, [documentId, questions.data, patchQuestion, questionNumberById, applyBoxes, applySavedUrls, attachPassageFigure]);
 
   // Auto-detect once on arrival when the session pushed us here with ?auto=1 (still only marks).
   const autoStarted = useRef(false);
