@@ -90,4 +90,12 @@ export interface QuestionRepository {
   ungroupPassage(passageId: string): Promise<void>;
   /** Remove all questions AND passages for a document (called when the document/session is deleted). */
   deleteByDocument(documentId: string): Promise<void>;
+  /**
+   * Hard-delete ONE question (the verify "Delete" action), pruning its comprehension passage when it
+   * was the group's last member. Returns the deleted question — so the caller can drop its published
+   * bank copy and refresh the document's count — or null when no question had that id.
+   */
+  deleteById(id: string): Promise<Question | null>;
+  /** How many questions the document currently holds — to refresh its denormalized `questionCount`. */
+  countByDocument(documentId: string): Promise<number>;
 }

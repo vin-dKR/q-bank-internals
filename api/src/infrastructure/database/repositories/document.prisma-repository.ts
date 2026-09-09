@@ -305,4 +305,9 @@ export class PrismaDocumentRepository implements DocumentRepository {
     });
     return toDocument(row);
   }
+
+  async setQuestionCount(id: string, questionCount: number): Promise<Document> {
+    const row = await this.prisma.document.update({ where: { id }, data: { questionCount } });
+    return toDocument(row);
+  }
 }

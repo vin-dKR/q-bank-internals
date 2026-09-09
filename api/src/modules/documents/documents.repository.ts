@@ -79,6 +79,8 @@ export interface DocumentRepository {
   update(id: string, patch: UpdateDocument): Promise<Document>;
   /** Mark extraction done: sets `extracted`, stamps `extractedAt`, records how many questions landed. */
   recordExtraction(id: string, input: { questionCount: number }): Promise<Document>;
+  /** Overwrite only the denormalized `questionCount` — after a single question is deleted in verify. */
+  setQuestionCount(id: string, questionCount: number): Promise<Document>;
   /** Soft-delete: tombstone the document so it hides from listings but stays fetchable by id. */
   delete(id: string): Promise<void>;
   /** Soft-delete every document under a session (used when the session itself is removed). */

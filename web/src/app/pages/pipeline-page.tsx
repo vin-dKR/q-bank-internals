@@ -63,7 +63,7 @@ export function PipelinePage(): JSX.Element {
     if (!documentId) return;
     void confirm({
       title: 'Publish to the main bank?',
-      body: 'These verified questions become live in the main question bank.',
+      body: 'These verified questions become live in the main question bank. Re-publishing an already-published unit updates its bank copies with your latest edits.',
       confirmLabel: 'Publish',
     }).then((ok) => { if (ok && documentId) publish.mutate(documentId); });
   };

@@ -218,4 +218,12 @@ export class InMemoryDocumentRepository implements DocumentRepository {
     this.store.set(id, updated);
     return Promise.resolve(updated);
   }
+
+  setQuestionCount(id: string, questionCount: number): Promise<Document> {
+    const existing = this.store.get(id);
+    if (!existing) throw new Error(`Document ${id} vanished from the in-memory store.`);
+    const updated: Document = { ...existing, questionCount, updatedAt: new Date().toISOString() };
+    this.store.set(id, updated);
+    return Promise.resolve(updated);
+  }
 }

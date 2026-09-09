@@ -209,6 +209,23 @@ export class PrismaQuestionRepository implements QuestionRepository {
     await this.prisma.passage.deleteMany({ where: { documentId } });
   }
 
+  async deleteById(id: string): Promise<Question | null> {
+    const row = await this.prisma.question.findUnique({ where: { id } });
+    if (!row) return null;
+    await this.prisma.question.delete({ where: { id } });
+    // Drop the shared passage if this was its comprehension group's last member (the same cleanup
+    // ungroup/regroup do), so no passage is left dangling with no questions.
+    if (row.passageId) {
+      const members = await this.prisma.question.count({ where: { passageId: row.passageId } });
+      if (members === 0) await this.prisma.passage.deleteMany({ where: { id: row.passageId } });
+    }
+    return toQuestion(row);
+  }
+
+  async countByDocument(documentId: string): Promise<number> {
+    return this.prisma.question.count({ where: { documentId } });
+  }
+
   async update(id: string, patch: UpdateQuestion): Promise<Question> {
     const row = await this.prisma.question.update({
       where: { id },

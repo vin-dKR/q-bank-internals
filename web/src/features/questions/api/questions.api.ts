@@ -43,6 +43,11 @@ export const questionsApi = {
     return request(`/questions/${id}`, { method: 'PATCH', body: patch, schema: QuestionSchema });
   },
 
+  /** Delete one question (verify "Delete") — removes it from this unit and its published bank copy. */
+  remove: async (id: string): Promise<void> => {
+    await request(`/questions/${id}`, { method: 'DELETE', schema: OkSchema });
+  },
+
   /** Apply verify-screen edits (text / shared image) to one comprehension passage — a single PATCH. */
   updatePassage: (id: string, patch: UpdatePassage): Promise<Passage> => {
     return request(`/questions/passages/${id}`, { method: 'PATCH', body: patch, schema: PassageSchema });

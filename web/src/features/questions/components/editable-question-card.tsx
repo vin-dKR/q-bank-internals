@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
 import { KNOWN_QUESTION_TYPES, matchKeyToAnswer, type MatchData, type Question, type ReExtractedQuestion, type ReExtractSource } from '@ingest/contracts';
-import { Badge, Button, Combobox, IconButton, IconCheck, IconEdit, IconFlag, IconPlus, IconScan, IconSparkle, IconUndo, IconX, Spinner, useToast } from '../../../shared/ui/index.js';
+import { Badge, Button, Combobox, IconButton, IconCheck, IconEdit, IconFlag, IconPlus, IconScan, IconSparkle, IconTrash, IconUndo, IconX, Spinner, useToast } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { MatchTableEditor } from './match-table-editor.js';
 import { questionsApi } from '../api/questions.api.js';
@@ -55,6 +55,8 @@ type Props = {
    */
   onDraftUpdate: (updater: (prev: QuestionDraft) => QuestionDraft) => void;
   onSave: () => void;
+  /** Remove this question entirely (and its published bank copy) — the workspace confirms first. */
+  onDelete: () => void;
   /**
    * Arm a one-shot image crop from a source page and resolve with the uploaded URL (or `null` when the
    * operator cancels). `source` picks the page: `'question'` (the main canvas, e.g. a match entry) or
@@ -205,6 +207,7 @@ export function EditableQuestionCard({
   solutionSource,
   onDraftUpdate,
   onSave,
+  onDelete,
   onRequestCrop,
   onDrawRegion,
   onSaveBox,
@@ -814,7 +817,10 @@ export function EditableQuestionCard({
         </div>
       ) : null}
 
-      <div className="flex items-center justify-end gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <Button size="xs" variant="danger" onClick={onDelete}>
+          <IconTrash /> Delete
+        </Button>
         <Button size="xs" disabled={!dirty || saving} onClick={onSave}>
           {saving ? 'Saving…' : 'Update'}
         </Button>

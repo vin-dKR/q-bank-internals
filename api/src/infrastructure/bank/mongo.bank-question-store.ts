@@ -143,6 +143,17 @@ export class MongoBankQuestionStore implements BankQuestionStore {
     if (matched === 0) throw errors.bankQuestionNotFound(id);
   }
 
+  async deleteByQuestionId(questionId: string): Promise<number> {
+    // limit 0 = delete every row matching the ingest question id (guards against any historical
+    // duplicate before this key was unique); the count `n` may arrive as a wrapped Extended-JSON number.
+    const command = {
+      delete: this.collection,
+      deletes: [{ q: byQuestionId(questionId), limit: 0 }],
+    } as unknown as Prisma.InputJsonObject;
+    const reply = await this.prisma.$runCommandRaw(command);
+    return ejsonNumber.catch(0).parse((reply as Record<string, unknown>).n ?? 0);
+  }
+
   /** Pull the `cursor.firstBatch` out of a raw `find` reply and parse each document, dropping junk. */
   private readBatch(result: unknown): BankQuestion[] {
     const questions: BankQuestion[] = [];

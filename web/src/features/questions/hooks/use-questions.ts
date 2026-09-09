@@ -123,6 +123,26 @@ export function useUpdateQuestion(): UseMutationResult<
   });
 }
 
+/**
+ * Deletes one question (and its published bank copy), then refreshes the document's questions and the
+ * unit/session listings whose stored question counts change.
+ */
+export function useDeleteQuestion(documentId: string): UseMutationResult<void, Error, string> {
+  const queryClient = useQueryClient();
+  const { success, error } = useToast();
+  return useMutation({
+    mutationFn: (id: string) => questionsApi.remove(id),
+    onSuccess: () => {
+      success('Question deleted', 'Removed from this unit.');
+      void queryClient.invalidateQueries({ queryKey: questionsQueryKey(documentId) });
+      void queryClient.invalidateQueries({ queryKey: ['documents'] });
+      void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      void queryClient.invalidateQueries({ queryKey: ['session'] });
+    },
+    onError: (err) => { error('Could not delete', err.message); },
+  });
+}
+
 /** Applies verify-screen edits to a comprehension passage (text / shared image) — the single-place save. */
 export function useUpdatePassage(
   documentId: string,
