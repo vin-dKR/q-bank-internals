@@ -6,11 +6,13 @@ import { createBankController } from './bank.controller.js';
  * Path table for the published-bank fix flow:
  *   GET   /questions?q=&limit=            — search published questions in the main bank
  *   PATCH /questions/:questionId/image    — re-point one question/option image at a new cropped URL
- *   PATCH /questions/:id/flag             — set/clear the flag on a published question
- *   PATCH /questions/:id/text             — overwrite the stem/options/answer text (AI fix)
+ *   PATCH  /questions/:id/flag            — set/clear the flag on a published question
+ *   PATCH  /questions/:id/text            — overwrite the stem/options/answer text (AI fix)
+ *   DELETE /questions/:id                 — permanently remove a published question from the bank
  *
  * `:questionId` (image) is the ingest question id stamped on the bank row's `ingest_ref`. `:id` (flag,
- * text) is the bank Mongo `_id` the browse card carries, so both work even for rows with no `ingest_ref`.
+ * text, delete) is the bank Mongo `_id` the browse card carries, so all work even for rows with no
+ * `ingest_ref`.
  */
 export function createBankRouter(service: BankService): Router {
   const controller = createBankController(service);
@@ -19,5 +21,6 @@ export function createBankRouter(service: BankService): Router {
   router.patch('/questions/:questionId/image', controller.updateImage);
   router.patch('/questions/:id/flag', controller.setFlag);
   router.patch('/questions/:id/text', controller.setText);
+  router.delete('/questions/:id', controller.remove);
   return router;
 }

@@ -38,4 +38,12 @@ export class UnconfiguredBankQuestionStore implements BankQuestionStore {
   deleteByQuestionId(): Promise<number> {
     return Promise.resolve(0);
   }
+
+  // A browse delete targets a real bank row, so with no bank there is nothing to delete — fail loudly
+  // like the other browse writes rather than pretend a row was removed.
+  deleteById(): Promise<void> {
+    return Promise.reject(
+      new AppError('BANK_UNAVAILABLE', 400, 'The question bank requires DB_DRIVER=mongo + DATABASE_URL.'),
+    );
+  }
 }

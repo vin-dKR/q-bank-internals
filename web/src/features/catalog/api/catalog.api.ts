@@ -1,5 +1,5 @@
-import type { BankFlagResult, BankTextResult, CatalogFilterOptions, CatalogPage, UpdateBankText } from '@ingest/contracts';
-import { BankFlagResultSchema, BankTextResultSchema, CatalogFilterOptionsSchema, CatalogPageSchema } from '@ingest/contracts';
+import type { BankDeleteResult, BankFlagResult, BankTextResult, CatalogFilterOptions, CatalogPage, UpdateBankText } from '@ingest/contracts';
+import { BankDeleteResultSchema, BankFlagResultSchema, BankTextResultSchema, CatalogFilterOptionsSchema, CatalogPageSchema } from '@ingest/contracts';
 import { request } from '../../../shared/api/http-client.js';
 import type { CatalogFilterState, CatalogSelection } from '../types.js';
 
@@ -70,4 +70,12 @@ export const catalogApi = {
       body: patch,
       schema: BankTextResultSchema,
     }),
+
+  /**
+   * Permanently delete a published question from the main bank, keyed by the bank Mongo `id` the browse
+   * card carries. Removes the row from the db — the same bank write surface flag/text use; there is no
+   * catalog write path of its own (the browse read is deliberately read-only).
+   */
+  deleteQuestion: (id: string): Promise<BankDeleteResult> =>
+    request(`/bank/questions/${id}`, { method: 'DELETE', schema: BankDeleteResultSchema }),
 };

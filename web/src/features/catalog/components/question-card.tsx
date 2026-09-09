@@ -47,18 +47,24 @@ export function QuestionCard({
   question,
   onToggleFlag,
   onFixText,
+  onDelete,
   flagPending = false,
   fixPending = false,
+  deletePending = false,
 }: {
   question: CatalogQuestion;
   /** Toggle this question's flag; receives the desired next state. */
   onToggleFlag: (flagged: boolean) => void;
   /** Persist an AI-fixed text field (stem/options/answer) on this question. */
   onFixText: (patch: UpdateBankText) => void;
+  /** Permanently delete this question from the bank (the parent runs the danger confirm first). */
+  onDelete: () => void;
   /** True while this question's flag write is in flight (disables the button). */
   flagPending?: boolean;
   /** True while this question's text fix write is in flight (disables the AI buttons). */
   fixPending?: boolean;
+  /** True while this question's delete is in flight (disables the button). */
+  deletePending?: boolean;
 }): JSX.Element {
   const navigate = useNavigate();
   const toast = useToast();
@@ -249,6 +255,15 @@ export function QuestionCard({
             onClick={() => { onToggleFlag(!question.flagged); }}
           >
             <IconFlag /> {question.flagged ? 'Flagged' : 'Flag'}
+          </Button>
+          <Button
+            size="xs"
+            variant="danger"
+            disabled={deletePending}
+            title="Permanently delete this question from the bank"
+            onClick={onDelete}
+          >
+            <IconTrash /> {deletePending ? 'Deleting…' : 'Delete'}
           </Button>
         </>
       }

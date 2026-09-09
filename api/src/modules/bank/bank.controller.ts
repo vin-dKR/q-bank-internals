@@ -11,6 +11,7 @@ export function createBankController(service: BankService): {
   updateImage: RequestHandler;
   setFlag: RequestHandler;
   setText: RequestHandler;
+  remove: RequestHandler;
 } {
   return {
     search: asyncHandler(async (req, res) => {
@@ -31,6 +32,10 @@ export function createBankController(service: BankService): {
     setText: asyncHandler(async (req, res) => {
       const patch = parseOrThrow(UpdateBankTextSchema, req.body);
       ok(res, await service.setText(requiredParam(req, 'id'), patch));
+    }),
+
+    remove: asyncHandler(async (req, res) => {
+      ok(res, await service.deleteQuestion(requiredParam(req, 'id')));
     }),
   };
 }

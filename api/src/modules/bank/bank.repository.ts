@@ -50,4 +50,11 @@ export interface BankQuestionStore {
    * were removed (0 when the question was never published).
    */
   deleteByQuestionId(questionId: string): Promise<number>;
+  /**
+   * Permanently delete the published question with this bank Mongo `_id` (what the browse card carries)
+   * — the Questions-browse "Delete" action. Keyed by `_id` like {@link setFlag}/{@link setText}, so it
+   * works for legacy rows with no `ingest_ref`. Throws when no row matches (the card always carries a
+   * live id, so a miss is a genuine error, not an idempotent no-op like the verify delete above).
+   */
+  deleteById(id: string): Promise<void>;
 }
