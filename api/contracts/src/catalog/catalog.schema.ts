@@ -56,6 +56,15 @@ export const CatalogQuestionSchema = z.object({
 export type CatalogQuestion = z.infer<typeof CatalogQuestionSchema>;
 
 /**
+ * How the browse list is ordered. Both keys sort on the row's Mongo `_id`, which encodes creation
+ * time — so `newest` is `_id` descending, `oldest` is ascending. Keeping the sort on `_id` (always
+ * present, unique) is what lets cursor pagination and the contiguous-siblings comprehension grouping
+ * keep working unchanged; only the direction (and the cursor comparison) flips.
+ */
+export const CatalogSortSchema = z.enum(['newest', 'oldest']);
+export type CatalogSort = z.infer<typeof CatalogSortSchema>;
+
+/**
  * The taxonomy filters + keyword + cursor for the browse list. Every field is optional; an omitted
  * or empty field does not constrain the query. `flagged` arrives as a string on the query so it is
  * modelled as an enum here and mapped to a boolean at the controller. `q` searches when ≥ 2 chars.
@@ -78,6 +87,9 @@ export const CatalogQuerySchema = z.object({
   hasPassage: z.enum(['true', 'false']).optional(),
   hasMatch: z.enum(['true', 'false']).optional(),
   q: z.string().optional(),
+  // Ordering — defaults to newest-first (most recently published on top). A cursor is only valid for
+  // the sort it was minted under, so the client refetches from page one whenever the sort changes.
+  sort: CatalogSortSchema.default('newest'),
   cursor: z.string().optional(),
   limit: z.coerce.number().int().positive().max(50).default(20),
 });

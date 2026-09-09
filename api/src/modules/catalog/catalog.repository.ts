@@ -1,4 +1,4 @@
-import type { CatalogQuestion } from '@ingest/contracts';
+import type { CatalogQuestion, CatalogSort } from '@ingest/contracts';
 
 /** The taxonomy + keyword constraints for one browse query. Every field is optional (empty = no filter). */
 export type CatalogFilters = {
@@ -56,9 +56,10 @@ export type CatalogFilterOptionSets = {
  * with raw Mongo in `infrastructure/catalog`, null-object for the in-memory dev driver.
  */
 export interface CatalogStore {
-  /** Published questions matching `filters`, id-ordered, `limit` per page from `cursor` onward. */
+  /** Published questions matching `filters`, ordered by `sort`, `limit` per page from `cursor` onward. */
   listQuestions(
     filters: CatalogFilters,
+    sort: CatalogSort,
     cursor: string | null,
     limit: number,
   ): Promise<CatalogQuestionPage>;

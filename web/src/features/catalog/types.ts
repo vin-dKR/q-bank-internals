@@ -1,3 +1,5 @@
+import type { CatalogSort } from '@ingest/contracts';
+
 /** The active browse selection held in the page — the sidebar filters plus the search box. */
 export type CatalogFilterState = {
   exam: string;
@@ -26,9 +28,11 @@ export type CatalogFilterState = {
   hasPassage: '' | 'true';
   hasMatch: '' | 'true';
   q: string;
+  /** List ordering. Part of the filter state so a change re-keys the query and refetches from page one. */
+  sort: CatalogSort;
 };
 
-/** The empty starting selection — nothing filtered, no search. */
+/** The empty starting selection — nothing filtered, no search, newest-first. */
 export const EMPTY_FILTERS: CatalogFilterState = {
   exam: '',
   subject: '',
@@ -45,6 +49,7 @@ export const EMPTY_FILTERS: CatalogFilterState = {
   hasPassage: '',
   hasMatch: '',
   q: '',
+  sort: 'newest',
 };
 
 /** The subset the cascading filter-options request narrows against. */

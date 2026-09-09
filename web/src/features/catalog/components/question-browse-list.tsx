@@ -27,6 +27,13 @@ function groupBrowseItems(questions: CatalogQuestion[]): BrowseItem[] {
     if (last && last.kind === 'group' && last.groupId === groupId) last.questions.push(question);
     else items.push({ kind: 'group', groupId, questions: [question] });
   }
+  // Sub-questions always read in passage order (0,1,2…), even under newest-first sort where the group's
+  // rows arrive reversed. Sort by `groupOrder` (nulls last) so the passage's sequence never inverts.
+  for (const item of items) {
+    if (item.kind === 'group') {
+      item.questions.sort((a, b) => (a.groupOrder ?? Infinity) - (b.groupOrder ?? Infinity));
+    }
+  }
   return items;
 }
 

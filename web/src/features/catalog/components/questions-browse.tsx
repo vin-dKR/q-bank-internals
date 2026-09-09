@@ -11,6 +11,7 @@ import {
 import { type CatalogFilterState, type CatalogSelection, EMPTY_FILTERS } from '../types.js';
 import { FilterSidebar } from './filter-sidebar.js';
 import { SearchBar } from './search-bar.js';
+import { SortSelect } from './sort-select.js';
 import { QuestionBrowseList } from './question-browse-list.js';
 
 const EMPTY_OPTIONS: CatalogFilterOptions = {
@@ -92,13 +93,16 @@ export function QuestionsBrowse(): JSX.Element {
 
       <div className="flex min-w-0 flex-col gap-4">
         <SearchBar value={filters.q} onChange={(q) => { setFilters((prev) => ({ ...prev, q })); }} />
-        {!listQuery.isPending && !listQuery.isError ? (
-          <p className="m-0 text-xs text-ink-3">
-            {total === 0
-              ? 'No questions'
-              : `Showing ${String(loaded)} of ${total.toLocaleString()} published question${total === 1 ? '' : 's'}`}
-          </p>
-        ) : null}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {!listQuery.isPending && !listQuery.isError ? (
+            <p className="m-0 text-xs text-ink-3">
+              {total === 0
+                ? 'No questions'
+                : `Showing ${String(loaded)} of ${total.toLocaleString()} published question${total === 1 ? '' : 's'}`}
+            </p>
+          ) : <span />}
+          <SortSelect value={filters.sort} onChange={(sort) => { setFilters((prev) => ({ ...prev, sort })); }} />
+        </div>
         <QuestionBrowseList
           query={listQuery}
           onToggleFlag={(id, flagged) => { flagMutation.mutate({ id, flagged }); }}

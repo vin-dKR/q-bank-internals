@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { z } from 'zod';
-import type { CatalogQuestion, MatchData } from '@ingest/contracts';
+import type { CatalogQuestion, CatalogSort, MatchData } from '@ingest/contracts';
 import { MatchDataSchema } from '@ingest/contracts';
 import { ejsonBool, ejsonNumber, escapeRegex, firstBatch, oid } from '../database/mongo-ejson.js';
 import type {
@@ -126,17 +126,24 @@ export class MongoCatalogStore implements CatalogStore {
 
   async listQuestions(
     filters: CatalogFilters,
+    sort: CatalogSort,
     cursor: string | null,
     limit: number,
   ): Promise<CatalogQuestionPage> {
     // `total` counts the whole filtered set (no cursor), so it stays constant across pages; the page
     // window is the cursor-bounded `find`. Both share the same filter and run concurrently.
     const filter = this.buildFilter(filters);
-    const pageFilter = cursor ? { ...filter, _id: { $gt: { $oid: cursor } } } : filter;
+    // Sort on `_id` (which encodes creation time): newest = descending, oldest = ascending. The cursor
+    // walks in the SAME direction — `$lt` for descending, `$gt` for ascending — so paging past the last
+    // row of a page always fetches the NEXT rows in the chosen order. Grouping still holds: a group's
+    // consecutive-id siblings stay contiguous whichever way the id sequence is read.
+    const direction = sort === 'oldest' ? 1 : -1;
+    const beyondCursor = direction === 1 ? { $gt: { $oid: cursor } } : { $lt: { $oid: cursor } };
+    const pageFilter = cursor ? { ...filter, _id: beyondCursor } : filter;
     const findCommand = {
       find: this.collection,
       filter: pageFilter,
-      sort: { _id: 1 },
+      sort: { _id: direction },
       // Over-fetch by one to detect (and produce the cursor for) a next page.
       limit: limit + 1,
     } as unknown as Prisma.InputJsonObject;
