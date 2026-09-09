@@ -22,6 +22,8 @@ import { errors } from '../../shared/errors/error-catalog.js';
 import { logger } from '../../shared/logger/logger.js';
 import { readPngSize } from '../../shared/image/png-size.js';
 import type { UsageService } from '../usage/index.js';
+import type { DocumentRepository } from '../documents/index.js';
+import type { BankQuestionStore } from '../bank/index.js';
 import type { DiagramDetector } from './diagram-detector.js';
 import { matchFiguresToQuestions } from './figure-matcher.js';
 import type { ImageStore } from './image-store.js';
@@ -46,6 +48,8 @@ const DETECT_PAGE_CONCURRENCY = 3;
 export class QuestionsService {
   constructor(
     private readonly questions: QuestionRepository,
+    private readonly documents: DocumentRepository,
+    private readonly bank: BankQuestionStore,
     private readonly images: ImageStore,
     private readonly refiner: LatexRefiner,
     private readonly usage: UsageService,
@@ -67,6 +71,24 @@ export class QuestionsService {
   /** Apply verify-screen edits (image flags/urls, stem, options, answer) to a question. */
   update(id: string, patch: UpdateQuestion): Promise<Question> {
     return this.questions.update(id, patch);
+  }
+
+  /**
+   * Delete ONE question everywhere it lives (the verify "Delete" action): remove the staged row
+   * (pruning its comprehension passage when it was the group's last member), refresh the document's
+   * denormalized question count so the unit list stays honest, then drop its published bank copy if it
+   * had been promoted. Idempotent — a double-click / retry whose staged row is already gone is a no-op
+   * on staging yet still clears any bank row a partial earlier failure could have stranded (Mongo has
+   * no cross-collection transaction here). The count is refreshed BEFORE the bank delete so a bank
+   * failure leaves the count correct and only the bank row to reclaim on retry.
+   */
+  async delete(id: string): Promise<void> {
+    const deleted = await this.questions.deleteById(id);
+    if (deleted) {
+      const remaining = await this.questions.countByDocument(deleted.documentId);
+      await this.documents.setQuestionCount(deleted.documentId, remaining);
+    }
+    await this.bank.deleteByQuestionId(id);
   }
 
   /** Apply verify-screen edits (text / shared image) to one comprehension passage — fixed in ONE place. */

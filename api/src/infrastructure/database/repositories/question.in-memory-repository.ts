@@ -76,6 +76,30 @@ export class InMemoryQuestionRepository implements QuestionRepository {
     return Promise.resolve();
   }
 
+  deleteById(id: string): Promise<Question | null> {
+    for (const [documentId, rows] of this.byDocument) {
+      const existing = rows.find((row) => row.id === id);
+      if (!existing) continue;
+      this.byDocument.set(documentId, rows.filter((row) => row.id !== id));
+      // Drop the shared passage if this was its group's last member (mirrors the Prisma adapter).
+      if (existing.passageId !== null) {
+        const stillUsed = (this.byDocument.get(documentId) ?? []).some(
+          (row) => row.passageId === existing.passageId,
+        );
+        if (!stillUsed) {
+          const passages = this.passagesByDocument.get(documentId) ?? [];
+          this.passagesByDocument.set(documentId, passages.filter((p) => p.id !== existing.passageId));
+        }
+      }
+      return Promise.resolve(existing);
+    }
+    return Promise.resolve(null);
+  }
+
+  countByDocument(documentId: string): Promise<number> {
+    return Promise.resolve((this.byDocument.get(documentId) ?? []).length);
+  }
+
   update(id: string, patch: UpdateQuestion): Promise<Question> {
     for (const [documentId, rows] of this.byDocument) {
       const existing = rows.find((row) => row.id === id);

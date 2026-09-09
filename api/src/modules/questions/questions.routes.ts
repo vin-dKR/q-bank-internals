@@ -13,6 +13,7 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
  *   POST /detect-figures/batch — AI-locate figures on several pages at once → { pages: [...] }
  *   PATCH /batch              — apply verify-screen edits to several questions → { updated, failed }
  *   PATCH /:id                — apply verify-screen edits (image flags/urls, stem, options, answer)
+ *   DELETE /:id               — delete one question (+ its published bank copy) → { ok }
  *   POST /:id/images          — upload one cropped image (multipart) → { url }
  *   POST /paper-metadata      — AI-read a paper's header image (multipart) → { paper }
  */
@@ -36,6 +37,7 @@ export function createQuestionsRouter(service: QuestionsService): Router {
   router.patch('/passages/:id', controller.updatePassage);
   router.delete('/passages/:id', controller.ungroup);
   router.patch('/:id', controller.update);
+  router.delete('/:id', controller.remove);
   router.post('/:id/images', upload.single('file'), controller.uploadImage);
 
   return router;

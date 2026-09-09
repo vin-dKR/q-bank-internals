@@ -44,4 +44,10 @@ export interface BankQuestionStore {
    * row matches; the caller has already validated the patch carries at least one field.
    */
   setText(id: string, patch: BankTextPatch): Promise<void>;
+  /**
+   * Delete the published question(s) stamped with this ingest `questionId` — called when a staged
+   * question is deleted in verify, so its live bank copy goes too. Idempotent: returns how many rows
+   * were removed (0 when the question was never published).
+   */
+  deleteByQuestionId(questionId: string): Promise<number>;
 }

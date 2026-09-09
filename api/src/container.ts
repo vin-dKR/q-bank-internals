@@ -273,8 +273,16 @@ export function createContainer(): Container {
   const documentsService = new DocumentsService(documents, sessions, staleExtractionMs);
   const sessionsService = new SessionsService(sessions, documents, staleExtractionMs);
   const pagesService = new PagesService(documents, driveService, rasterizer);
+  // Built before the questions service: deleting a verified question also drops its published bank
+  // copy, so the questions service holds this store (and is the read/fix side's dependency too).
+  const bankQuestionStore =
+    env.DB_DRIVER === 'mongo'
+      ? new MongoBankQuestionStore(getPrisma())
+      : new UnconfiguredBankQuestionStore();
   const questionsService = new QuestionsService(
     questions,
+    documents,
+    bankQuestionStore,
     buildImageStore(),
     buildLatexRefiner(loadPromptOverrides),
     usageService,
@@ -288,10 +296,6 @@ export function createContainer(): Container {
       ? new MongoBankPublisher(getPrisma())
       : new UnconfiguredBankPublisher();
   const publishService = new PublishService(documents, questions, bankPublisher);
-  const bankQuestionStore =
-    env.DB_DRIVER === 'mongo'
-      ? new MongoBankQuestionStore(getPrisma())
-      : new UnconfiguredBankQuestionStore();
   const bankService = new BankService(bankQuestionStore);
   const catalogStore =
     env.DB_DRIVER === 'mongo'

@@ -5,7 +5,7 @@ import { DETECT_FIGURES_MAX_PAGES } from '@ingest/contracts';
 import { getCroppedBlob } from '../../../shared/lib/crop-image.js';
 import { useDocument } from '../../documents/index.js';
 import { questionsApi } from '../api/questions.api.js';
-import { questionsQueryKey, useGroupQuestions, usePageCount, usePassages, useQuestions, useUngroupPassage, useUpdatePassage, useUpdateQuestion } from '../hooks/use-questions.js';
+import { questionsQueryKey, useDeleteQuestion, useGroupQuestions, usePageCount, usePassages, useQuestions, useUngroupPassage, useUpdatePassage, useUpdateQuestion } from '../hooks/use-questions.js';
 import { useQuestionDrafts } from '../hooks/use-question-drafts.js';
 import { usePassageDrafts } from '../hooks/use-passage-drafts.js';
 import {
@@ -31,6 +31,7 @@ import {
   LoadingState,
   Spinner,
   ToolbarHelp,
+  useConfirm,
 } from '../../../shared/ui/index.js';
 import {
   type CardBox,
@@ -467,6 +468,8 @@ export function VerifyWorkspace({
   // Manual grouping (BLA-125, v2): select standalone question cards → group them into a comprehension.
   const groupMutation = useGroupQuestions(documentId);
   const ungroupMutation = useUngroupPassage(documentId);
+  const deleteQuestion = useDeleteQuestion(documentId);
+  const [confirm, confirmDialog] = useConfirm();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   useEffect(() => { setSelectedIds(new Set()); }, [documentId]);
   const toggleSelect = useCallback((id: string): void => {
@@ -1585,6 +1588,28 @@ export function VerifyWorkspace({
       ? { type: drawTarget.type, optionIndex: drawTarget.optionIndex }
       : null;
 
+  // Delete one question after a danger confirm: the mutation drops the staged row, its published bank
+  // copy, and refreshes the counts; drop it from any pending group selection too.
+  const handleDeleteQuestion = useCallback(
+    async (question: Question): Promise<void> => {
+      const confirmed = await confirm({
+        title: 'Delete this question?',
+        body: 'It is removed from this unit. If it was already published, its copy in the main bank is removed too. This cannot be undone.',
+        confirmLabel: 'Delete',
+        tone: 'danger',
+      });
+      if (!confirmed) return;
+      setSelectedIds((prev) => {
+        if (!prev.has(question.id)) return prev;
+        const next = new Set(prev);
+        next.delete(question.id);
+        return next;
+      });
+      deleteQuestion.mutate(question.id);
+    },
+    [confirm, deleteQuestion],
+  );
+
   // One question's editable card, wrapped for scroll-to/ring — shared by the standalone and the
   // grouped (comprehension) render paths so a card looks identical either way.
   const renderCard = (question: Question, nested = false): JSX.Element => (
@@ -1610,6 +1635,7 @@ export function VerifyWorkspace({
         solutionSource={solutionSource}
         onDraftUpdate={(updater) => { drafts.updateDraft(question.id, updater); }}
         onSave={() => { void drafts.save([question.id]); }}
+        onDelete={() => { void handleDeleteQuestion(question); }}
         onRequestCrop={requestCrop}
         onDrawRegion={toggleDrawTarget}
         onSaveBox={(boxId) => { void requestSave(boxId); }}
@@ -1979,6 +2005,7 @@ export function VerifyWorkspace({
           </div>
         ) : null}
       </div>
+      {confirmDialog}
     </div>
   );
 }

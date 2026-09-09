@@ -21,6 +21,7 @@ import type { QuestionsService } from './questions.service.js';
 export function createQuestionsController(service: QuestionsService): {
   list: RequestHandler;
   update: RequestHandler;
+  remove: RequestHandler;
   updatePassage: RequestHandler;
   group: RequestHandler;
   ungroup: RequestHandler;
@@ -67,6 +68,11 @@ export function createQuestionsController(service: QuestionsService): {
     update: asyncHandler(async (req, res) => {
       const patch = parseOrThrow(UpdateQuestionSchema, req.body);
       ok(res, await service.update(requiredParam(req, 'id'), patch));
+    }),
+
+    remove: asyncHandler(async (req, res) => {
+      await service.delete(requiredParam(req, 'id'));
+      ok(res, { ok: true });
     }),
 
     updatePassage: asyncHandler(async (req, res) => {

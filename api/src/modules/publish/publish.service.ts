@@ -30,11 +30,12 @@ export class PublishService {
     const document = await this.documents.findById(documentId);
     if (!document) throw errors.documentNotFound(documentId);
 
-    // Already in the bank: a no-op, not a re-insert. Guards the double-click / overlapping-session
-    // race — combined with the idempotent upsert below, a second publish can neither duplicate rows
-    // nor flip status twice. In-flight / pre-extraction states have nothing verified to publish.
-    if (document.status === 'published') return { published: 0 };
-    if (!PUBLISHABLE_STATUSES.has(document.status)) {
+    // Re-publishing an ALREADY-published document is allowed — it is how a verify edit made AFTER the
+    // first publish reaches the bank. The row-level write below is an idempotent upsert keyed on
+    // ingest_ref.question_id, so a re-publish overwrites this document's existing bank rows in place
+    // (a double-click / overlapping publish can neither duplicate rows nor flip status twice). Only
+    // in-flight / pre-extraction states have nothing verified to publish.
+    if (document.status !== 'published' && !PUBLISHABLE_STATUSES.has(document.status)) {
       throw errors.documentNotPublishable(documentId, document.status);
     }
 
