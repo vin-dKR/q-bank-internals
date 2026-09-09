@@ -22,6 +22,7 @@ function toListQuery(filters: CatalogFilterState, cursor: string | null): string
   if (filters.hasMatch) params.set('hasMatch', filters.hasMatch);
   const keyword = filters.q.trim();
   if (keyword) params.set('q', keyword);
+  params.set('sort', filters.sort);
   if (cursor) params.set('cursor', cursor);
   return params.toString();
 }

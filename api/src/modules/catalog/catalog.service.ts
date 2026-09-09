@@ -1,4 +1,4 @@
-import type { CatalogFilterOptions, CatalogPage } from '@ingest/contracts';
+import type { CatalogFilterOptions, CatalogPage, CatalogSort } from '@ingest/contracts';
 import type { CatalogFilters, CatalogFilterSelection, CatalogStore } from './catalog.repository.js';
 
 /**
@@ -9,8 +9,13 @@ import type { CatalogFilters, CatalogFilterSelection, CatalogStore } from './cat
 export class CatalogService {
   constructor(private readonly store: CatalogStore) {}
 
-  listQuestions(filters: CatalogFilters, cursor: string | null, limit: number): Promise<CatalogPage> {
-    return this.store.listQuestions(filters, cursor, limit);
+  listQuestions(
+    filters: CatalogFilters,
+    sort: CatalogSort,
+    cursor: string | null,
+    limit: number,
+  ): Promise<CatalogPage> {
+    return this.store.listQuestions(filters, sort, cursor, limit);
   }
 
   filterOptions(selection: CatalogFilterSelection): Promise<CatalogFilterOptions> {
