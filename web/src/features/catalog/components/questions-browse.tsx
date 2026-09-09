@@ -1,7 +1,13 @@
 import { type JSX, useMemo, useState } from 'react';
 import type { CatalogFilterOptions } from '@ingest/contracts';
-import { Card } from '../../../shared/ui/index.js';
-import { useCatalogFixText, useCatalogQuestions, useFilterOptions, useSetCatalogFlag } from '../hooks/use-catalog.js';
+import { Card, useConfirm } from '../../../shared/ui/index.js';
+import {
+  useCatalogFixText,
+  useCatalogQuestions,
+  useDeleteCatalogQuestion,
+  useFilterOptions,
+  useSetCatalogFlag,
+} from '../hooks/use-catalog.js';
 import { type CatalogFilterState, type CatalogSelection, EMPTY_FILTERS } from '../types.js';
 import { FilterSidebar } from './filter-sidebar.js';
 import { SearchBar } from './search-bar.js';
@@ -52,6 +58,19 @@ export function QuestionsBrowse(): JSX.Element {
   const listQuery = useCatalogQuestions(filters);
   const flagMutation = useSetCatalogFlag();
   const fixMutation = useCatalogFixText();
+  const deleteMutation = useDeleteCatalogQuestion();
+  const [confirm, confirmDialog] = useConfirm();
+
+  /** Confirm (danger) then permanently remove a question from the bank; the mutation drops it from the list. */
+  const onDelete = async (id: string): Promise<void> => {
+    const confirmed = await confirm({
+      title: 'Delete this question?',
+      body: 'It is permanently removed from the main question bank. This cannot be undone.',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
+    if (confirmed) deleteMutation.mutate(id);
+  };
 
   const loaded = listQuery.data?.pages.flatMap((page) => page.questions).length ?? 0;
   // `total` is the full filtered count (constant across pages); take it off the first page.
@@ -84,10 +103,13 @@ export function QuestionsBrowse(): JSX.Element {
           query={listQuery}
           onToggleFlag={(id, flagged) => { flagMutation.mutate({ id, flagged }); }}
           onFixText={(id, patch) => { fixMutation.mutate({ id, patch }); }}
+          onDelete={(id) => { void onDelete(id); }}
           flagPendingId={flagMutation.isPending ? flagMutation.variables.id : null}
           fixPendingId={fixMutation.isPending ? fixMutation.variables.id : null}
+          deletePendingId={deleteMutation.isPending ? deleteMutation.variables : null}
         />
       </div>
+      {confirmDialog}
     </div>
   );
 }

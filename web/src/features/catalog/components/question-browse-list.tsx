@@ -57,18 +57,24 @@ export function QuestionBrowseList({
   query,
   onToggleFlag,
   onFixText,
+  onDelete,
   flagPendingId,
   fixPendingId,
+  deletePendingId,
 }: {
   query: UseInfiniteQueryResult<{ pages: CatalogPage[] }>;
   /** Toggle one question's flag by its bank id. */
   onToggleFlag: (id: string, flagged: boolean) => void;
   /** Persist an AI-fixed text field on one question by its bank id. */
   onFixText: (id: string, patch: UpdateBankText) => void;
+  /** Permanently delete one question by its bank id (the parent runs the danger confirm). */
+  onDelete: (id: string) => void;
   /** The id whose flag write is currently in flight (disables just that card's button). */
   flagPendingId: string | null;
   /** The id whose text-fix write is currently in flight (disables just that card's AI buttons). */
   fixPendingId: string | null;
+  /** The id whose delete is currently in flight (disables just that card's Delete button). */
+  deletePendingId: string | null;
 }): JSX.Element {
   if (query.isPending) return <LoadingSkeletons />;
 
@@ -98,8 +104,10 @@ export function QuestionBrowseList({
       question={question}
       onToggleFlag={(flagged) => { onToggleFlag(question.id, flagged); }}
       onFixText={(patch) => { onFixText(question.id, patch); }}
+      onDelete={() => { onDelete(question.id); }}
       flagPending={flagPendingId === question.id}
       fixPending={fixPendingId === question.id}
+      deletePending={deletePendingId === question.id}
     />
   );
 

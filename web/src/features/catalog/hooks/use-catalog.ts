@@ -7,7 +7,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import type { BankFlagResult, BankTextResult, CatalogFilterOptions, CatalogPage, UpdateBankText } from '@ingest/contracts';
+import type { BankDeleteResult, BankFlagResult, BankTextResult, CatalogFilterOptions, CatalogPage, UpdateBankText } from '@ingest/contracts';
 import { useToast } from '../../../shared/ui/index.js';
 import { catalogApi } from '../api/catalog.api.js';
 import type { CatalogFilterState, CatalogSelection } from '../types.js';
@@ -125,5 +125,50 @@ export function useCatalogFixText(): UseMutationResult<
       for (const [key, data] of context?.previous ?? []) queryClient.setQueryData(key, data);
       error('Could not save the fix', err.message);
     },
+  });
+}
+
+/**
+ * Permanently delete a published question from the browse (removes the row from the bank db). Optimistic
+ * like the flag/fix hooks: drops the row from every cached browse page and decrements that page's `total`
+ * immediately, rolling back on failure. Deliberately does NOT invalidate — the deletion IS the intended
+ * end state, so a refetch would only re-fetch the same shorter list (and a mid-flight refetch could flash
+ * the row back). The operator's next real fetch reflects the smaller bank.
+ */
+export function useDeleteCatalogQuestion(): UseMutationResult<
+  BankDeleteResult,
+  Error,
+  string,
+  { previous: [readonly unknown[], CatalogInfiniteData | undefined][] }
+> {
+  const queryClient = useQueryClient();
+  const { success, error } = useToast();
+  return useMutation({
+    mutationFn: (id) => catalogApi.deleteQuestion(id),
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: ['catalog'] });
+      const previous = queryClient.getQueriesData<CatalogInfiniteData>({ queryKey: ['catalog'] });
+      queryClient.setQueriesData<CatalogInfiniteData>({ queryKey: ['catalog'] }, (data) =>
+        data
+          ? {
+              ...data,
+              pages: data.pages.map((page) => {
+                const kept = page.questions.filter((q) => q.id !== id);
+                // Only the page that held the row changes — shrink its list and its running total so the
+                // "Showing X of N" header stays truthful without a round-trip.
+                return kept.length === page.questions.length
+                  ? page
+                  : { ...page, questions: kept, total: Math.max(0, page.total - 1) };
+              }),
+            }
+          : data,
+      );
+      return { previous };
+    },
+    onError: (err, _id, context) => {
+      for (const [key, data] of context?.previous ?? []) queryClient.setQueryData(key, data);
+      error('Could not delete', err.message);
+    },
+    onSuccess: () => { success('Question deleted', 'Removed from the bank.'); },
   });
 }

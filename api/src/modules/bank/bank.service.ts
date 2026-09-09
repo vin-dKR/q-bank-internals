@@ -27,6 +27,15 @@ export class BankService {
     return { id, ...patch };
   }
 
+  /**
+   * Permanently delete a published question from the main bank (the Questions-browse "Delete"), keyed
+   * by its bank `_id`. Echoes the removed id back so the browse can drop it from its cached pages.
+   */
+  async deleteQuestion(id: string): Promise<{ id: string; deleted: true }> {
+    await this.bank.deleteById(id);
+    return { id, deleted: true };
+  }
+
   /** Re-point the question figure or one option image (identified by ingest `questionId`). */
   async updateImage(questionId: string, patch: UpdateBankImage): Promise<BankQuestion> {
     if (patch.target === 'question') {

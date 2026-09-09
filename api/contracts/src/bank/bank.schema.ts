@@ -104,3 +104,12 @@ export const BankTextResultSchema = z.object({
   answer: z.string().nullable().optional(),
 });
 export type BankTextResult = z.infer<typeof BankTextResultSchema>;
+
+/**
+ * The echoed result of permanently deleting a published bank question (the Questions-browse "Delete"):
+ * the removed row's id and a `deleted: true` acknowledgement. Keyed in the route by the bank Mongo
+ * `_id` (which the browse card carries as `id`), like the flag/text writes, so it works even for legacy
+ * rows with no `ingest_ref`. The delete is permanent — the row is removed from the bank, not soft-hidden.
+ */
+export const BankDeleteResultSchema = z.object({ id: z.string(), deleted: z.literal(true) });
+export type BankDeleteResult = z.infer<typeof BankDeleteResultSchema>;
