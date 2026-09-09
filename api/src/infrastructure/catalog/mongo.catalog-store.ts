@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { z } from 'zod';
-import type { CatalogQuestion } from '@ingest/contracts';
+import type { CatalogQuestion, MatchData } from '@ingest/contracts';
+import { MatchDataSchema } from '@ingest/contracts';
 import { ejsonBool, ejsonNumber, escapeRegex, firstBatch, oid } from '../database/mongo-ejson.js';
 import type {
   CatalogFilterOptionSets,
@@ -14,6 +15,18 @@ import type {
 const MIN_SEARCH_LENGTH = 2;
 
 /**
+ * Assemble the bank's separate `match_columns` + `match_key` (written at publish for MATRIX questions)
+ * into the shared {@link MatchData} shape, or null when the row is not a matrix question. Validated
+ * against the contract so a malformed stored table degrades to null — the flat `answer` still shows the
+ * matching — rather than making the whole browse response fail the client's schema parse.
+ */
+function toMatchData(columns: unknown, key: unknown): MatchData | null {
+  if (columns === null || columns === undefined) return null;
+  const parsed = MatchDataSchema.safeParse({ columns, key: key ?? {} });
+  return parsed.success ? parsed.data : null;
+}
+
+/**
  * Parser for one raw bank `Question` document → the shared {@link CatalogQuestion}. Every field is
  * tolerant (`.catch`) because the collection predates this app and legacy rows omit most of it; a
  * bad row degrades field-by-field rather than dropping the whole question from the browse list.
@@ -25,6 +38,12 @@ const RawCatalogQuestionSchema = z
     file_name: z.string().nullable().catch(null),
     question_text: z.string().catch(''),
     answer: z.string().nullable().catch(null),
+    // Worked solution/explanation and structured match data are written at publish; surfaced here so the
+    // browse renders the same complete question the bank stores. `match_*` stay unknown and are validated
+    // by {@link toMatchData}. All absent on ordinary/legacy rows.
+    explanation: z.string().nullable().catch(null),
+    match_columns: z.unknown(),
+    match_key: z.unknown(),
     exam_name: z.string().nullable().catch(null),
     subject: z.string().nullable().catch(null),
     chapter: z.string().nullable().catch(null),
@@ -33,6 +52,7 @@ const RawCatalogQuestionSchema = z
     topic: z.string().nullable().catch(null),
     // Comprehension grouping (BLA-125), stamped at publish; null/absent on ordinary and legacy rows.
     passage: z.string().nullable().catch(null),
+    passage_image: z.string().nullable().catch(null),
     group_id: z.string().nullable().catch(null),
     group_order: ejsonNumber.nullable().catch(null),
     flagged: ejsonBool.catch(false),
@@ -56,6 +76,7 @@ const RawCatalogQuestionSchema = z
       fileName: doc.file_name,
       questionText: doc.question_text,
       answer: doc.answer,
+      explanation: doc.explanation,
       exam: doc.exam_name,
       subject: doc.subject,
       chapter: doc.chapter,
@@ -63,6 +84,7 @@ const RawCatalogQuestionSchema = z
       questionType: doc.question_type,
       topic: doc.topic,
       passage: doc.passage,
+      passageImage: doc.passage_image,
       groupId: doc.group_id,
       groupOrder: doc.group_order,
       flagged: doc.flagged,
@@ -75,6 +97,7 @@ const RawCatalogQuestionSchema = z
       questionImage: doc.question_image,
       isOptionImage: doc.isOptionImage,
       optionImages: doc.option_images,
+      match: toMatchData(doc.match_columns, doc.match_key),
     }),
   );
 
@@ -240,13 +263,23 @@ export class MongoCatalogStore implements CatalogStore {
   /** Map the taxonomy filters + keyword to the collection's snake_case query shape. */
   private buildFilter(filters: CatalogFilters): Record<string, unknown> {
     const filter: Record<string, unknown> = {};
+    // `$or` clauses (comprehension membership, keyword) are collected here and ANDed together, so two
+    // of them never collide on a single top-level `$or` key.
+    const and: Record<string, unknown>[] = [];
     if (filters.exam) filter.exam_name = filters.exam;
     if (filters.subject) filter.subject = filters.subject;
     // `module` is stamped onto the bank row at publish, so the Module dropdown now narrows the list.
     if (filters.module) filter.module = filters.module;
     if (filters.chapter) filter.chapter = filters.chapter;
     if (filters.section) filter.section_name = filters.section;
-    if (filters.questionType) filter.question_type = filters.questionType;
+    // "comprehension" is NOT a per-row type — each sub-question keeps its own type (single_correct …),
+    // and the group is identified by `group_id`. So the type filter means "belongs to a comprehension
+    // group" (or a legacy row literally typed so), not `question_type == 'comprehension'`.
+    if (filters.questionType?.toLowerCase() === 'comprehension') {
+      and.push({ $or: [{ group_id: { $ne: null } }, { question_type: filters.questionType }] });
+    } else if (filters.questionType) {
+      filter.question_type = filters.questionType;
+    }
     if (filters.flagged === true) filter.flagged = true;
     // "Not flagged" includes rows where the field is false, null, or absent — legacy rows have no flag.
     else if (filters.flagged === false) filter.flagged = { $ne: true };
@@ -257,11 +290,17 @@ export class MongoCatalogStore implements CatalogStore {
     const keyword = filters.q?.trim() ?? '';
     if (keyword.length >= MIN_SEARCH_LENGTH) {
       const pattern = escapeRegex(keyword);
-      filter.$or = [
-        { question_text: { $regex: pattern, $options: 'i' } },
-        { options: { $regex: pattern, $options: 'i' } },
-      ];
+      // `passage` is matched too, and — being denormalized onto every sibling row — a passage keyword
+      // returns the whole comprehension group, not just one sub-question.
+      and.push({
+        $or: [
+          { question_text: { $regex: pattern, $options: 'i' } },
+          { options: { $regex: pattern, $options: 'i' } },
+          { passage: { $regex: pattern, $options: 'i' } },
+        ],
+      });
     }
+    if (and.length > 0) filter.$and = and;
     return filter;
   }
 

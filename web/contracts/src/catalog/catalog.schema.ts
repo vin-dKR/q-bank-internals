@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MatchDataSchema } from '../questions/question.schema.js';
 
 /**
  * One published question as shown on the read-only Questions browse page — a projection of the main
@@ -13,6 +14,9 @@ export const CatalogQuestionSchema = z.object({
   fileName: z.string().nullable(),
   questionText: z.string(),
   answer: z.string().nullable(),
+  // The worked solution / explanation (LaTeX-bearing) stamped at publish; null when the source had
+  // none or on legacy rows. Surfaced so the browse renders the same complete question the bank stores.
+  explanation: z.string().nullable(),
   exam: z.string().nullable(),
   subject: z.string().nullable(),
   chapter: z.string().nullable(),
@@ -23,6 +27,10 @@ export const CatalogQuestionSchema = z.object({
   // stable id, and this sub-question's order within it. The browse list groups consecutive rows sharing
   // `groupId` under one passage header. All null on ordinary questions and on legacy rows.
   passage: z.string().nullable(),
+  // The passage's shared figure (Supabase URL), denormalized onto every sibling row at publish like
+  // `passage`; null when the passage has no image or on legacy rows. Lets the browse render the shared
+  // comprehension figure the verify screen crops — the one place it was previously dropped.
+  passageImage: z.string().nullable(),
   groupId: z.string().nullable(),
   groupOrder: z.number().int().nullable(),
   flagged: z.boolean(),
@@ -40,6 +48,10 @@ export const CatalogQuestionSchema = z.object({
   questionImage: z.string().nullable(),
   isOptionImage: z.boolean(),
   optionImages: z.array(z.string()),
+  // Structured match-the-column data (columns + correct matching) for MATRIX questions; null for every
+  // other type. Assembled from the bank's `match_columns` + `match_key` (written at publish) so the
+  // browse renders a real match table instead of the raw "(A) A-p,B-q" option strings.
+  match: MatchDataSchema.nullable(),
 });
 export type CatalogQuestion = z.infer<typeof CatalogQuestionSchema>;
 
