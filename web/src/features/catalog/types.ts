@@ -14,6 +14,17 @@ export type CatalogFilterState = {
   flagged: '' | 'true' | 'false';
   /** '' = any, 'true' = PYQ only, 'false' = exclude PYQ. */
   pyq: '' | 'true' | 'false';
+  /**
+   * "Content" edge-case filters (image / passage / matrix presence). '' = off (no constraint),
+   * 'true' = require the feature. Rendered as checkboxes, so they never carry 'false'. Each
+   * AND-combines with the taxonomy filters and with the others.
+   */
+  hasImage: '' | 'true';
+  hasQuestionImage: '' | 'true';
+  hasOptionImage: '' | 'true';
+  hasPassageImage: '' | 'true';
+  hasPassage: '' | 'true';
+  hasMatch: '' | 'true';
   q: string;
 };
 
@@ -27,6 +38,12 @@ export const EMPTY_FILTERS: CatalogFilterState = {
   questionType: '',
   flagged: '',
   pyq: '',
+  hasImage: '',
+  hasQuestionImage: '',
+  hasOptionImage: '',
+  hasPassageImage: '',
+  hasPassage: '',
+  hasMatch: '',
   q: '',
 };
 

@@ -14,6 +14,12 @@ function toListQuery(filters: CatalogFilterState, cursor: string | null): string
   if (filters.questionType) params.set('questionType', filters.questionType);
   if (filters.flagged) params.set('flagged', filters.flagged);
   if (filters.pyq) params.set('pyq', filters.pyq);
+  if (filters.hasImage) params.set('hasImage', filters.hasImage);
+  if (filters.hasQuestionImage) params.set('hasQuestionImage', filters.hasQuestionImage);
+  if (filters.hasOptionImage) params.set('hasOptionImage', filters.hasOptionImage);
+  if (filters.hasPassageImage) params.set('hasPassageImage', filters.hasPassageImage);
+  if (filters.hasPassage) params.set('hasPassage', filters.hasPassage);
+  if (filters.hasMatch) params.set('hasMatch', filters.hasMatch);
   const keyword = filters.q.trim();
   if (keyword) params.set('q', keyword);
   if (cursor) params.set('cursor', cursor);
