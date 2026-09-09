@@ -1,8 +1,8 @@
 import type { JSX } from 'react';
 import type { CatalogPage, CatalogQuestion, UpdateBankText } from '@ingest/contracts';
 import type { UseInfiniteQueryResult } from '@tanstack/react-query';
-import { Button, EmptyState, IconFileText, IconLayers, Skeleton } from '../../../shared/ui/index.js';
-import { RenderLatex } from '../../../shared/lib/latex.js';
+import { Button, EmptyState, IconFileText, IconLayers, PassageView, Skeleton } from '../../../shared/ui/index.js';
+import { catalogPassageToView } from '../lib/to-question-view.js';
 import { QuestionCard } from './question-card.js';
 
 /**
@@ -13,7 +13,7 @@ import { QuestionCard } from './question-card.js';
  */
 type BrowseItem =
   | { kind: 'single'; question: CatalogQuestion }
-  | { kind: 'group'; groupId: string; passage: string; questions: CatalogQuestion[] };
+  | { kind: 'group'; groupId: string; questions: CatalogQuestion[] };
 
 function groupBrowseItems(questions: CatalogQuestion[]): BrowseItem[] {
   const items: BrowseItem[] = [];
@@ -25,7 +25,7 @@ function groupBrowseItems(questions: CatalogQuestion[]): BrowseItem[] {
     }
     const last = items[items.length - 1];
     if (last && last.kind === 'group' && last.groupId === groupId) last.questions.push(question);
-    else items.push({ kind: 'group', groupId, passage: question.passage ?? '', questions: [question] });
+    else items.push({ kind: 'group', groupId, questions: [question] });
   }
   return items;
 }
@@ -105,26 +105,29 @@ export function QuestionBrowseList({
 
   return (
     <div className="flex flex-col gap-4">
-      {groupBrowseItems(questions).map((item) =>
-        item.kind === 'single' ? (
-          renderCard(item.question)
-        ) : (
+      {groupBrowseItems(questions).map((item) => {
+        if (item.kind === 'single') return renderCard(item.question);
+        // The shared passage (text + figure) is denormalized onto every sibling row, so build it from
+        // the first member; a group whose passage was not yet extracted falls back to a plain header.
+        const passage = item.questions[0] ? catalogPassageToView(item.questions[0]) : null;
+        return (
           <div key={`group_${item.groupId}`} className="flex flex-col gap-3 rounded-xl border border-line bg-surface-2 p-4">
-            <div className="flex items-center gap-2 text-[13px] font-semibold text-ink-2">
-              <IconLayers /> Comprehension passage
-              <span className="text-xs font-normal text-ink-3">
-                · {item.questions.length} question{item.questions.length === 1 ? '' : 's'}
-              </span>
-            </div>
-            {item.passage ? (
-              <div className="text-sm leading-relaxed text-ink-1"><RenderLatex text={item.passage} /></div>
-            ) : null}
+            {passage ? (
+              <PassageView passage={passage} count={item.questions.length} />
+            ) : (
+              <div className="flex items-center gap-2 text-[13px] font-semibold text-ink-2">
+                <IconLayers /> Comprehension
+                <span className="text-xs font-normal text-ink-3">
+                  · {item.questions.length} question{item.questions.length === 1 ? '' : 's'}
+                </span>
+              </div>
+            )}
             <div className="flex flex-col gap-4">
               {item.questions.map((question) => renderCard(question))}
             </div>
           </div>
-        ),
-      )}
+        );
+      })}
 
       {query.hasNextPage ? (
         <div className="flex justify-center pt-1">

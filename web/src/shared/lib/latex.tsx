@@ -1,26 +1,39 @@
 import { type JSX, useRef, useState } from 'react';
-import { InlineMath } from 'react-katex';
+import { BlockMath, InlineMath } from 'react-katex';
 import 'katex/dist/katex.min.css';
 import { IconSigma } from '../ui/index.js';
 import { MathEquationEditor } from './math-equation-editor.js';
 
-type Part = { type: 'text' | 'latex'; value: string };
+type Part = { type: 'text' | 'inline' | 'block'; value: string };
 
-/** Split text into plain runs and inline-LaTeX runs delimited by `\( ... \)`. */
+/**
+ * The math delimiters we recognise, checked in this order. `\( … \)` is the app's canonical inline form
+ * (what the AI "Fix LaTeX" refiner emits); `$$ … $$` and `\[ … \]` are the unambiguous DISPLAY forms a
+ * worked solution or passage may carry. Single `$ … $` is deliberately NOT a delimiter — it collides
+ * with currency ("$5") and none of our data uses it.
+ */
+const DELIMITERS = [
+  { open: '$$', close: '$$', type: 'block' as const },
+  { open: '\\[', close: '\\]', type: 'block' as const },
+  { open: '\\(', close: '\\)', type: 'inline' as const },
+];
+
+/** Split text into plain runs and inline/display LaTeX runs, by the {@link DELIMITERS} above. */
 function toParts(text: string): Part[] {
   const parts: Part[] = [];
   let current = '';
   let i = 0;
   while (i < text.length) {
-    if (text.startsWith('\\(', i)) {
-      const end = text.indexOf('\\)', i + 2);
+    const delimiter = DELIMITERS.find((d) => text.startsWith(d.open, i));
+    if (delimiter) {
+      const end = text.indexOf(delimiter.close, i + delimiter.open.length);
       if (end !== -1) {
         if (current) {
           parts.push({ type: 'text', value: current });
           current = '';
         }
-        parts.push({ type: 'latex', value: text.slice(i + 2, end) });
-        i = end + 2;
+        parts.push({ type: delimiter.type, value: text.slice(i + delimiter.open.length, end) });
+        i = end + delimiter.close.length;
         continue;
       }
     }
@@ -32,17 +45,17 @@ function toParts(text: string): Part[] {
 }
 
 /**
- * Render text that mixes prose and inline `\( ... \)` LaTeX into real math via KaTeX — so the verify
- * screen shows the rendered view, not the raw source. Ported from question-editor's latex-render.
- * Malformed LaTeX falls back to showing the raw run rather than crashing.
+ * Render text that mixes prose with inline `\( … \)` and display `$$ … $$` / `\[ … \]` LaTeX into real
+ * math via KaTeX — so every screen shows the rendered view, not the raw source. Malformed LaTeX falls
+ * back to showing the raw run rather than crashing.
  */
 export function RenderLatex({ text }: { text: string }): JSX.Element {
   const parts = toParts(text);
   return (
     <>
       {parts.map((part, index) =>
-        part.type === 'latex' ? (
-          <SafeMath key={index} value={part.value} />
+        part.type === 'inline' || part.type === 'block' ? (
+          <SafeMath key={index} value={part.value} block={part.type === 'block'} />
         ) : (
           <span key={index}>
             {part.value.split('\n').map((line, lineIndex, lines) => (
@@ -58,11 +71,11 @@ export function RenderLatex({ text }: { text: string }): JSX.Element {
   );
 }
 
-function SafeMath({ value }: { value: string }): JSX.Element {
+function SafeMath({ value, block = false }: { value: string; block?: boolean }): JSX.Element {
   try {
-    return <InlineMath math={value} />;
+    return block ? <BlockMath math={value} /> : <InlineMath math={value} />;
   } catch {
-    return <span>\({value}\)</span>;
+    return <span>{block ? `$$${value}$$` : `\\(${value}\\)`}</span>;
   }
 }
 

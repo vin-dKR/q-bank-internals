@@ -13,6 +13,16 @@ export { Combobox } from './combobox.js';
 export { ToastProvider, useToast } from './toast.js';
 export { Spinner, LoadingState, Skeleton } from './spinner.js';
 export { EmptyState } from './empty-state.js';
+export {
+  QuestionView,
+  PassageView,
+  type QuestionViewModel,
+  type QuestionViewOption,
+  type QuestionViewMatch,
+  type QuestionViewMatchColumn,
+  type QuestionViewMatchEntry,
+  type PassageViewModel,
+} from './question-view.js';
 export { FileDropzone } from './file-dropzone.js';
 export { LoadedFileBar } from './loaded-file-bar.js';
 export { ErrorFallback } from './error-fallback.js';
