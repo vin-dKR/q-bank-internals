@@ -53,6 +53,34 @@ function toOptions(values: readonly string[]): Option[] {
   return values.map((value) => ({ value, label: value }));
 }
 
+/**
+ * One "Content" edge-case filter: an include-only checkbox. Checked narrows the list to rows that
+ * HAVE the feature (an image somewhere, a passage, a matrix); unchecked applies no constraint. These
+ * AND-combine with the taxonomy dropdowns, so e.g. "Matrix match" + "Has any image" finds matrix
+ * questions that also carry a figure — the render edge cases that are otherwise hard to hunt down.
+ */
+function ToggleFilter({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}): JSX.Element {
+  return (
+    <label className="flex min-h-8 cursor-pointer items-center gap-2 py-1.5 text-sm text-ink-2">
+      <input
+        type="checkbox"
+        className="size-4 w-auto accent-brand"
+        checked={checked}
+        onChange={(event) => { onChange(event.target.checked); }}
+      />
+      {label}
+    </label>
+  );
+}
+
 const FLAGGED_OPTIONS: readonly Option[] = [
   { value: 'true', label: 'Flagged' },
   { value: 'false', label: 'Not flagged' },
@@ -65,9 +93,10 @@ const PYQ_OPTIONS: readonly Option[] = [
 
 /**
  * The left-rail filter panel for the Questions browse. Eight dropdowns (Exam · Subject · Module ·
- * Chapter · Section · Question type · Flagged · PYQ) plus Clear. Selecting a value applies immediately —
- * there is no separate "Apply" step — and the option sets cascade: they arrive already narrowed by
- * the current exam/subject/module/chapter/type. `disabled` greys the controls while options load.
+ * Chapter · Section · Question type · Flagged · PYQ) plus a "Content" group of include-only checkboxes
+ * (image / passage / matrix presence) and Clear. Selecting a value applies immediately — there is no
+ * separate "Apply" step — and the option sets cascade: they arrive already narrowed by the current
+ * exam/subject/module/chapter/type. `disabled` greys the controls while options load.
  */
 export function FilterSidebar({
   filters,
@@ -91,6 +120,12 @@ export function FilterSidebar({
     filters.questionType !== '' ||
     filters.flagged !== '' ||
     filters.pyq !== '' ||
+    filters.hasImage !== '' ||
+    filters.hasQuestionImage !== '' ||
+    filters.hasOptionImage !== '' ||
+    filters.hasPassageImage !== '' ||
+    filters.hasPassage !== '' ||
+    filters.hasMatch !== '' ||
     filters.q !== '';
 
   return (
@@ -158,6 +193,40 @@ export function FilterSidebar({
         value={filters.pyq}
         onChange={(pyq) => { onChange({ pyq: pyq as CatalogFilterState['pyq'] }); }}
       />
+
+      <div className="flex flex-col gap-1.5 border-t border-line pt-4">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">Content</span>
+        <ToggleFilter
+          label="Has any image"
+          checked={filters.hasImage === 'true'}
+          onChange={(on) => { onChange({ hasImage: on ? 'true' : '' }); }}
+        />
+        <ToggleFilter
+          label="Question image"
+          checked={filters.hasQuestionImage === 'true'}
+          onChange={(on) => { onChange({ hasQuestionImage: on ? 'true' : '' }); }}
+        />
+        <ToggleFilter
+          label="Option image"
+          checked={filters.hasOptionImage === 'true'}
+          onChange={(on) => { onChange({ hasOptionImage: on ? 'true' : '' }); }}
+        />
+        <ToggleFilter
+          label="Passage image"
+          checked={filters.hasPassageImage === 'true'}
+          onChange={(on) => { onChange({ hasPassageImage: on ? 'true' : '' }); }}
+        />
+        <ToggleFilter
+          label="Comprehension (passage)"
+          checked={filters.hasPassage === 'true'}
+          onChange={(on) => { onChange({ hasPassage: on ? 'true' : '' }); }}
+        />
+        <ToggleFilter
+          label="Matrix match"
+          checked={filters.hasMatch === 'true'}
+          onChange={(on) => { onChange({ hasMatch: on ? 'true' : '' }); }}
+        />
+      </div>
     </div>
   );
 }

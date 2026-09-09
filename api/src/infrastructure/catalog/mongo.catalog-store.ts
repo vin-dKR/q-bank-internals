@@ -287,6 +287,44 @@ export class MongoCatalogStore implements CatalogStore {
     // "Not PYQ" includes rows where the field is false, null, or absent — legacy rows have no PYQ flag.
     else if (filters.pyq === false) filter.is_pyq = { $ne: true };
 
+    // "Content" edge-case filters (the browse image/structure checkboxes). Include-only: a checkbox is
+    // on (narrow to rows that HAVE the feature) or absent, so only the `=== true` case constrains. A
+    // question can carry an image as either the boolean flag OR the URL column (legacy rows set only the
+    // column), so those go through an `$or` pushed into `and[]` — never a colliding top-level `$or`. A
+    // string column counts as an image only when non-null AND non-empty; an array only when it has a
+    // non-empty element.
+    if (filters.hasQuestionImage === true) {
+      and.push({ $or: [{ isQuestionImage: true }, { question_image: { $nin: [null, ''] } }] });
+    }
+    if (filters.hasOptionImage === true) {
+      and.push({ $or: [{ isOptionImage: true }, { option_images: { $elemMatch: { $nin: [null, ''] } } }] });
+    }
+    if (filters.hasPassageImage === true) filter.passage_image = { $nin: [null, ''] };
+    // "Has any image" spans every place a figure can live — question, options, passage, AND inside a
+    // matrix's cells (`match_columns[].entries[].image`), which is a distinct image location the other
+    // fields miss. A `$nin` must sit under `$elemMatch` on an array so it means "at least one non-empty
+    // element", not "no element is empty".
+    if (filters.hasImage === true) {
+      and.push({
+        $or: [
+          { isQuestionImage: true },
+          { question_image: { $nin: [null, ''] } },
+          { isOptionImage: true },
+          { option_images: { $elemMatch: { $nin: [null, ''] } } },
+          { passage_image: { $nin: [null, ''] } },
+          { match_columns: { $elemMatch: { entries: { $elemMatch: { image: { $nin: [null, ''] } } } } } },
+        ],
+      });
+    }
+    // A comprehension member is identified by its `group_id` (the shared passage's id); `passage`
+    // non-empty also catches a legacy row that carried the passage text without a group id.
+    if (filters.hasPassage === true) {
+      and.push({ $or: [{ group_id: { $nin: [null, ''] } }, { passage: { $nin: [null, ''] } }] });
+    }
+    // Matrix-match presence keys off the structured `match_columns` (null on every other type), which
+    // is more reliable than the free-text question_type string a matrix row might be mislabelled with.
+    if (filters.hasMatch === true) filter.match_columns = { $ne: null };
+
     const keyword = filters.q?.trim() ?? '';
     if (keyword.length >= MIN_SEARCH_LENGTH) {
       const pattern = escapeRegex(keyword);

@@ -10,6 +10,13 @@ export type CatalogFilters = {
   questionType?: string;
   flagged?: boolean;
   pyq?: boolean;
+  // "Content" edge-case filters — include-only (true = require the feature; false/absent = no filter).
+  hasImage?: boolean;
+  hasQuestionImage?: boolean;
+  hasOptionImage?: boolean;
+  hasPassageImage?: boolean;
+  hasPassage?: boolean;
+  hasMatch?: boolean;
   q?: string;
 };
 

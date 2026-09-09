@@ -59,6 +59,8 @@ export type CatalogQuestion = z.infer<typeof CatalogQuestionSchema>;
  * The taxonomy filters + keyword + cursor for the browse list. Every field is optional; an omitted
  * or empty field does not constrain the query. `flagged` arrives as a string on the query so it is
  * modelled as an enum here and mapped to a boolean at the controller. `q` searches when ≥ 2 chars.
+ * The `has*` flags are the "Content" edge-case filters (image / passage / matrix presence) — each
+ * narrows to rows that HAVE the feature, and all of them AND-combine with the taxonomy filters.
  */
 export const CatalogQuerySchema = z.object({
   exam: z.string().optional(),
@@ -69,6 +71,12 @@ export const CatalogQuerySchema = z.object({
   questionType: z.string().optional(),
   flagged: z.enum(['true', 'false']).optional(),
   pyq: z.enum(['true', 'false']).optional(),
+  hasImage: z.enum(['true', 'false']).optional(),
+  hasQuestionImage: z.enum(['true', 'false']).optional(),
+  hasOptionImage: z.enum(['true', 'false']).optional(),
+  hasPassageImage: z.enum(['true', 'false']).optional(),
+  hasPassage: z.enum(['true', 'false']).optional(),
+  hasMatch: z.enum(['true', 'false']).optional(),
   q: z.string().optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().int().positive().max(50).default(20),
