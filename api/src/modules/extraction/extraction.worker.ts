@@ -92,20 +92,25 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
         : 'single_correct'
       : boundType;
 
-  // A match-the-column question persists its structured columns instead of options: the stem is the
-  // bare instruction, options stays empty, and the flat `answer` mirrors the match key. The question
-  // page rarely prints the matching, so back-fill an empty key from the merged answer sheet string.
+  // A match-the-column question persists its structured columns AND the printed multiple-choice answer
+  // choices (each a full matching like "A-i, B-ii, …"): the stem is the bare instruction, and the flat
+  // `answer` mirrors the match key. The question page rarely prints the matching, so back-fill an empty
+  // key from the merged answer sheet string. Options let the operator click the correct printed choice to
+  // fill the match grid in verify; correctness is derived from the key there, so isCorrect stays false.
   if (draft.match) {
     const key = Object.keys(draft.match.key).length > 0
       ? draft.match.key
       : parseMatchKey(draft.answer ?? '');
     const answer = Object.keys(key).length > 0 ? matchKeyToAnswer(key) : draft.answer ?? '';
+    const options = draft.options
+      .map(parseOption)
+      .map(({ label, body }) => ({ label, body, isCorrect: false }));
     return {
       documentId: document.id,
       questionNumber: draft.questionNumber,
       path: document.path,
       stem: draft.questionText,
-      options: [],
+      options,
       answer,
       match: { columns: draft.match.columns, key },
       passageId: draft.passageId,

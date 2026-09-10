@@ -80,18 +80,30 @@ function correctLabelsFromAnswer(answer: string): Set<string> {
 }
 
 /**
- * Parse a matrix question's printed answer option ("A–i, B–ii, C–iii, D–iv, E–v") into a match key
- * { A:['i'], B:['ii'], … }. Pairs split on comma/semicolon; each is "<col-I label><dash><col-II label>".
+ * Parse a matrix question's printed answer option into a match key { A:['p','t'], B:['q'], … }. Two
+ * printed dialects occur and BOTH must round-trip: one-to-one with comma-separated pairs
+ * ("A-p, B-q, C-r, D-s") and one-to-many with semicolon-separated pairs and comma-separated targets
+ * ("A-p,t; B-q,u"). We split on every pair separator (comma / semicolon / newline), then treat a segment
+ * that opens with "<label><sep>" as starting a new pair and any bare segment after it (a lone target like
+ * the "t" in "A-p,t") as ANOTHER target for the pair that preceded it — so a one-to-many matching keeps
+ * all its targets instead of silently dropping them (mirrors the contract's {@link parseMatchKey}).
  * Unparseable segments are skipped, so a stray token never poisons the whole option.
  */
 function parseOptionMatching(body: string): Record<string, string[]> {
   const key: Record<string, string[]> = {};
-  for (const segment of body.split(/[;,]/)) {
-    const match = /^\s*([A-Za-z])\s*[-–—>:→=.)]+\s*([A-Za-z0-9]+)\s*$/.exec(segment.trim());
-    if (!match) continue;
-    const label = (match[1] ?? '').toUpperCase();
-    const target = (match[2] ?? '').toLowerCase();
-    if (label && target) key[label] = [target];
+  let current: string | null = null;
+  for (const segment of body.split(/[;,\n]/)) {
+    const token = segment.trim();
+    if (!token) continue;
+    const pair = /^([A-Za-z])\s*[-–—>:→=.)]+\s*([A-Za-z0-9]+)$/.exec(token);
+    if (pair) {
+      current = (pair[1] ?? '').toUpperCase();
+      key[current] = [(pair[2] ?? '').toLowerCase()];
+    } else if (current !== null && /^[A-Za-z0-9]+$/.test(token)) {
+      const targets = key[current] ?? [];
+      targets.push(token.toLowerCase());
+      key[current] = targets;
+    }
   }
   return key;
 }
@@ -114,6 +126,20 @@ function optionMatchesKey(body: string, key: Record<string, readonly string[]>):
 /** Serialise correct option letters to the stored multi-correct form: sorted, joined, no separator. */
 function labelsToAnswer(labels: Iterable<string>): string {
   return [...labels].sort().join('');
+}
+
+/**
+ * The next unused uppercase option label (A, B, C, …) for an "Add option" click. Derived from the labels
+ * already present rather than the count, so adding after a mid-list removal (e.g. [A, C] → add) fills the
+ * gap ("B") instead of duplicating an existing label ("C").
+ */
+function nextOptionLabel(options: readonly { label: string }[]): string {
+  const taken = new Set(options.map((option) => option.label.trim().toUpperCase()));
+  for (let i = 0; i < 26; i += 1) {
+    const label = String.fromCharCode(65 + i);
+    if (!taken.has(label)) return label;
+  }
+  return String.fromCharCode(65 + options.length);
 }
 
 const FIELD_LABEL = 'text-[13px] font-medium text-ink-2';
@@ -549,9 +575,17 @@ export function EditableQuestionCard({
               onCropImage={() => onRequestCrop(question.id, 'question')}
             />
 
-          {draft.options.length > 0 ? (
-            <div className="flex flex-col gap-1.5">
-              <span className={FIELD_LABEL}>Printed options — click the correct one to set the matching</span>
+          <div className="flex flex-col gap-1.5">
+              <span className={FIELD_LABEL}>
+                {draft.options.length > 0
+                  ? 'Printed options — click the correct one to set the matching'
+                  : 'Printed options'}
+              </span>
+              {draft.options.length === 0 ? (
+                <p className="text-[13px] text-ink-3">
+                  No answer choices were extracted. Add the printed options (each a full matching like “A-i, B-ii, …”) if the question shows them — click one to fill the matching above.
+                </p>
+              ) : null}
               {draft.options.map((option, i) => {
                 const selected = draft.match !== null && optionMatchesKey(option.body, draft.match.key);
                 return (
@@ -579,7 +613,7 @@ export function EditableQuestionCard({
                 <Button
                   size="xs"
                   onClick={() => {
-                    const nextLabel = String.fromCharCode(65 + draft.options.length);
+                    const nextLabel = nextOptionLabel(draft.options);
                     set('options', [...draft.options, { label: nextLabel, body: '', isCorrect: false }]);
                   }}
                 >
@@ -587,7 +621,6 @@ export function EditableQuestionCard({
                 </Button>
               </div>
             </div>
-          ) : null}
 
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between">
@@ -620,7 +653,7 @@ export function EditableQuestionCard({
                 <Button
                   size="xs"
                   onClick={() => {
-                    const nextLabel = String.fromCharCode(65 + draft.options.length);
+                    const nextLabel = nextOptionLabel(draft.options);
                     set('options', [...draft.options, { label: nextLabel, body: '', isCorrect: false }]);
                   }}
                 >
