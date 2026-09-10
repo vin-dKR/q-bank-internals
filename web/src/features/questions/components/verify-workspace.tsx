@@ -748,7 +748,9 @@ export function VerifyWorkspace({
     [questions.data, selectedIds],
   );
   const groupSelected = useCallback((): void => {
-    if (orderedSelection.length < 2) return;
+    // A comprehension can hold a SINGLE question (a lone passage-bound sub-question), so one selection
+    // is enough to group — only an empty selection has nothing to do.
+    if (orderedSelection.length < 1) return;
     groupMutation.mutate(orderedSelection, { onSuccess: () => { setSelectedIds(new Set()); } });
   }, [groupMutation, orderedSelection]);
 
@@ -1993,7 +1995,7 @@ export function VerifyWorkspace({
             ),
           )
         )}
-        {orderedSelection.length >= 2 ? (
+        {orderedSelection.length >= 1 ? (
           <div className="fixed bottom-5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full border border-line bg-surface px-4 py-2 shadow-lg">
             <span className="text-sm text-ink-2">{orderedSelection.length} selected</span>
             <Button size="xs" disabled={groupMutation.isPending} onClick={groupSelected}>
