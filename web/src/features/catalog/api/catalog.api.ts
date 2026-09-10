@@ -1,5 +1,5 @@
-import type { BankDeleteResult, BankFlagResult, BankTextResult, CatalogFilterOptions, CatalogPage, UpdateBankText } from '@ingest/contracts';
-import { BankDeleteResultSchema, BankFlagResultSchema, BankTextResultSchema, CatalogFilterOptionsSchema, CatalogPageSchema } from '@ingest/contracts';
+import type { BankDeleteResult, BankFlagResult, BankPassageResult, BankTextResult, CatalogFilterOptions, CatalogPage, UpdateBankText } from '@ingest/contracts';
+import { BankDeleteResultSchema, BankFlagResultSchema, BankPassageResultSchema, BankTextResultSchema, CatalogFilterOptionsSchema, CatalogPageSchema } from '@ingest/contracts';
 import { request } from '../../../shared/api/http-client.js';
 import type { CatalogFilterState, CatalogSelection } from '../types.js';
 
@@ -79,4 +79,16 @@ export const catalogApi = {
    */
   deleteQuestion: (id: string): Promise<BankDeleteResult> =>
     request(`/bank/questions/${id}`, { method: 'DELETE', schema: BankDeleteResultSchema }),
+
+  /**
+   * Rewrite a comprehension group's shared passage text, keyed by its `groupId`. One PATCH updates
+   * every sibling row of the group (the passage is denormalized onto each), so the browse edits the
+   * shared passage in one place.
+   */
+  setPassage: (groupId: string, passage: string): Promise<BankPassageResult> =>
+    request(`/bank/groups/${encodeURIComponent(groupId)}/passage`, {
+      method: 'PATCH',
+      body: { passage },
+      schema: BankPassageResultSchema,
+    }),
 };

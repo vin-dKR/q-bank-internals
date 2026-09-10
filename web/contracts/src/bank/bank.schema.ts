@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MatchDataSchema } from '../questions/question.schema.js';
 
 /**
  * Back-reference stamped onto every bank Question at publish time, so a published question can be
@@ -78,30 +79,46 @@ export const BankFlagResultSchema = z.object({ id: z.string(), flagged: z.boolea
 export type BankFlagResult = z.infer<typeof BankFlagResultSchema>;
 
 /**
- * Repair one or more text fields of a published bank question in place (the Questions-browse "AI
- * fix"): overwrite the stem, options, and/or answer with an AI-cleaned value. Every field is
- * optional so a single broken field is fixed without resending the rest, and at least one must be
- * present. Keyed in the route by the bank Mongo `_id` (which the browse card carries as `id`), like
- * the flag toggle, so it works even for legacy rows with no `ingest_ref`.
+ * Edit one or more content fields of a published bank question in place — the Questions-browse
+ * inline editor AND the per-field "AI fix". Overwrites any subset of the stem, options, answer,
+ * explanation, and (for MATRIX questions) the structured match table. Every field is optional so a
+ * single field is fixed without resending the rest, and at least one must be present. When `match`
+ * is sent the caller also mirrors its key into `answer` (the flat form a plain renderer shows), so
+ * the two never drift. Keyed in the route by the bank Mongo `_id` (which the browse card carries as
+ * `id`), like the flag toggle, so it works even for legacy rows with no `ingest_ref`.
  */
 export const UpdateBankTextSchema = z
   .object({
     questionText: z.string().optional(),
     options: z.array(z.string()).optional(),
     answer: z.string().nullable().optional(),
+    // The worked solution/explanation (LaTeX-bearing); null clears it. New editable field — the
+    // browse read view has always shown it, this makes it editable in place like the other fields.
+    explanation: z.string().nullable().optional(),
+    // Structured match-the-column data (columns + correct matching) for a MATRIX question; null on
+    // every other type. Persisted to the bank's `match_columns` + `match_key`. The read view renders
+    // the match table from these, so this is what makes a matrix's columns editable in the browse.
+    match: MatchDataSchema.nullable().optional(),
   })
   .refine(
-    (value) => value.questionText !== undefined || value.options !== undefined || value.answer !== undefined,
-    { message: 'At least one of questionText, options, or answer is required.' },
+    (value) =>
+      value.questionText !== undefined ||
+      value.options !== undefined ||
+      value.answer !== undefined ||
+      value.explanation !== undefined ||
+      value.match !== undefined,
+    { message: 'At least one field to update is required.' },
   );
 export type UpdateBankText = z.infer<typeof UpdateBankTextSchema>;
 
-/** The echoed result of a text fix: the row's id and the fields now persisted. */
+/** The echoed result of a content edit: the row's id and the fields now persisted. */
 export const BankTextResultSchema = z.object({
   id: z.string(),
   questionText: z.string().optional(),
   options: z.array(z.string()).optional(),
   answer: z.string().nullable().optional(),
+  explanation: z.string().nullable().optional(),
+  match: MatchDataSchema.nullable().optional(),
 });
 export type BankTextResult = z.infer<typeof BankTextResultSchema>;
 
@@ -113,3 +130,20 @@ export type BankTextResult = z.infer<typeof BankTextResultSchema>;
  */
 export const BankDeleteResultSchema = z.object({ id: z.string(), deleted: z.literal(true) });
 export type BankDeleteResult = z.infer<typeof BankDeleteResultSchema>;
+
+/**
+ * Edit the shared comprehension passage TEXT of a published group, keyed in the route by its
+ * `group_id` (the denormalized id every sibling row carries). A passage is repeated identically on
+ * every member row, so this rewrites `passage` on ALL rows of the group at once — the browse edits it
+ * in one place. The passage FIGURE stays a Verify-only concern (no source page to crop from here).
+ */
+export const UpdateBankPassageSchema = z.object({ passage: z.string() });
+export type UpdateBankPassage = z.infer<typeof UpdateBankPassageSchema>;
+
+/** The echoed result of a passage edit: the group id, the persisted text, and how many rows changed. */
+export const BankPassageResultSchema = z.object({
+  groupId: z.string(),
+  passage: z.string(),
+  updated: z.number().int().nonnegative(),
+});
+export type BankPassageResult = z.infer<typeof BankPassageResultSchema>;

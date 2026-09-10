@@ -23,6 +23,8 @@ export {
   type QuestionViewMatchEntry,
   type PassageViewModel,
 } from './question-view.js';
+export { CropImageButton } from './crop-image-button.js';
+export { MatchTableEditor } from './match-table-editor.js';
 export { FileDropzone } from './file-dropzone.js';
 export { LoadedFileBar } from './loaded-file-bar.js';
 export { ErrorFallback } from './error-fallback.js';

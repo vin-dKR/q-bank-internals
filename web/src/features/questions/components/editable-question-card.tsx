@@ -1,12 +1,10 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
 import { KNOWN_QUESTION_TYPES, matchKeyToAnswer, type MatchData, type Question, type ReExtractedQuestion, type ReExtractSource } from '@ingest/contracts';
-import { Badge, Button, Combobox, IconButton, IconCheck, IconEdit, IconFlag, IconPlus, IconScan, IconSparkle, IconTrash, IconUndo, IconX, Spinner, useToast } from '../../../shared/ui/index.js';
+import { Badge, Button, Combobox, CropImageButton, IconButton, IconCheck, IconEdit, IconFlag, IconPlus, IconScan, IconSparkle, IconTrash, IconUndo, IconX, MatchTableEditor, Spinner, useToast } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
-import { MatchTableEditor } from './match-table-editor.js';
 import { questionsApi } from '../api/questions.api.js';
 import { useUpdateQuestion } from '../hooks/use-questions.js';
-import { CropImageButton } from './crop-image-button.js';
 import type { QuestionDraft } from '../hooks/use-question-drafts.js';
 
 /** A not-yet-saved crop region of this question: uploading (`saving`) or awaiting a manual retry. */

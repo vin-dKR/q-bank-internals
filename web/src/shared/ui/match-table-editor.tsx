@@ -1,7 +1,9 @@
 import type { JSX } from 'react';
 import type { MatchColumn, MatchData, MatchEntry } from '@ingest/contracts';
-import { Button, IconButton, IconPlus, IconX } from '../../../shared/ui/index.js';
-import { EditableLatexValue } from '../../../shared/lib/latex.js';
+import { EditableLatexValue } from '../lib/latex.js';
+import { Button } from './button.js';
+import { IconButton } from './icon-button.js';
+import { IconPlus, IconX } from './icons.js';
 import { CropImageButton } from './crop-image-button.js';
 
 const FIELD_LABEL = 'text-[13px] font-medium text-ink-2';
@@ -17,19 +19,26 @@ function nextLabel(taken: string[], pool: string): string {
  * The structured editor for a match-the-column question: each column is a card of labelled entries
  * (2 or 3 columns supported), and the correct matching is set by toggling, for every first-column
  * label, the later-column labels it matches. Emits a whole new {@link MatchData} on any edit — the
- * card mirrors `key` into the flat answer. Titles/labels are plain text; entry bodies edit as LaTeX.
+ * caller mirrors `key` into the flat answer. Titles/labels are plain text; entry bodies edit as LaTeX.
+ *
+ * Shared (§ feature-slicing: shared/ui) — used by the verify card AND the question-bank browse editor.
+ * `allowImages` is off in surfaces with no source page to crop from (the browse): existing entry
+ * figures still render read-only, but can't be added or removed there.
  */
 export function MatchTableEditor({
   value,
   onChange,
   onCropImage,
   disabled = false,
+  allowImages = true,
 }: {
   value: MatchData;
   onChange: (next: MatchData) => void;
   /** Arm a crop from the question page and resolve with the uploaded image URL (or `null` if cancelled). */
-  onCropImage: () => Promise<string | null>;
+  onCropImage?: () => Promise<string | null>;
   disabled?: boolean;
+  /** When false, entry figures are read-only (shown but not croppable/removable). Defaults to on. */
+  allowImages?: boolean;
 }): JSX.Element {
   const { columns, key } = value;
   // The labels an answer can point AT: every entry in the second column onward.
@@ -131,10 +140,10 @@ export function MatchTableEditor({
                       onChange={(body) => { patchEntry(colIndex, entryIndex, { ...entry, body }); }}
                       placeholder="Click to edit entry"
                     />
-                    <div className="mt-1 flex items-center gap-2">
-                      {entry.image ? (
-                        <>
-                          <img src={entry.image} alt={`entry ${entry.label}`} className="max-h-16 rounded border border-line bg-white" />
+                    {entry.image ? (
+                      <div className="mt-1 flex items-center gap-2">
+                        <img src={entry.image} alt={`entry ${entry.label}`} className="max-h-16 rounded border border-line bg-white" />
+                        {allowImages ? (
                           <Button
                             variant="ghost"
                             size="xs"
@@ -143,16 +152,18 @@ export function MatchTableEditor({
                           >
                             Remove image
                           </Button>
-                        </>
-                      ) : (
+                        ) : null}
+                      </div>
+                    ) : allowImages && onCropImage ? (
+                      <div className="mt-1 flex items-center gap-2">
                         <CropImageButton
                           label="Image"
                           disabled={disabled}
                           onRequestCrop={onCropImage}
                           onCropped={(url) => { patchEntry(colIndex, entryIndex, { ...entry, image: url }); }}
                         />
-                      )}
-                    </div>
+                      </div>
+                    ) : null}
                   </div>
                   <IconButton
                     icon={<IconX />}

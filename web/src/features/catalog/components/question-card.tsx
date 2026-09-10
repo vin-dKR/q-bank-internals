@@ -1,7 +1,8 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { CatalogQuestion, UpdateBankText } from '@ingest/contracts';
+import type { CatalogQuestion, MatchData, UpdateBankText } from '@ingest/contracts';
+import { matchKeyToAnswer } from '@ingest/contracts';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { refineLatex } from '../../../shared/api/refine.js';
 import {
@@ -15,6 +16,7 @@ import {
   IconTrash,
   IconUndo,
   IconX,
+  MatchTableEditor,
   QuestionView,
   Spinner,
   useToast,
@@ -75,10 +77,19 @@ export function QuestionCard({
   // Inline hand-edit mode: a local draft of the text fields, edited through EditableLatexValue (same
   // widget as Verify, so the equation editor is available), saved back via the bank text-update pipeline.
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<{ questionText: string; options: string[]; answer: string }>({
+  const [draft, setDraft] = useState<{
+    questionText: string;
+    options: string[];
+    answer: string;
+    explanation: string;
+    /** Structured match table for a matrix question; null on every other type. Edited via the table. */
+    match: MatchData | null;
+  }>({
     questionText: question.questionText,
     options: question.options,
     answer: question.answer ?? '',
+    explanation: question.explanation ?? '',
+    match: question.match,
   });
 
   /** Refine one field's text with AI, remember its previous value for undo, and persist the fix. */
@@ -109,7 +120,13 @@ export function QuestionCard({
 
   /** Enter hand-edit mode, seeding the draft from the current question. */
   const startEdit = (): void => {
-    setDraft({ questionText: question.questionText, options: question.options, answer: question.answer ?? '' });
+    setDraft({
+      questionText: question.questionText,
+      options: question.options,
+      answer: question.answer ?? '',
+      explanation: question.explanation ?? '',
+      match: question.match,
+    });
     setEditing(true);
   };
 
@@ -117,14 +134,31 @@ export function QuestionCard({
   const saveEdit = (): void => {
     const patch: UpdateBankText = {};
     if (draft.questionText !== question.questionText) patch.questionText = draft.questionText;
-    if (JSON.stringify(draft.options) !== JSON.stringify(question.options)) patch.options = draft.options;
+    // A matrix edits through the match table, not the flat options (which the read view hides for it),
+    // so only send options for a non-matrix question — leaving a matrix's printed options untouched.
+    if (!draft.match && JSON.stringify(draft.options) !== JSON.stringify(question.options)) {
+      patch.options = draft.options;
+    }
     if (draft.answer !== (question.answer ?? '')) patch.answer = draft.answer;
+    const nextExplanation = draft.explanation.trim() ? draft.explanation : null;
+    if (nextExplanation !== (question.explanation ?? null)) patch.explanation = nextExplanation;
+    if (JSON.stringify(draft.match) !== JSON.stringify(question.match)) patch.match = draft.match;
     if (Object.keys(patch).length > 0) onFixText(patch);
     setEditing(false);
   };
 
   const setOption = (index: number, value: string): void => {
     setDraft((prev) => ({ ...prev, options: prev.options.map((o, j) => (j === index ? value : o)) }));
+  };
+  /**
+   * A matrix edits through the structured table; the flat answer here is read-only (derived), so it
+   * ALWAYS mirrors the key — including when the key is emptied, which clears the answer too. (Verify
+   * keeps a stale answer on an empty key because there the answer is separately hand-editable and an
+   * empty AI re-read must not wipe it; the catalog has no such field, so mirroring unconditionally is
+   * what keeps the saved answer and the match table from contradicting each other.)
+   */
+  const setMatch = (next: MatchData): void => {
+    setDraft((prev) => ({ ...prev, match: next, answer: matchKeyToAnswer(next.key) }));
   };
   const addOption = (): void => { setDraft((prev) => ({ ...prev, options: [...prev.options, ''] })); };
   const removeOption = (index: number): void => {
@@ -196,32 +230,58 @@ export function QuestionCard({
           />
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Options</span>
-          {draft.options.map((option, index) => (
-            <div key={index} className="flex items-center gap-2">
-              <span className="font-semibold">{optionLabel(index)}.</span>
-              <div className="min-w-0 flex-1">
-                <EditableLatexValue value={option} onChange={(v) => { setOption(index, v); }} placeholder="Click to edit option" />
+        {draft.match ? (
+          <>
+            {/* A matrix edits its columns/entries/matching through the shared table (images stay in
+                Verify — no source page to crop from here). The answer key mirrors the matching. */}
+            <MatchTableEditor value={draft.match} onChange={setMatch} disabled={fixPending} allowImages={false} />
+            <div className="flex flex-col gap-1.5">
+              <span className={FIELD_LABEL}>Answer key</span>
+              <div className="min-h-[38px] rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm text-ink-2">
+                {draft.answer.trim() ? draft.answer : <span className="text-ink-3">Set the matching above to build the key</span>}
               </div>
-              <Button variant="ghost" size="xs" title="Remove this option" onClick={() => { removeOption(index); }}>
-                <IconTrash />
-              </Button>
             </div>
-          ))}
-          <div>
-            <Button size="xs" variant="ghost" onClick={addOption}>
-              <IconPlus /> Add option
-            </Button>
-          </div>
-        </div>
+          </>
+        ) : (
+          <>
+            <div className="flex flex-col gap-1.5">
+              <span className={FIELD_LABEL}>Options</span>
+              {draft.options.map((option, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <span className="font-semibold">{optionLabel(index)}.</span>
+                  <div className="min-w-0 flex-1">
+                    <EditableLatexValue value={option} onChange={(v) => { setOption(index, v); }} placeholder="Click to edit option" />
+                  </div>
+                  <Button variant="ghost" size="xs" title="Remove this option" onClick={() => { removeOption(index); }}>
+                    <IconTrash />
+                  </Button>
+                </div>
+              ))}
+              <div>
+                <Button size="xs" variant="ghost" onClick={addOption}>
+                  <IconPlus /> Add option
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <span className={FIELD_LABEL}>Answer</span>
+              <EditableLatexValue
+                value={draft.answer}
+                onChange={(v) => { setDraft((prev) => ({ ...prev, answer: v })); }}
+                placeholder="Click to set the answer (e.g. A, or AC)"
+              />
+            </div>
+          </>
+        )}
 
         <div className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Answer</span>
+          <span className={FIELD_LABEL}>Explanation</span>
           <EditableLatexValue
-            value={draft.answer}
-            onChange={(v) => { setDraft((prev) => ({ ...prev, answer: v })); }}
-            placeholder="Click to set the answer (e.g. A, or AC)"
+            value={draft.explanation}
+            onChange={(v) => { setDraft((prev) => ({ ...prev, explanation: v })); }}
+            multiline
+            placeholder="Click to add an explanation"
           />
         </div>
       </article>
