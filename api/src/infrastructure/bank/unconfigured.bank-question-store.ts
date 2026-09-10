@@ -33,6 +33,12 @@ export class UnconfiguredBankQuestionStore implements BankQuestionStore {
     );
   }
 
+  setPassage(): Promise<number> {
+    return Promise.reject(
+      new AppError('BANK_UNAVAILABLE', 400, 'The question bank requires DB_DRIVER=mongo + DATABASE_URL.'),
+    );
+  }
+
   // No bank in dev → nothing published to remove, so a verify delete of a staged question still
   // succeeds (unlike the fix writes above, this is a read-like no-op, not a hard failure).
   deleteByQuestionId(): Promise<number> {

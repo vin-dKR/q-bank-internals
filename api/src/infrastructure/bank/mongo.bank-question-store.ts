@@ -134,6 +134,12 @@ export class MongoBankQuestionStore implements BankQuestionStore {
     if (patch.questionText !== undefined) set.question_text = patch.questionText;
     if (patch.options !== undefined) set.options = patch.options;
     if (patch.answer !== undefined) set.answer = patch.answer;
+    if (patch.explanation !== undefined) set.explanation = patch.explanation;
+    // The match table splits across two bank columns (the read/publish shape); clearing it nulls both.
+    if (patch.match !== undefined) {
+      set.match_columns = patch.match ? patch.match.columns : null;
+      set.match_key = patch.match ? patch.match.key : null;
+    }
     const command = {
       update: this.collection,
       updates: [{ q: { _id: { $oid: id } }, u: { $set: set } }],
@@ -141,6 +147,19 @@ export class MongoBankQuestionStore implements BankQuestionStore {
     const reply = await this.prisma.$runCommandRaw(command);
     const matched = ejsonNumber.catch(0).parse((reply as Record<string, unknown>).n ?? 0);
     if (matched === 0) throw errors.bankQuestionNotFound(id);
+  }
+
+  async setPassage(groupId: string, passage: string): Promise<number> {
+    // multi:true — the passage is denormalized onto every sibling row, so all of the group's rows are
+    // rewritten in one command. `n` is the matched count (may arrive as a wrapped Extended-JSON number).
+    const command = {
+      update: this.collection,
+      updates: [{ q: { group_id: groupId }, u: { $set: { passage } }, multi: true }],
+    } as unknown as Prisma.InputJsonObject;
+    const reply = await this.prisma.$runCommandRaw(command);
+    const matched = ejsonNumber.catch(0).parse((reply as Record<string, unknown>).n ?? 0);
+    if (matched === 0) throw errors.bankGroupNotFound(groupId);
+    return matched;
   }
 
   async deleteByQuestionId(questionId: string): Promise<number> {

@@ -7,7 +7,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import type { BankDeleteResult, BankFlagResult, BankTextResult, CatalogFilterOptions, CatalogPage, UpdateBankText } from '@ingest/contracts';
+import type { BankDeleteResult, BankFlagResult, BankPassageResult, BankTextResult, CatalogFilterOptions, CatalogPage, UpdateBankText } from '@ingest/contracts';
 import { useToast } from '../../../shared/ui/index.js';
 import { catalogApi } from '../api/catalog.api.js';
 import type { CatalogFilterState, CatalogSelection } from '../types.js';
@@ -112,6 +112,8 @@ export function useCatalogFixText(): UseMutationResult<
                         ...(patch.questionText !== undefined ? { questionText: patch.questionText } : {}),
                         ...(patch.options !== undefined ? { options: patch.options } : {}),
                         ...(patch.answer !== undefined ? { answer: patch.answer } : {}),
+                        ...(patch.explanation !== undefined ? { explanation: patch.explanation } : {}),
+                        ...(patch.match !== undefined ? { match: patch.match } : {}),
                       }
                     : q,
                 ),
@@ -170,5 +172,43 @@ export function useDeleteCatalogQuestion(): UseMutationResult<
       error('Could not delete', err.message);
     },
     onSuccess: () => { success('Question deleted', 'Removed from the bank.'); },
+  });
+}
+
+/**
+ * Rewrite a comprehension group's shared passage text from the browse. Optimistic like the others, but
+ * keyed by `groupId`: the new text is patched into EVERY cached row of the group (the passage is
+ * denormalized onto each sibling) and rolled back on failure. Mirrors the single write the API makes.
+ */
+export function useCatalogSetPassage(): UseMutationResult<
+  BankPassageResult,
+  Error,
+  { groupId: string; passage: string },
+  { previous: [readonly unknown[], CatalogInfiniteData | undefined][] }
+> {
+  const queryClient = useQueryClient();
+  const { error } = useToast();
+  return useMutation({
+    mutationFn: ({ groupId, passage }) => catalogApi.setPassage(groupId, passage),
+    onMutate: async ({ groupId, passage }) => {
+      await queryClient.cancelQueries({ queryKey: ['catalog'] });
+      const previous = queryClient.getQueriesData<CatalogInfiniteData>({ queryKey: ['catalog'] });
+      queryClient.setQueriesData<CatalogInfiniteData>({ queryKey: ['catalog'] }, (data) =>
+        data
+          ? {
+              ...data,
+              pages: data.pages.map((page) => ({
+                ...page,
+                questions: page.questions.map((q) => (q.groupId === groupId ? { ...q, passage } : q)),
+              })),
+            }
+          : data,
+      );
+      return { previous };
+    },
+    onError: (err, _vars, context) => {
+      for (const [key, data] of context?.previous ?? []) queryClient.setQueryData(key, data);
+      error('Could not save the passage', err.message);
+    },
   });
 }

@@ -4,6 +4,7 @@ import { Card, useConfirm } from '../../../shared/ui/index.js';
 import {
   useCatalogFixText,
   useCatalogQuestions,
+  useCatalogSetPassage,
   useDeleteCatalogQuestion,
   useFilterOptions,
   useSetCatalogFlag,
@@ -60,6 +61,7 @@ export function QuestionsBrowse(): JSX.Element {
   const flagMutation = useSetCatalogFlag();
   const fixMutation = useCatalogFixText();
   const deleteMutation = useDeleteCatalogQuestion();
+  const passageMutation = useCatalogSetPassage();
   const [confirm, confirmDialog] = useConfirm();
 
   /** Confirm (danger) then permanently remove a question from the bank; the mutation drops it from the list. */
@@ -108,9 +110,11 @@ export function QuestionsBrowse(): JSX.Element {
           onToggleFlag={(id, flagged) => { flagMutation.mutate({ id, flagged }); }}
           onFixText={(id, patch) => { fixMutation.mutate({ id, patch }); }}
           onDelete={(id) => { void onDelete(id); }}
+          onSavePassage={(groupId, passage) => { passageMutation.mutate({ groupId, passage }); }}
           flagPendingId={flagMutation.isPending ? flagMutation.variables.id : null}
           fixPendingId={fixMutation.isPending ? fixMutation.variables.id : null}
           deletePendingId={deleteMutation.isPending ? deleteMutation.variables : null}
+          passagePendingId={passageMutation.isPending ? passageMutation.variables.groupId : null}
         />
       </div>
       {confirmDialog}

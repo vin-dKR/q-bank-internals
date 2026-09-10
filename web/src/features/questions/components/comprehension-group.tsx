@@ -1,10 +1,9 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
 import type { ReExtractedGroup, ReExtractSource } from '@ingest/contracts';
-import { Badge, Button, IconLayers, IconScan, useToast } from '../../../shared/ui/index.js';
+import { Badge, Button, CropImageButton, IconLayers, IconScan, useToast } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { questionsApi } from '../api/questions.api.js';
-import { CropImageButton } from './crop-image-button.js';
 
 type Props = {
   documentId: string;

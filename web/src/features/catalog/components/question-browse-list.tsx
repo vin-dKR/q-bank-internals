@@ -1,9 +1,10 @@
 import type { JSX } from 'react';
 import type { CatalogPage, CatalogQuestion, UpdateBankText } from '@ingest/contracts';
 import type { UseInfiniteQueryResult } from '@tanstack/react-query';
-import { Button, EmptyState, IconFileText, IconLayers, PassageView, Skeleton } from '../../../shared/ui/index.js';
+import { Button, EmptyState, IconFileText, IconLayers, Skeleton } from '../../../shared/ui/index.js';
 import { catalogPassageToView } from '../lib/to-question-view.js';
 import { QuestionCard } from './question-card.js';
+import { PassageHeader } from './passage-header.js';
 
 /**
  * Group the flat browse list for rendering: consecutive published rows sharing a comprehension
@@ -65,9 +66,11 @@ export function QuestionBrowseList({
   onToggleFlag,
   onFixText,
   onDelete,
+  onSavePassage,
   flagPendingId,
   fixPendingId,
   deletePendingId,
+  passagePendingId,
 }: {
   query: UseInfiniteQueryResult<{ pages: CatalogPage[] }>;
   /** Toggle one question's flag by its bank id. */
@@ -76,12 +79,16 @@ export function QuestionBrowseList({
   onFixText: (id: string, patch: UpdateBankText) => void;
   /** Permanently delete one question by its bank id (the parent runs the danger confirm). */
   onDelete: (id: string) => void;
+  /** Persist a comprehension group's shared passage text by its group id (updates every member). */
+  onSavePassage: (groupId: string, passage: string) => void;
   /** The id whose flag write is currently in flight (disables just that card's button). */
   flagPendingId: string | null;
   /** The id whose text-fix write is currently in flight (disables just that card's AI buttons). */
   fixPendingId: string | null;
   /** The id whose delete is currently in flight (disables just that card's Delete button). */
   deletePendingId: string | null;
+  /** The group id whose passage write is currently in flight (disables just that group's Save). */
+  passagePendingId: string | null;
 }): JSX.Element {
   if (query.isPending) return <LoadingSkeletons />;
 
@@ -128,7 +135,13 @@ export function QuestionBrowseList({
         return (
           <div key={`group_${item.groupId}`} className="flex flex-col gap-3 rounded-xl border border-line bg-surface-2 p-4">
             {passage ? (
-              <PassageView passage={passage} count={item.questions.length} />
+              <PassageHeader
+                groupId={item.groupId}
+                passage={passage}
+                count={item.questions.length}
+                onSave={onSavePassage}
+                pending={passagePendingId === item.groupId}
+              />
             ) : (
               <div className="flex items-center gap-2 text-[13px] font-semibold text-ink-2">
                 <IconLayers /> Comprehension

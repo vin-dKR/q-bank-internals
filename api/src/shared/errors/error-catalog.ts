@@ -38,6 +38,13 @@ export const errors = {
       `No published bank question is linked to ingest question "${questionId}".`,
     ),
 
+  bankGroupNotFound: (groupId: string): AppError =>
+    new AppError(
+      'BANK_GROUP_NOT_FOUND',
+      404,
+      `No published bank questions belong to comprehension group "${groupId}".`,
+    ),
+
   pageNotFound: (documentId: string, page: number): AppError =>
     new AppError('PAGE_NOT_FOUND', 404, `Document "${documentId}" has no page ${String(page)}.`),
 

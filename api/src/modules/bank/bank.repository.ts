@@ -1,4 +1,4 @@
-import type { BankQuestion } from '@ingest/contracts';
+import type { BankQuestion, MatchData } from '@ingest/contracts';
 
 /** The image columns the fix flow may re-point on a published bank question. */
 export type BankImagePatch = {
@@ -9,14 +9,17 @@ export type BankImagePatch = {
 };
 
 /**
- * The text columns the AI-fix flow may overwrite on a published bank question (any subset). Each is
- * explicitly `| undefined` so the zod-inferred `UpdateBankText` (whose optional fields carry undefined)
- * flows straight in under `exactOptionalPropertyTypes`; the store applies only the fields that are set.
+ * The content columns the inline editor / AI-fix flow may overwrite on a published bank question
+ * (any subset). Each is explicitly `| undefined` so the zod-inferred `UpdateBankText` (whose optional
+ * fields carry undefined) flows straight in under `exactOptionalPropertyTypes`; the store applies only
+ * the fields that are set. `match` maps to the bank's `match_columns` + `match_key` pair.
  */
 export type BankTextPatch = {
   questionText?: string | undefined;
   options?: string[] | undefined;
   answer?: string | null | undefined;
+  explanation?: string | null | undefined;
+  match?: MatchData | null | undefined;
 };
 
 /**
@@ -44,6 +47,12 @@ export interface BankQuestionStore {
    * row matches; the caller has already validated the patch carries at least one field.
    */
   setText(id: string, patch: BankTextPatch): Promise<void>;
+  /**
+   * Rewrite the shared comprehension passage text on EVERY row of a group, keyed by its `group_id`
+   * (the denormalized id every sibling row carries). The passage is repeated identically across the
+   * group, so all its rows update together. Returns how many rows changed; throws when none match.
+   */
+  setPassage(groupId: string, passage: string): Promise<number>;
   /**
    * Delete the published question(s) stamped with this ingest `questionId` — called when a staged
    * question is deleted in verify, so its live bank copy goes too. Idempotent: returns how many rows

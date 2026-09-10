@@ -1,4 +1,4 @@
-import type { BankQuestion, BankTextResult, UpdateBankImage, UpdateBankText } from '@ingest/contracts';
+import type { BankPassageResult, BankQuestion, BankTextResult, UpdateBankImage, UpdateBankText } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { BankQuestionStore } from './bank.repository.js';
 
@@ -34,6 +34,15 @@ export class BankService {
   async deleteQuestion(id: string): Promise<{ id: string; deleted: true }> {
     await this.bank.deleteById(id);
     return { id, deleted: true };
+  }
+
+  /**
+   * Rewrite the shared comprehension passage text across every row of a group (keyed by its
+   * `group_id`). Echoes the group id, the persisted text, and how many sibling rows changed.
+   */
+  async setPassage(groupId: string, passage: string): Promise<BankPassageResult> {
+    const updated = await this.bank.setPassage(groupId, passage);
+    return { groupId, passage, updated };
   }
 
   /** Re-point the question figure or one option image (identified by ingest `questionId`). */

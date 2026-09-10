@@ -1,5 +1,5 @@
 import type { RequestHandler } from 'express';
-import { BankSearchQuerySchema, UpdateBankFlagSchema, UpdateBankImageSchema, UpdateBankTextSchema } from '@ingest/contracts';
+import { BankSearchQuerySchema, UpdateBankFlagSchema, UpdateBankImageSchema, UpdateBankPassageSchema, UpdateBankTextSchema } from '@ingest/contracts';
 import { asyncHandler } from '../../shared/http/async-handler.js';
 import { ok } from '../../shared/http/api-response.js';
 import { parseOrThrow } from '../../shared/http/parse.js';
@@ -12,6 +12,7 @@ export function createBankController(service: BankService): {
   setFlag: RequestHandler;
   setText: RequestHandler;
   remove: RequestHandler;
+  setPassage: RequestHandler;
 } {
   return {
     search: asyncHandler(async (req, res) => {
@@ -36,6 +37,11 @@ export function createBankController(service: BankService): {
 
     remove: asyncHandler(async (req, res) => {
       ok(res, await service.deleteQuestion(requiredParam(req, 'id')));
+    }),
+
+    setPassage: asyncHandler(async (req, res) => {
+      const { passage } = parseOrThrow(UpdateBankPassageSchema, req.body);
+      ok(res, await service.setPassage(requiredParam(req, 'groupId'), passage));
     }),
   };
 }
