@@ -148,5 +148,12 @@ export const errors = {
         `window or the limit is raised.`,
     ),
 
+  // Exam-access (Masters → Exam access) writes target live Eduents accounts by their Mongo `_id`.
+  organizationNotFound: (id: string): AppError =>
+    new AppError('ORGANIZATION_NOT_FOUND', 404, `No organization with id "${id}".`),
+
+  userNotFound: (id: string): AppError =>
+    new AppError('USER_NOT_FOUND', 404, `No user with id "${id}".`),
+
   internal: (): AppError => new AppError('INTERNAL', 500, 'Something went wrong.'),
 } as const;

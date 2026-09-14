@@ -29,6 +29,7 @@ import { PagesService } from './modules/pages/index.js';
 import { PublishService } from './modules/publish/index.js';
 import { BankService } from './modules/bank/index.js';
 import { CatalogService } from './modules/catalog/index.js';
+import { ExamAccessService } from './modules/exam-access/index.js';
 import { DriveService } from './modules/drive/index.js';
 import { IngestionService, type UploadStagingStore } from './modules/ingestion/index.js';
 import { PromptService, type PromptOverrideStore, type PromptOverrides } from './modules/prompts/index.js';
@@ -74,6 +75,8 @@ import { MongoBankQuestionStore } from './infrastructure/bank/mongo.bank-questio
 import { UnconfiguredBankQuestionStore } from './infrastructure/bank/unconfigured.bank-question-store.js';
 import { MongoCatalogStore } from './infrastructure/catalog/mongo.catalog-store.js';
 import { UnconfiguredCatalogStore } from './infrastructure/catalog/unconfigured.catalog-store.js';
+import { MongoExamAccessStore } from './infrastructure/exam-access/mongo.exam-access-store.js';
+import { UnconfiguredExamAccessStore } from './infrastructure/exam-access/unconfigured.exam-access-store.js';
 
 /**
  * The COMPOSITION ROOT (§5). The single file allowed to `new` infrastructure and decide which
@@ -88,6 +91,7 @@ export type Container = {
   publishService: PublishService;
   bankService: BankService;
   catalogService: CatalogService;
+  examAccessService: ExamAccessService;
   extractionService: ExtractionService;
   extractionWorker: ExtractionWorker;
   jobQueue: JobQueue;
@@ -302,6 +306,11 @@ export function createContainer(): Container {
       ? new MongoCatalogStore(getPrisma())
       : new UnconfiguredCatalogStore();
   const catalogService = new CatalogService(catalogStore);
+  const examAccessStore =
+    env.DB_DRIVER === 'mongo'
+      ? new MongoExamAccessStore(getPrisma())
+      : new UnconfiguredExamAccessStore();
+  const examAccessService = new ExamAccessService(examAccessStore);
   // Shared in-process registry so the cancel action and the worker's deadline signal the same run.
   const runRegistry = new ExtractionRunRegistry();
   const extractionService = new ExtractionService(
@@ -355,6 +364,7 @@ export function createContainer(): Container {
     publishService,
     bankService,
     catalogService,
+    examAccessService,
     extractionService,
     extractionWorker,
     jobQueue,

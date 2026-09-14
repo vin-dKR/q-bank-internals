@@ -6,6 +6,7 @@ import { createPagesRouter } from './modules/pages/index.js';
 import { createPublishRouter } from './modules/publish/index.js';
 import { createBankRouter } from './modules/bank/index.js';
 import { createCatalogRouter } from './modules/catalog/index.js';
+import { createExamAccessRouter } from './modules/exam-access/index.js';
 import { createExtractionRouter } from './modules/extraction/index.js';
 import { createUsageRouter } from './modules/usage/index.js';
 import { createDriveRouter } from './modules/drive/index.js';
@@ -28,6 +29,7 @@ export function createApiRouter(container: Container): Router {
   router.use('/publish', createPublishRouter(container.publishService));
   router.use('/bank', createBankRouter(container.bankService));
   router.use('/catalog', createCatalogRouter(container.catalogService));
+  router.use('/exam-access', createExamAccessRouter(container.examAccessService));
   router.use('/extraction', createExtractionRouter(container.extractionService));
   router.use('/usage', createUsageRouter(container.usageService));
   router.use('/drive', createDriveRouter(container.driveService));
