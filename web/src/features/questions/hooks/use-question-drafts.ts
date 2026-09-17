@@ -9,6 +9,8 @@ export type QuestionDraft = {
   answer: string;
   explanation: string;
   questionType: string;
+  /** Difficulty (easy|medium|hard); the AI classifies it, the operator can correct it. Blank = unset. */
+  level: string;
   sectionName: string;
   topic: string;
   /** Per-question PYQ exam/year (blank on a non-PYQ chapter); edited on a PYQ chapter's verify card. */
@@ -33,6 +35,7 @@ function toQuestionDraft(question: Question, fallbacks: DraftFallbacks): Questio
     answer: question.answer,
     explanation: question.explanation ?? '',
     questionType: question.questionType ?? fallbacks.questionType ?? '',
+    level: question.level ?? '',
     sectionName: question.sectionName ?? fallbacks.sectionName ?? '',
     topic: question.topic ?? '',
     pyqExam: question.pyqExam ?? fallbacks.pyqExam ?? '',
@@ -58,6 +61,7 @@ function draftEquals(a: QuestionDraft, b: QuestionDraft): boolean {
     a.answer === b.answer &&
     a.explanation === b.explanation &&
     a.questionType === b.questionType &&
+    a.level === b.level &&
     a.sectionName === b.sectionName &&
     a.topic === b.topic &&
     a.pyqExam === b.pyqExam &&
@@ -79,6 +83,7 @@ function draftToPatch(draft: QuestionDraft): UpdateQuestion {
     options: draft.options,
     match: draft.match,
     questionType: draft.questionType || null,
+    level: draft.level || null,
     sectionName: draft.sectionName || null,
     topic: draft.topic || null,
     pyqExam: draft.pyqExam || null,

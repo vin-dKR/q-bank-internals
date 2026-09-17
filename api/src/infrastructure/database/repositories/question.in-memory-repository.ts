@@ -46,6 +46,7 @@ export class InMemoryQuestionRepository implements QuestionRepository {
       explanationImages: [],
       imageCrops: [],
       questionType: question.questionType,
+      level: question.level,
       sectionName: question.sectionName,
       topic: question.topic,
       subject: question.subject,

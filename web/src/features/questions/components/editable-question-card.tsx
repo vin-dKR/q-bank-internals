@@ -1,6 +1,6 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
-import { KNOWN_QUESTION_TYPES, matchKeyToAnswer, type MatchData, type Question, type ReExtractedQuestion, type ReExtractSource } from '@ingest/contracts';
+import { KNOWN_LEVELS, KNOWN_QUESTION_TYPES, matchKeyToAnswer, type MatchData, type Question, type ReExtractedQuestion, type ReExtractSource } from '@ingest/contracts';
 import { Badge, Button, Combobox, CropImageButton, IconButton, IconCheck, IconEdit, IconFlag, IconPlus, IconScan, IconSparkle, IconTrash, IconUndo, IconX, MatchTableEditor, Spinner, useToast } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { questionsApi } from '../api/questions.api.js';
@@ -143,6 +143,8 @@ function nextOptionLabel(options: readonly { label: string }[]): string {
 }
 
 const FIELD_LABEL = 'text-[13px] font-medium text-ink-2';
+/** The three difficulty options for the Verify card's picker (closed vocabulary). */
+const LEVEL_OPTIONS: readonly string[] = [...KNOWN_LEVELS];
 
 /** `reading` sentinel for the whole-question re-extract (distinct from the per-field keys). */
 const WHOLE_REEXTRACT = 'whole';
@@ -743,7 +745,7 @@ export function EditableQuestionCard({
           ) : null}
         </div>
 
-      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
         <label className="flex flex-col gap-1.5">
           <span className={FIELD_LABEL}>Question type</span>
           <Combobox
@@ -761,6 +763,16 @@ export function EditableQuestionCard({
           >
             {reading === WHOLE_REEXTRACT ? '…' : <><IconScan /> Re-extract with this type</>}
           </Button>
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className={FIELD_LABEL}>Difficulty</span>
+          <Combobox
+            value={draft.level}
+            options={LEVEL_OPTIONS}
+            allowCustom={false}
+            placeholder="Select difficulty…"
+            onChange={(v) => { set('level', v); }}
+          />
         </label>
         <label className="flex flex-col gap-1.5">
           <span className={FIELD_LABEL}>Section</span>

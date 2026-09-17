@@ -137,6 +137,10 @@ export const QuestionSchema = z.object({
   imageCrops: z.array(ImageCropSchema).default([]),
   // Editable metadata on the verify screen (mirrors the bank fields).
   questionType: z.string().nullable(),
+  // Per-question difficulty (easy | medium | hard), classified by the AI at extraction and correctable
+  // on the Verify screen. Resolved to the bank's Level FK on publish. Defaulted so rows extracted
+  // before difficulty existed still parse (absent → null).
+  level: z.string().nullable().default(null),
   sectionName: z.string().nullable(),
   topic: z.string().nullable(),
   // Per-question subject, set per node in the structure tree — for a paper that spans subjects (a PYQ
@@ -237,6 +241,7 @@ export const UpdateQuestionSchema = QuestionSchema.pick({
   explanationImages: true,
   imageCrops: true,
   questionType: true,
+  level: true,
   sectionName: true,
   topic: true,
   pyqExam: true,

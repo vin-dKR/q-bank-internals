@@ -30,6 +30,7 @@ import { PublishService } from './modules/publish/index.js';
 import { BankService } from './modules/bank/index.js';
 import { CatalogService } from './modules/catalog/index.js';
 import { ExamAccessService } from './modules/exam-access/index.js';
+import { MastersService, TaxonomyResolver } from './modules/masters/index.js';
 import { DriveService } from './modules/drive/index.js';
 import { IngestionService, type UploadStagingStore } from './modules/ingestion/index.js';
 import { PromptService, type PromptOverrideStore, type PromptOverrides } from './modules/prompts/index.js';
@@ -77,6 +78,8 @@ import { MongoCatalogStore } from './infrastructure/catalog/mongo.catalog-store.
 import { UnconfiguredCatalogStore } from './infrastructure/catalog/unconfigured.catalog-store.js';
 import { MongoExamAccessStore } from './infrastructure/exam-access/mongo.exam-access-store.js';
 import { UnconfiguredExamAccessStore } from './infrastructure/exam-access/unconfigured.exam-access-store.js';
+import { MongoTaxonomyStore } from './infrastructure/taxonomy/mongo.taxonomy-store.js';
+import { UnconfiguredTaxonomyStore } from './infrastructure/taxonomy/unconfigured.taxonomy-store.js';
 
 /**
  * The COMPOSITION ROOT (§5). The single file allowed to `new` infrastructure and decide which
@@ -92,6 +95,7 @@ export type Container = {
   bankService: BankService;
   catalogService: CatalogService;
   examAccessService: ExamAccessService;
+  mastersService: MastersService;
   extractionService: ExtractionService;
   extractionWorker: ExtractionWorker;
   jobQueue: JobQueue;
@@ -295,11 +299,18 @@ export function createContainer(): Container {
     buildQuestionReExtractor(),
     buildPaperMetadataExtractor(),
   );
+  // The taxonomy dictionaries back both Masters CRUD and the publish-time FK resolver, so build the
+  // one store here and share it.
+  const taxonomyStore =
+    env.DB_DRIVER === 'mongo'
+      ? new MongoTaxonomyStore(getPrisma())
+      : new UnconfiguredTaxonomyStore();
+  const taxonomyResolver = new TaxonomyResolver(taxonomyStore);
   const bankPublisher =
     env.DB_DRIVER === 'mongo'
       ? new MongoBankPublisher(getPrisma())
       : new UnconfiguredBankPublisher();
-  const publishService = new PublishService(documents, questions, bankPublisher);
+  const publishService = new PublishService(documents, questions, bankPublisher, taxonomyResolver);
   const bankService = new BankService(bankQuestionStore);
   const catalogStore =
     env.DB_DRIVER === 'mongo'
@@ -311,6 +322,7 @@ export function createContainer(): Container {
       ? new MongoExamAccessStore(getPrisma())
       : new UnconfiguredExamAccessStore();
   const examAccessService = new ExamAccessService(examAccessStore);
+  const mastersService = new MastersService(taxonomyStore);
   // Shared in-process registry so the cancel action and the worker's deadline signal the same run.
   const runRegistry = new ExtractionRunRegistry();
   const extractionService = new ExtractionService(
@@ -365,6 +377,7 @@ export function createContainer(): Container {
     bankService,
     catalogService,
     examAccessService,
+    mastersService,
     extractionService,
     extractionWorker,
     jobQueue,

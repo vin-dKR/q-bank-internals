@@ -16,10 +16,12 @@ export type ExtractedQuestion = {
   answer: string | null;
   explanation: string | null;
   sectionName: string | null;
-  // For a comprehension member this is the model's per-sub-question REAL type (a group holds questions
-  // of any type); for an ordinary question the operator's binding fixes the type in `toNewQuestion`, so
-  // this draft value is only consulted for comprehension members.
+  // The model's own classification of this question's type (one of KNOWN_QUESTION_TYPES), or null when
+  // it returned nothing usable. `toNewQuestion` prefers it and falls back to the operator's binding.
   questionType: string | null;
+  // The model's difficulty classification (easy|medium|hard), or null. Stamped onto the persisted
+  // question and resolved to the bank's Level FK on publish.
+  level: string | null;
   sourcePage: number;
   /**
    * The SOURCE exam + year the model read off the page for a PYQ segment (e.g. "NEET" / "2019"), or
