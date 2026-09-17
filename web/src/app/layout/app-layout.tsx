@@ -67,15 +67,6 @@ function IconMasters(): JSX.Element {
   );
 }
 
-function IconFolders(): JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H17a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
-      <path d="M8 5V4a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v6" />
-    </svg>
-  );
-}
-
 function IconQuestions(): JSX.Element {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -243,7 +234,6 @@ export function AppLayout(): JSX.Element {
         <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
           <NavItem to="/masters/taxonomy" icon={<IconMasters />} label="Question taxonomy" collapsed={collapsed} />
           <NavItem to="/masters/exam-access" icon={<IconLayers />} label="Exam access" collapsed={collapsed} />
-          <NavItem to="/masters/drive-folders" icon={<IconFolders />} label="Drive folders" collapsed={collapsed} />
           <NavItem to="/prompts" icon={<IconFileText />} label="AI prompts" collapsed={collapsed} />
         </nav>
 

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Document, DocumentListQuery, RegisterDocument, UpdateDocument } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { SessionRepository } from '../sessions/index.js';
@@ -73,6 +74,8 @@ export class DocumentsService {
       sessionId: input.sessionId ?? null,
       driveFileId: input.driveFileId,
       fileName: input.fileName,
+      // Each registration is its own document — mint a distinct identity server-side.
+      uploadGroupId: randomUUID(),
       path: input.path,
       kind: input.kind,
       sectionName: input.sectionName ?? null,

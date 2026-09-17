@@ -26,15 +26,14 @@ export class InMemoryDocumentRepository implements DocumentRepository {
   }
 
   findLiveByIdentity(identity: DocumentIdentity): Promise<Document | null> {
+    // Empty id (never sent by a real upload) must not collapse legacy rows sharing the default ''.
+    if (!identity.uploadGroupId) return Promise.resolve(null);
     for (const doc of this.store.values()) {
       if (
         doc.deletedAt === null &&
         doc.sessionId === identity.sessionId &&
         doc.kind === identity.kind &&
-        doc.fileName === identity.fileName &&
-        doc.path.module === identity.path.module &&
-        doc.path.chapter === identity.path.chapter &&
-        doc.path.section === identity.path.section
+        doc.uploadGroupId === identity.uploadGroupId
       ) {
         return Promise.resolve(doc);
       }
@@ -75,6 +74,7 @@ export class InMemoryDocumentRepository implements DocumentRepository {
       sessionId: input.sessionId,
       driveFileId: input.driveFileId,
       fileName: input.fileName,
+      uploadGroupId: input.uploadGroupId,
       path: input.path,
       kind: input.kind,
       sectionName: input.sectionName,

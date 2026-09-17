@@ -77,6 +77,28 @@ regType('assertion_reason', 'Assertion & Reason', [
   'REASONING TYPE', 'Assertion & Reasoning type questions', 'Asseration and Reason', '[REASONING TYPE]',
 ]);
 
+/**
+ * A questionType master's canonical KIND → the KNOWN_QUESTION_TYPES slug the extraction pipeline emits
+ * and the TYPE_RULES key on. The dictionary stores 7 kinds while the prompt vocabulary uses the 9-token
+ * slug set; the two differ only for single/multi (the `_correct` suffix). Used to present the live
+ * masters questionType rows to the model as the slugs it must classify into.
+ */
+const SLUG_BY_KIND: Record<string, string> = {
+  single: 'single_correct',
+  multi: 'multi_correct',
+  matrix: 'matrix',
+  comprehension: 'comprehension',
+  integer: 'integer',
+  subjective: 'subjective',
+  assertion_reason: 'assertion_reason',
+};
+
+/** The pipeline slug for a questionType master row's kind (falls back to the kind itself). */
+export function slugForKind(kind: string | null | undefined): string | null {
+  if (!kind) return null;
+  return SLUG_BY_KIND[kind] ?? kind;
+}
+
 /** All canonical question kinds, for seeding + UI. */
 export const QUESTION_KINDS: Canonical[] = [
   { key: 'single', name: 'Single Correct', kind: 'single' },
@@ -225,15 +247,22 @@ export function canonicalizeTopic(raw: string | null | undefined): Canonical | n
   return { key: slug(raw as string), name: (raw as string).trim() };
 }
 
+/** Module is an ingest-side open dimension (grouping under a subject); slug its raw value into a stable key. */
+export function canonicalizeModule(raw: string | null | undefined): Canonical | null {
+  if (isJunk(raw)) return null;
+  return { key: slug(raw as string), name: (raw as string).trim() };
+}
+
 /** The full set of managed masters dimensions. */
 export type MasterDimension =
-  | 'exam' | 'subject' | 'chapter' | 'section' | 'questionType' | 'level' | 'topic';
+  | 'exam' | 'subject' | 'module' | 'chapter' | 'section' | 'questionType' | 'level' | 'topic';
 
 /** One-stop canonicalizer across every managed dimension (junk / unknown-closed → null). */
 export function canonicalizeMaster(dim: MasterDimension, raw: string | null | undefined): Canonical | null {
   switch (dim) {
     case 'exam': return canonicalizeExam(raw);
     case 'subject': return canonicalizeSubject(raw);
+    case 'module': return canonicalizeModule(raw);
     case 'chapter': return canonicalizeChapter(raw);
     case 'section': return canonicalizeSection(raw);
     case 'questionType': return canonicalizeQuestionType(raw);

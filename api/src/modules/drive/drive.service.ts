@@ -1,48 +1,17 @@
-import type { CreateFolder, DeleteFolderResult, DriveFile, DriveFolder } from '@ingest/contracts';
-import { errors } from '../../shared/errors/error-catalog.js';
+import type { DriveFile, DriveFolder } from '@ingest/contracts';
 import type { DriveStorage } from './drive.storage.js';
 
 /**
- * Business rules for browsing Drive. Holds the configured root folder so callers never pass raw
- * folder ids around — the "which folder is the ingest folder" decision lives in one place (config).
+ * The Drive STORAGE destination for assembled chapter PDFs. Drive is no longer a vocabulary/browse
+ * source (all metadata now comes from the all-masters dictionaries) — this only files uploads into
+ * folders named after the chosen master values, and reads a PDF back for extraction. Holds the
+ * configured root folder so callers never pass raw folder ids around (that decision lives in config).
  */
 export class DriveService {
   constructor(
     private readonly storage: DriveStorage,
     private readonly rootFolderId: string,
   ) {}
-
-  listFiles(): Promise<DriveFile[]> {
-    return this.storage.listPdfs(this.rootFolderId);
-  }
-
-  /** Folders directly under `parentId`, defaulting to the configured root when omitted. */
-  listFolders(parentId?: string): Promise<DriveFolder[]> {
-    return this.storage.listFolders(parentId ?? this.rootFolderId);
-  }
-
-  /** Create a folder under `parentId`, defaulting to the configured root when omitted. */
-  createFolder(input: CreateFolder): Promise<DriveFolder> {
-    return this.storage.createFolder(input.name, input.parentId ?? this.rootFolderId);
-  }
-
-  /**
-   * Delete a folder by id. Guards against silent data loss: a folder that still holds sub-folders
-   * or PDFs is only removed when the caller explicitly opts in with `force`.
-   */
-  async deleteFolder(id: string, force: boolean): Promise<DeleteFolderResult> {
-    if (!force) {
-      const [folders, files] = await Promise.all([
-        this.storage.listFolders(id),
-        this.storage.listPdfs(id),
-      ]);
-      if (folders.length > 0 || files.length > 0) {
-        throw errors.driveFolderNotEmpty(id);
-      }
-    }
-    await this.storage.deleteFolder(id);
-    return { id };
-  }
 
   uploadPdf(input: { name: string; bytes: Buffer; folderId: string }): Promise<DriveFile> {
     return this.storage.uploadPdf(input);

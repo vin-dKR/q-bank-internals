@@ -28,6 +28,7 @@ const MAX_ENTRIES = 5000;
 const COLLECTION: Record<TaxonomyDimension, string> = {
   exam: 'Exam',
   subject: 'Subject',
+  module: 'Module',
   chapter: 'Chapter',
   section: 'Section',
   questionType: 'QuestionType',
@@ -39,6 +40,7 @@ const COLLECTION: Record<TaxonomyDimension, string> = {
 const QUESTION_FK: Record<TaxonomyDimension, string> = {
   exam: 'examId',
   subject: 'subjectId',
+  module: 'moduleId',
   chapter: 'chapterId',
   section: 'sectionId',
   questionType: 'questionTypeId',
@@ -87,7 +89,7 @@ export class MongoTaxonomyStore implements TaxonomyStore {
   async list(dimension: TaxonomyDimension, filter: DictionaryFilter): Promise<DictionaryRow[]> {
     const match: Record<string, unknown> = {};
     if (filter.q) match.name = { $regex: escapeRegex(filter.q), $options: 'i' };
-    if (dimension === 'chapter' && filter.subjectId && OBJECT_ID.test(filter.subjectId)) {
+    if ((dimension === 'chapter' || dimension === 'module') && filter.subjectId && OBJECT_ID.test(filter.subjectId)) {
       match.subjectId = { $oid: filter.subjectId };
     }
     if (dimension === 'topic' && filter.chapterId && OBJECT_ID.test(filter.chapterId)) {

@@ -6,6 +6,7 @@ import type {
   AnswerSheet,
   ExtractedQuestion,
   ExtractionProgress,
+  MastersSnapshot,
   PageImage,
   QuestionExtraction,
   VisionExtractor,
@@ -174,6 +175,9 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     apiKey: string,
     private readonly model: string,
     private readonly loadPromptOverrides: () => Promise<PromptOverrides>,
+    // A live snapshot of the closed masters dimensions (questionType / level) so the classification
+    // prompt lists the OPERATOR-managed vocabulary, not a hardcoded constant. Cached upstream.
+    private readonly loadMasters: () => Promise<MastersSnapshot>,
   ) {
     this.client = new OpenAI({ apiKey });
   }
@@ -189,9 +193,12 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     const pagesTotal = input.pages.length;
     let pagesDone = 0;
     const overrides = await this.loadPromptOverrides();
+    // The live masters vocabulary for the closed classification dimensions — fetched once per run so the
+    // prompt lists the current questionType / level rows (dynamic; a rename/edit needs no code change).
+    const masters = await this.loadMasters();
     for (const page of input.pages) {
       // Per page: the topic config can bind different pages to different fixed question types.
-      const prompt = questionPrompt(input.document, page.pageNumber, overrides);
+      const prompt = questionPrompt(input.document, page.pageNumber, overrides, masters);
       const raws = await this.readPageQuestions(prompt, page, input.document, usage, input.signal);
       for (const raw of raws) {
         results.push({

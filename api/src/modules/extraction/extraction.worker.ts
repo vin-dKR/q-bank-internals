@@ -172,8 +172,15 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
   };
 }
 
-/** True when two documents describe the same chapter unit (module + chapter + section). */
-function sameUnit(a: Document, b: Document): boolean {
+/**
+ * True when two documents belong to the SAME upload — matched by their shared `uploadGroupId` (the
+ * question/answer/solution parts of one upload action carry the same id). This is what keeps each
+ * answer/solution bound to its OWN question when two uploads share a chapter unit — matching by the
+ * unit path alone would cross-merge their answers. Legacy rows have no id, so they fall back to the
+ * old unit-path match (module + chapter + section).
+ */
+function sameGroup(a: Document, b: Document): boolean {
+  if (a.uploadGroupId && b.uploadGroupId) return a.uploadGroupId === b.uploadGroupId;
   return (
     a.path.module === b.path.module &&
     a.path.chapter === b.path.chapter &&
@@ -342,8 +349,8 @@ export class ExtractionWorker {
   ): Promise<ExtractedQuestion[]> {
     if (!document.sessionId) return drafts;
     const siblings = await this.documents.listBySession(document.sessionId);
-    const answerDocs = siblings.filter((s) => s.kind === 'answer' && sameUnit(s, document));
-    const solutionDocs = siblings.filter((s) => s.kind === 'solution' && sameUnit(s, document));
+    const answerDocs = siblings.filter((s) => s.kind === 'answer' && sameGroup(s, document));
+    const solutionDocs = siblings.filter((s) => s.kind === 'solution' && sameGroup(s, document));
     if (answerDocs.length === 0 && solutionDocs.length === 0) return drafts;
 
     // v2 assembled uploads pin each topic's answer/solution pages, so we read every topic's key from

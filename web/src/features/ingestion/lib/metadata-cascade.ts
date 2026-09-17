@@ -2,14 +2,15 @@ import type { ChapterVocabulary } from '../hooks/use-chapter-vocabulary.js';
 import type { ChapterMetadataDraft } from '../types/chapter-group.js';
 
 /**
- * Compute the metadata patch for a change to one dependent field (exam → subject → module → chapter →
- * section), clearing any descendant the new parent no longer allows. This is what stops a chapter from
- * outliving the module it belonged to when the module is changed.
+ * Compute the metadata patch for a change to one dependent field (exam → subject → module → chapter),
+ * clearing any descendant the new parent no longer allows.
  *
- * A descendant is cleared only when the new parent is a *known* value whose recorded child set
- * excludes it. While the operator is still typing an unknown/partial parent, that parent's children
- * fall back to the full list (see {@link ChapterVocabulary}), so the descendant stays valid and is
- * never wiped mid-keystroke — only a deliberate switch to a different known parent clears it.
+ * The all-masters dictionaries scope modules and chapters to a SUBJECT only (exam does not narrow the
+ * global subject list, and module does not narrow chapters — both are direct children of the subject).
+ * So a change can orphan a descendant only when the SUBJECT switches: drop any module/chapter the newly
+ * chosen subject does not contain. A descendant is cleared only when the new subject is a known value
+ * whose recorded child set excludes it — while the operator types an unknown/partial subject, children
+ * fall back to the full list (see {@link ChapterVocabulary}), so nothing is wiped mid-keystroke.
  */
 export function cascadeMetadata(
   field: 'exam' | 'subject' | 'module' | 'chapter',
@@ -19,20 +20,9 @@ export function cascadeMetadata(
 ): Partial<ChapterMetadataDraft> {
   const patch: Partial<ChapterMetadataDraft> = { [field]: next };
 
-  if (field === 'exam' && draft.subject && !vocab.subjectsFor(next).includes(draft.subject)) {
-    patch.subject = '';
-    patch.module = '';
-    patch.chapter = '';
-    patch.sectionName = '';
-  } else if (field === 'subject' && draft.module && !vocab.modulesFor(next).includes(draft.module)) {
-    patch.module = '';
-    patch.chapter = '';
-    patch.sectionName = '';
-  } else if (field === 'module' && draft.chapter && !vocab.chaptersFor(next).includes(draft.chapter)) {
-    patch.chapter = '';
-    patch.sectionName = '';
-  } else if (field === 'chapter' && draft.sectionName && !vocab.sectionsFor(draft.module, next).includes(draft.sectionName)) {
-    patch.sectionName = '';
+  if (field === 'subject') {
+    if (draft.module && !vocab.modulesFor(next).includes(draft.module)) patch.module = '';
+    if (draft.chapter && !vocab.chaptersFor(next).includes(draft.chapter)) patch.chapter = '';
   }
 
   return patch;

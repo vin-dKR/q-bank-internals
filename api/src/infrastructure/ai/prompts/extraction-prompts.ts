@@ -1,6 +1,7 @@
 import type { Document } from '@ingest/contracts';
 import { KNOWN_LEVELS, KNOWN_QUESTION_TYPES, PAPER_METADATA_FIELDS } from '@ingest/contracts';
-import { topicBindingForPage } from '../../../modules/extraction/index.js';
+import { topicBindingForPage, type MastersSnapshot } from '../../../modules/extraction/index.js';
+import { slugForKind } from '../../../shared/taxonomy/fold-maps.js';
 import { fillTokens, resolvePrompt, type PromptOverrides } from '../../../modules/prompts/index.js';
 
 /**
@@ -92,15 +93,26 @@ function resolvePyq(document: Document, binding: ReturnType<typeof topicBindingF
  * question is clearly a different type — so a mixed PYQ page is classified per question, and a uniform
  * coaching section stays on its known type.
  */
-function classificationRule(expectedType: string | null): string {
-  const types = KNOWN_QUESTION_TYPES.join('", "');
-  const levels = KNOWN_LEVELS.join('", "');
+function classificationRule(expectedType: string | null, masters?: MastersSnapshot): string {
+  // The allowed vocabulary comes from the LIVE questionType / level masters when present (so an operator
+  // edit is reflected with no code change), falling back to the built-in constants when no snapshot is
+  // available (e.g. the unconfigured taxonomy store). questionType rows are presented as the pipeline
+  // SLUG the model must emit (single/multi get the `_correct` suffix) paired with their display name.
+  const typeRows = masters && masters.questionType.length > 0
+    ? masters.questionType.map((row) => ({ slug: slugForKind(row.kind) ?? row.key, name: row.name }))
+    : (KNOWN_QUESTION_TYPES as readonly string[]).map((slug) => ({ slug, name: slug }));
+  const levelRows = masters && masters.level.length > 0
+    ? masters.level.map((row) => ({ slug: row.key, name: row.name }))
+    : (KNOWN_LEVELS as readonly string[]).map((slug) => ({ slug, name: slug }));
+  const types = typeRows.map((row) => row.slug).join('", "');
+  const levels = levelRows.map((row) => row.slug).join('", "');
+  const typeLegend = typeRows.map((row) => `    • "${row.slug}" — ${row.name}`).join('\n');
   const typeHint = expectedType
     ? `Usually "${expectedType}" on this page — keep that unless a question is clearly a different type.`
     : 'Pick the type that matches how each question is actually printed.';
   return [
-    'CLASSIFY EACH QUESTION. In addition to question_number, question_text and options, add TWO more fields to EVERY question object (and, for a comprehension, to every sub-question):',
-    `- "question_type": the question's own type, exactly one of "${types}". ${typeHint}`,
+    'CLASSIFY EACH QUESTION using ONLY the operator-managed masters vocabulary below — never invent a type or difficulty. In addition to question_number, question_text and options, add TWO more fields to EVERY question object (and, for a comprehension, to every sub-question):',
+    `- "question_type": the question's own type, exactly one of "${types}". ${typeHint}\n  The current question-type masters (choose from these only):\n${typeLegend}`,
     `- "difficulty": how hard the question is for a student preparing for this exam — exactly one of "${levels}" (easy = direct recall or a single step, medium = a couple of steps, hard = multi-step or conceptually tricky).`,
   ].join('\n');
 }
@@ -115,6 +127,7 @@ export function questionPrompt(
   document: Document,
   pageNumber: number,
   overrides: PromptOverrides,
+  masters?: MastersSnapshot,
 ): string {
   const binding = topicBindingForPage(document.topics, pageNumber);
   const expectedType = binding?.questionType ?? document.questionType;
@@ -129,7 +142,7 @@ export function questionPrompt(
     bindingNote,
     resolvePrompt(overrides, 'extraction'),
     typeRule ? `TYPE-SPECIFIC RULE:\n${typeRule}` : '',
-    classificationRule(expectedType),
+    classificationRule(expectedType, masters),
     document.answerLayout === 'inline' ? resolvePrompt(overrides, 'inlineAnswer') : '',
     resolvePyq(document, binding) ? resolvePrompt(overrides, 'pyq') : '',
   ]

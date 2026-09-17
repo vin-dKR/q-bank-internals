@@ -4,6 +4,16 @@ import type { AiTokenUsage } from '../usage/index.js';
 /** One rasterized PDF page handed to the vision model. */
 export type PageImage = { pageNumber: number; png: Buffer };
 
+/** One masters dictionary row as presented to the model (its id, display name, canonical key + kind). */
+export type MasterOption = { id: string; name: string; key: string; kind: string | null };
+
+/**
+ * A live snapshot of the closed masters dimensions the model classifies into, injected into the
+ * extraction prompt so the AI chooses ONLY from the operator-managed vocabulary (never invents one) and
+ * a rename/edit of a master is reflected without a code change. Fetched once per run by the worker.
+ */
+export type MastersSnapshot = { questionType: MasterOption[]; level: MasterOption[] };
+
 /**
  * A question draft as the vision model returns it — deliberately close to the Python extractor's
  * per-question shape (`question_number` / `question_text` / `options`) so the ported prompts and
