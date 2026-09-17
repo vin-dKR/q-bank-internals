@@ -3,6 +3,7 @@ import { KNOWN_EXAMS, KNOWN_MODULES, KNOWN_QUESTION_TYPES, KNOWN_SOURCES } from 
 import { useDocuments } from '../../documents/index.js';
 import { useDriveVocabulary } from '../../drive-folders/index.js';
 import { useSessions } from '../../sessions/index.js';
+import { useMastersVocabulary } from '../../taxonomy/index.js';
 
 /**
  * The known-value suggestion lists that seed every metadata Combobox in the ingestion flow, plus the
@@ -58,6 +59,10 @@ export function useChapterVocabulary(): ChapterVocabulary {
   const documents = useDocuments();
   const sessions = useSessions();
   const driveVocabulary = useDriveVocabulary();
+  // The curated masters dictionaries — so every metadata Combobox suggests the SAME canonical exam /
+  // subject / chapter / section vocabulary the extractor + publisher resolve against, not just what
+  // happens to exist across past documents. A brand-new value can still be typed (publish folds it in).
+  const masters = useMastersVocabulary();
 
   return useMemo(() => {
     const docs = documents.data?.items ?? [];
@@ -93,16 +98,20 @@ export function useChapterVocabulary(): ChapterVocabulary {
     }
 
     const sources = distinct([...KNOWN_SOURCES, ...docs.map((d) => d.source)]);
-    const exams = distinct([...KNOWN_EXAMS, ...sess.map((s) => s.exam), ...(drive?.exams ?? [])]);
-    const subjects = distinct([...sess.map((s) => s.subject), ...(drive?.subjects ?? [])]);
+    const exams = distinct([...KNOWN_EXAMS, ...masters.exams, ...sess.map((s) => s.exam), ...(drive?.exams ?? [])]);
+    const subjects = distinct([...masters.subjects, ...sess.map((s) => s.subject), ...(drive?.subjects ?? [])]);
     const modules = distinct([
       ...KNOWN_MODULES,
       ...sess.map((s) => s.module),
       ...docs.map((d) => d.path.module),
       ...(drive?.modules ?? []),
     ]);
-    const chapters = distinct([...docs.map((d) => d.path.chapter), ...(drive?.chapters ?? [])]);
-    const sections = distinct([...docs.map((d) => d.path.section), ...docs.map((d) => d.sectionName)]);
+    const chapters = distinct([...masters.chapters, ...docs.map((d) => d.path.chapter), ...(drive?.chapters ?? [])]);
+    const sections = distinct([
+      ...masters.sections,
+      ...docs.map((d) => d.path.section),
+      ...docs.map((d) => d.sectionName),
+    ]);
     const questionTypes = distinct([...KNOWN_QUESTION_TYPES, ...docs.map((d) => d.questionType)]);
 
     // Children scoped to a chosen parent; the full list when the parent is blank or has no recorded
@@ -127,5 +136,5 @@ export function useChapterVocabulary(): ChapterVocabulary {
       chaptersFor: (module) => scoped(chaptersByModule, module, chapters),
       sectionsFor: (module, chapter) => scoped(sectionsByUnit, unitKey(module, chapter), sections),
     };
-  }, [documents.data, sessions.data, driveVocabulary.data]);
+  }, [documents.data, sessions.data, driveVocabulary.data, masters]);
 }

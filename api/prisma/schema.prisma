@@ -205,6 +205,9 @@ model Question {
   // device. Json so the array of rects needs no composite-type schema. Absent on older rows.
   imageCrops      Json?
   questionType    String?
+  // Per-question difficulty (easy|medium|hard) the AI classifies at extraction; corrected on Verify and
+  // resolved to the bank's Level FK on publish. Null on rows extracted before difficulty existed.
+  level           String?
   sectionName     String?
   topic           String?
   // Per-question subject (a PYQ paper spans subjects), set per node in the structure tree. Null on

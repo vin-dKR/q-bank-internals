@@ -1,4 +1,10 @@
-import { type Document, matchKeyToAnswer, parseMatchKey, type QuestionOption } from '@ingest/contracts';
+import {
+  type Document,
+  KNOWN_QUESTION_TYPES,
+  matchKeyToAnswer,
+  parseMatchKey,
+  type QuestionOption,
+} from '@ingest/contracts';
 import { logger } from '../../shared/logger/logger.js';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
@@ -60,10 +66,17 @@ function normalizeAnswerLabel(
   return /[1-4]/.test(token) ? String.fromCharCode(64 + Number(token)) : token;
 }
 
+/** The model's classified type, kept only when it is one of the known categories — else null. */
+function normalizeQuestionType(raw: string | null): string | null {
+  if (!raw) return null;
+  const token = raw.trim().toLowerCase();
+  return (KNOWN_QUESTION_TYPES as readonly string[]).includes(token) ? token : null;
+}
+
 /**
- * Map a model draft into the persisted Question shape (§6.1: the contract shape is canonical).
- * Topic + question type come from the operator's cut-time config when the draft's source page is
- * covered by a block — a deterministic mapping, so the model can never mislabel a type.
+ * Map a model draft into the persisted Question shape (§6.1: the contract shape is canonical). The
+ * model classifies each question's own type + difficulty; topic/section/subject come from the
+ * operator's cut-time config, and the operator's type is the fallback when the model is unsure.
  */
 function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestion {
   const binding = topicBindingForPage(document.topics, draft.sourcePage);
@@ -80,17 +93,21 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
     paper: document.paper,
   };
 
-  // A comprehension member (has a passageId) carries its OWN real type read by the model — the group
-  // CONTAINER is `comprehension`, each row is a normal type. Default to single_correct when the model
-  // gave nothing usable (or echoed the container type). Ordinary questions keep the operator's binding,
-  // so the model can never mislabel a non-comprehension type.
+  // The model classifies each question's own type; the operator's binding (else the document type) is
+  // the fallback when the model returned nothing recognisable. A comprehension MEMBER is never itself
+  // `comprehension` (that is the container) — default it to single_correct. So the AI applies the type,
+  // while a curated coaching section still lands on its known type when the model is unsure.
   const boundType = binding?.questionType ?? document.questionType;
-  const questionType =
-    draft.passageId !== null
-      ? draft.questionType && draft.questionType !== 'comprehension'
-        ? draft.questionType
+  const aiType = normalizeQuestionType(draft.questionType);
+  // Structured match data IS a matrix question regardless of what the model called its type — the row
+  // is persisted with match columns below, so its type must agree (mirrors publish's structural kind).
+  const questionType = draft.match
+    ? 'matrix'
+    : draft.passageId !== null
+      ? aiType && aiType !== 'comprehension'
+        ? aiType
         : 'single_correct'
-      : boundType;
+      : aiType ?? boundType;
 
   // A match-the-column question persists its structured columns AND the printed multiple-choice answer
   // choices (each a full matching like "A-i, B-ii, …"): the stem is the bare instruction, and the flat
@@ -118,6 +135,7 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
       explanation: draft.explanation,
       images: [],
       questionType,
+      level: draft.level,
       sectionName: document.sectionName ?? document.path.section,
       topic: binding?.topicName ?? null,
       subject: binding?.subject ?? null,
@@ -145,6 +163,7 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
     explanation: draft.explanation,
     images: [],
     questionType,
+    level: draft.level,
     sectionName: binding?.sectionName ?? document.sectionName ?? document.path.section,
     topic: binding?.topicName ?? null,
     subject: binding?.subject ?? null,
