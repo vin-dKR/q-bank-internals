@@ -1,8 +1,9 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
-import { KNOWN_LEVELS, KNOWN_QUESTION_TYPES, matchKeyToAnswer, type MatchData, type Question, type ReExtractedQuestion, type ReExtractSource } from '@ingest/contracts';
-import { Badge, Button, Combobox, CropImageButton, IconButton, IconCheck, IconEdit, IconFlag, IconPlus, IconScan, IconSparkle, IconTrash, IconUndo, IconX, MatchTableEditor, Spinner, useToast } from '../../../shared/ui/index.js';
+import { matchKeyToAnswer, type MatchData, type Question, type ReExtractedQuestion, type ReExtractSource } from '@ingest/contracts';
+import { Badge, Button, Combobox, type ComboboxOption, CropImageButton, IconButton, IconCheck, IconEdit, IconFlag, IconPlus, IconScan, IconSparkle, IconTrash, IconUndo, IconX, MatchTableEditor, Spinner, useToast } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
+import { toQuestionTypeOptions, useDictionary } from '../../taxonomy/index.js';
 import { questionsApi } from '../api/questions.api.js';
 import { useUpdateQuestion } from '../hooks/use-questions.js';
 import type { QuestionDraft } from '../hooks/use-question-drafts.js';
@@ -36,9 +37,6 @@ type Props = {
   /** Session-level context, surfaced read-only so the operator sees where this question is filed. */
   exam?: string | null;
   subject?: string | null;
-  /** Suggestions for the creatable dropdowns (existing sections / chapters across the workspace). */
-  sectionOptions?: readonly string[];
-  topicOptions?: readonly string[];
   /**
    * Where the Answer / Explanation "re-read from page" reads from: the sibling answer / solution
    * document + this topic's page in it. Absent ⇒ that field re-reads the question's own page (the
@@ -143,8 +141,6 @@ function nextOptionLabel(options: readonly { label: string }[]): string {
 }
 
 const FIELD_LABEL = 'text-[13px] font-medium text-ink-2';
-/** The three difficulty options for the Verify card's picker (closed vocabulary). */
-const LEVEL_OPTIONS: readonly string[] = [...KNOWN_LEVELS];
 
 /** `reading` sentinel for the whole-question re-extract (distinct from the per-field keys). */
 const WHOLE_REEXTRACT = 'whole';
@@ -227,8 +223,6 @@ export function EditableQuestionCard({
   nested = false,
   exam,
   subject,
-  sectionOptions = [],
-  topicOptions = [],
   answerSource,
   solutionSource,
   onDraftUpdate,
@@ -248,6 +242,20 @@ export function EditableQuestionCard({
   // An AI re-read of the answer/explanation commonly returns "" (question papers rarely print the
   // answer), which would silently wipe a good value; this lets the operator put it straight back.
   const [preAi, setPreAi] = useState<Record<string, string>>({});
+
+  // Every metadata dropdown draws its options from the all-masters dictionaries only. React-query
+  // dedupes these by queryKey, so N cards on screen share ONE request per dimension. Topics are scoped
+  // to the question's chapter (resolved name → id via the chapter dictionary); the closed questionType
+  // dimension keeps the behavior SLUG as its stored value (label = the master's display name).
+  const questionTypeDict = useDictionary('questionType', {});
+  const levelDict = useDictionary('level', {});
+  const sectionDict = useDictionary('section', {});
+  const examDict = useDictionary('exam', {});
+  const chapterDict = useDictionary('chapter', {});
+  const chapterId = chapterDict.data?.entries.find(
+    (entry) => entry.name.trim().toLowerCase() === question.path.chapter.trim().toLowerCase(),
+  )?.id;
+  const topicDict = useDictionary('topic', chapterId ? { chapterId } : {}, Boolean(chapterId));
 
   const set = <K extends keyof QuestionDraft>(key: K, value: QuestionDraft[K]): void => {
     onDraftUpdate((prev) => ({ ...prev, [key]: value }));
@@ -454,8 +462,16 @@ export function EditableQuestionCard({
   const specs = [exam, subject, question.path.module, question.path.chapter, question.path.section].filter(
     (part): part is string => Boolean(part && part.trim()),
   );
-  const questionTypeOptions = [...new Set([...KNOWN_QUESTION_TYPES, ...(question.questionType ? [question.questionType] : [])])];
-  const topicSuggestions = [...new Set([question.path.chapter, ...topicOptions].filter(Boolean))];
+  // The closed questionType master (7 kinds → behavior slugs). Keep the current draft value pickable
+  // even when it is a legacy slug the masters set no longer lists (e.g. true_false → subjective).
+  const questionTypeOptions: ComboboxOption[] = toQuestionTypeOptions(questionTypeDict.data?.entries ?? []);
+  if (draft.questionType && !questionTypeOptions.some((option) => option.value === draft.questionType)) {
+    questionTypeOptions.push({ value: draft.questionType, label: draft.questionType });
+  }
+  const levelOptions: ComboboxOption[] = (levelDict.data?.entries ?? []).map((entry) => ({ value: entry.key, label: entry.name }));
+  const sectionOptions = (sectionDict.data?.entries ?? []).map((entry) => entry.name);
+  const examOptions = (examDict.data?.entries ?? []).map((entry) => entry.name);
+  const topicSuggestions = [...new Set([question.path.chapter, ...(topicDict.data?.entries ?? []).map((entry) => entry.name)].filter(Boolean))];
 
   // For single/multi-correct types the operator can click an option to set the correct answer, kept in
   // sync with the manual answer text: the highlight is derived from `draft.answer` (so typing updates
@@ -751,6 +767,7 @@ export function EditableQuestionCard({
           <Combobox
             value={draft.questionType}
             options={questionTypeOptions}
+            allowCustom={false}
             placeholder="Select type…"
             onChange={(v) => { set('questionType', v); }}
           />
@@ -768,7 +785,7 @@ export function EditableQuestionCard({
           <span className={FIELD_LABEL}>Difficulty</span>
           <Combobox
             value={draft.level}
-            options={LEVEL_OPTIONS}
+            options={levelOptions}
             allowCustom={false}
             placeholder="Select difficulty…"
             onChange={(v) => { set('level', v); }}
@@ -779,6 +796,7 @@ export function EditableQuestionCard({
           <Combobox
             value={draft.sectionName}
             options={sectionOptions}
+            allowCustom={false}
             placeholder="e.g. Exercise-1"
             onChange={(v) => { set('sectionName', v); }}
           />
@@ -788,6 +806,7 @@ export function EditableQuestionCard({
           <Combobox
             value={draft.topic}
             options={topicSuggestions}
+            allowCustom={false}
             placeholder="e.g. Kinematics"
             onChange={(v) => { set('topic', v); }}
           />
@@ -800,7 +819,8 @@ export function EditableQuestionCard({
             <span className={FIELD_LABEL}>PYQ exam</span>
             <Combobox
               value={draft.pyqExam}
-              options={[]}
+              options={examOptions}
+              allowCustom={false}
               placeholder="e.g. NEET"
               onChange={(v) => { set('pyqExam', v); }}
             />

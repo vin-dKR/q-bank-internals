@@ -12,6 +12,8 @@ export type {
   AnswerSheet,
   ExtractedQuestion,
   ExtractionProgress,
+  MasterOption,
+  MastersSnapshot,
   PageImage,
   QuestionExtraction,
   VisionExtractor,

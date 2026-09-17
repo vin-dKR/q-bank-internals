@@ -34,7 +34,7 @@ const QUESTION_KIND_KEYS = new Set(QUESTION_KINDS.map((k) => k.key));
  * lists each dimension with its bank-usage count, creates/renames/deletes canonical entries (folding
  * every write through the SAME `foldMaps` the publisher and eduents use, so the vocabulary can never
  * re-dirty), and seeds the closed vocabularies (question kinds, difficulty levels) plus the curated
- * subject/section starting sets. Chapters are subject-scoped; topics are chapter-scoped.
+ * subject/section starting sets. Modules and chapters are subject-scoped; topics are chapter-scoped.
  */
 export class MastersService {
   constructor(private readonly store: TaxonomyStore) {}
@@ -68,7 +68,7 @@ export class MastersService {
       aliases: this.mergeAliases([canonical.name], input.aliases),
       kind: dimension === 'questionType' ? (canonical.kind ?? null) : null,
       rank: dimension === 'level' ? levelRank(canonical.key) : null,
-      subjectId: dimension === 'chapter' ? (input.subjectId ?? null) : null,
+      subjectId: dimension === 'chapter' || dimension === 'module' ? (input.subjectId ?? null) : null,
       chapterId: dimension === 'topic' ? (input.chapterId ?? null) : null,
     };
     const created = await this.store.create(dimension, row);
@@ -106,7 +106,9 @@ export class MastersService {
     }
 
     if (input.subjectId !== undefined) {
-      if (dimension !== 'chapter') throw errors.dictionaryFieldNotAllowed(dimension, 'subjectId');
+      if (dimension !== 'chapter' && dimension !== 'module') {
+        throw errors.dictionaryFieldNotAllowed(dimension, 'subjectId');
+      }
       if (input.subjectId) await this.assertScopeExists(dimension, input.subjectId, undefined);
       patch.subjectId = input.subjectId;
     }
@@ -138,7 +140,7 @@ export class MastersService {
   /**
    * Idempotently create a dimension's canonical starting set: the 7 question kinds, the 3 difficulty
    * levels, and the curated subject/section vocabularies. Dimensions without a curated set (exam,
-   * chapter, topic) are a no-op — they populate from operator creation and publish-time resolution.
+   * module, chapter, topic) are a no-op — they populate from operator creation and publish-time resolution.
    */
   async seed(dimension: TaxonomyDimension): Promise<SeedDictionary> {
     const canonicalRows = this.seedRows(dimension);
@@ -165,6 +167,7 @@ export class MastersService {
       case 'section':
         return CANONICAL_SECTIONS.map((s) => ({ ...blank, key: s.key, name: s.name, aliases: s.aliases }));
       case 'exam':
+      case 'module':
       case 'chapter':
       case 'topic':
         return [];
@@ -177,7 +180,7 @@ export class MastersService {
     subjectId: string | undefined,
     chapterId: string | undefined,
   ): Promise<void> {
-    if (dimension === 'chapter' && subjectId) {
+    if ((dimension === 'chapter' || dimension === 'module') && subjectId) {
       const parent = await this.store.findById('subject', subjectId);
       if (!parent) throw errors.dictionaryParentNotFound('subject', subjectId);
     }

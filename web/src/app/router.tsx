@@ -5,9 +5,9 @@ import { PipelinePage } from './pages/pipeline-page.js';
 import { TreeIngestPage } from './pages/tree-ingest-page.js';
 import { SessionsPage } from './pages/sessions-page.js';
 import { SessionDetailPage } from './pages/session-detail-page.js';
+import { DocumentDataPage } from './pages/document-data-page.js';
 import { TaxonomyPage } from './pages/taxonomy-page.js';
 import { ExamAccessPage } from './pages/exam-access-page.js';
-import { DriveFoldersPage } from './pages/drive-folders-page.js';
 import { PromptsPage } from './pages/prompts-page.js';
 import { UsagePage } from './pages/usage-page.js';
 import { QuestionsPage } from './pages/questions-page.js';
@@ -33,6 +33,7 @@ export const router = createBrowserRouter([
       { path: 'tree', element: <Navigate to="/" replace />, errorElement },
       { path: 'sessions', element: <SessionsPage />, errorElement },
       { path: 'sessions/:sessionId', element: <SessionDetailPage />, errorElement },
+      { path: 'documents/:documentId/data', element: <DocumentDataPage />, errorElement },
       { path: 'verify', element: <PipelinePage />, errorElement },
       // "Fix bank images" folded into Verify — search a published question there. Keep the old link.
       { path: 'bank', element: <Navigate to="/verify" replace />, errorElement },
@@ -41,7 +42,6 @@ export const router = createBrowserRouter([
       { path: 'masters', element: <Navigate to="/masters/taxonomy" replace />, errorElement },
       { path: 'masters/taxonomy', element: <TaxonomyPage />, errorElement },
       { path: 'masters/exam-access', element: <ExamAccessPage />, errorElement },
-      { path: 'masters/drive-folders', element: <DriveFoldersPage />, errorElement },
       { path: 'prompts', element: <PromptsPage />, errorElement },
       { path: 'usage', element: <UsagePage />, errorElement },
       { path: 'tools/chapters', element: <ChapterSplitterPage />, errorElement },

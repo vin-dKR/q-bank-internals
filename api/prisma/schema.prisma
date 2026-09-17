@@ -117,6 +117,10 @@ model Document {
   sessionId     String?         @db.ObjectId
   driveFileId   String          @unique
   fileName      String
+  // The upload's identity within its session: shared by the question/answer/solution parts of one
+  // upload action, fresh per upload. Not filename/path-derived, so uploading the same file twice makes
+  // two distinct documents. Empty on legacy rows (they fall back to unit-path sibling matching).
+  uploadGroupId String          @default("")
   path          SourcePath
   kind          String          @default("question")
   sectionName   String?

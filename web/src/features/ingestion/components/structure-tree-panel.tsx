@@ -140,7 +140,7 @@ export function StructureTreePanel({
             <MetaField label="Exam" value={tree.metadata.exam} options={vocabulary.exams} placeholder="e.g. JEE" onChange={(v) => { controller.setMetadata(cascadeMetadata('exam', v, tree.metadata, vocabulary)); }} />
             <MetaField label="Subject" value={tree.metadata.subject} options={vocabulary.subjectsFor(tree.metadata.exam)} placeholder="e.g. Physics" onChange={(v) => { controller.setMetadata(cascadeMetadata('subject', v, tree.metadata, vocabulary)); }} />
             <MetaField label="Module" value={tree.metadata.module} options={vocabulary.modulesFor(tree.metadata.subject)} placeholder="e.g. Resonance" onChange={(v) => { controller.setMetadata(cascadeMetadata('module', v, tree.metadata, vocabulary)); }} />
-            <MetaField label="Chapter" value={tree.metadata.chapter} options={vocabulary.chaptersFor(tree.metadata.module)} placeholder="e.g. Gravitation" onChange={(v) => { controller.setMetadata(cascadeMetadata('chapter', v, tree.metadata, vocabulary)); }} />
+            <MetaField label="Chapter" value={tree.metadata.chapter} options={vocabulary.chaptersFor(tree.metadata.subject)} placeholder="e.g. Gravitation" onChange={(v) => { controller.setMetadata(cascadeMetadata('chapter', v, tree.metadata, vocabulary)); }} />
           </div>
         )}
       </section>
@@ -231,7 +231,8 @@ function MetaField({ label, value, options, placeholder, onChange }: MetaFieldPr
   return (
     <label className="field">
       <span>{label}</span>
-      <Combobox value={value} options={options} placeholder={placeholder} onChange={onChange} />
+      {/* Every metadata field is masters-controlled (or a fixed source enum): only managed values allowed. */}
+      <Combobox value={value} options={options} placeholder={placeholder} onChange={onChange} allowCustom={false} />
     </label>
   );
 }
@@ -336,6 +337,7 @@ function PaperDetailsSection({ controller, vocabulary, onAiFillPaper, aiFillingP
                     options={vocabulary.exams}
                     placeholder={`e.g. ${placeholder}`}
                     onChange={(value) => { setPaperField(key, value); }}
+                    allowCustom={false}
                   />
                 ) : (
                   <input
@@ -422,12 +424,14 @@ function TreeNodeRow({ node, depth, controller, vocabulary, onBindPages, binding
               {nodePyq ? 'Type (optional)' : 'Question type'}
             </span>
             <div className="min-w-0 flex-1">
-              {/* Optional for a PYQ segment — its questions are of mixed types, extracted generically. */}
+              {/* Optional for a PYQ segment — its questions are of mixed types, extracted generically.
+                  Options come from the questionType master (label = name, value = behavior slug). */}
               <Combobox
                 value={node.questionType ?? ''}
                 options={vocabulary.questionTypes}
-                placeholder={nodePyq ? 'optional — leave blank for mixed types' : 'e.g. single_correct'}
+                placeholder={nodePyq ? 'optional — leave blank for mixed types' : 'e.g. Single Correct'}
                 onChange={(value) => { controller.setQuestionType(node.id, value); }}
+                allowCustom={false}
               />
             </div>
           </div>
@@ -440,6 +444,7 @@ function TreeNodeRow({ node, depth, controller, vocabulary, onBindPages, binding
                 options={vocabulary.subjects}
                 placeholder="e.g. Physics"
                 onChange={(value) => { controller.setNodeSubject(node.id, value); }}
+                allowCustom={false}
               />
             </div>
           </div>

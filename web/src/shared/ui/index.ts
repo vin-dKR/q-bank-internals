@@ -9,7 +9,7 @@ export { DraggableBox, type BoxRect } from './draggable-box.js';
 export { IconButton } from './icon-button.js';
 export { Toolbar, ToolbarGroup, ToolbarDivider, ToolbarSpacer, ToolbarHelp } from './toolbar.js';
 export { useConfirm } from './confirm-dialog.js';
-export { Combobox } from './combobox.js';
+export { Combobox, type ComboboxOption } from './combobox.js';
 export { ToastProvider, useToast } from './toast.js';
 export { Spinner, LoadingState, Skeleton } from './spinner.js';
 export { EmptyState } from './empty-state.js';

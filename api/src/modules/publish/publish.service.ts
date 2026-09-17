@@ -132,6 +132,7 @@ function taxonomyInput(question: Question, document: Document): QuestionTaxonomy
   return {
     exam: document.exam,
     subject: question.subject ?? document.subject,
+    module: question.path.module,
     chapter: question.path.chapter,
     section: question.sectionName ?? document.sectionName ?? question.path.section,
     questionType: question.questionType ?? document.questionType,
@@ -201,8 +202,9 @@ function toBankQuestion(
     // exact bank column names, so the bank filters seek an indexed id instead of a case-folded regex;
     // the raw columns stay untouched for losslessness. All null when a value is junk/absent.
     ...taxonomy,
-    // The module lives on the ingest path; stamping it onto the bank row is what lets the Questions
-    // Module filter narrow the published list (the bank had no module column before).
+    // The module name lives on the ingest path; stamping it lets the Questions Module filter narrow the
+    // published list. Its normalized FK (`moduleId`/`moduleName`) comes from the `...taxonomy` spread
+    // above — resolved against the new Module master so eduents can index it like the other dimensions.
     module: question.path.module,
     // PYQ provenance so a previous-year question shows and filters as such in the Questions browse.
     // Sourced per-question (the model reads the source exam/year off the page for a PYQ segment),

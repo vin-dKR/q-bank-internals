@@ -469,6 +469,10 @@ export function TreeIngestPage(): JSX.Element {
     }
     setUploadError(null);
     setUploading(true);
+    // One id per upload action, shared by this chapter's question/answer/solution parts — so the three
+    // are matched to each other during extraction, yet a fresh click (even of the same file) mints a new
+    // id and becomes a distinct document. Kept out of the tree/exported config so it never leaks reuse.
+    const uploadGroupId = crypto.randomUUID();
     // One unit for the whole chapter: question (primary, carries per-section topics) + optional
     // answer / solution as bound context. Three uploads at most, never one-per-leaf.
     const parts: { kind: ChapterKind; bytes: Uint8Array; topics?: ChapterTopic[] }[] = [
@@ -482,6 +486,7 @@ export function TreeIngestPage(): JSX.Element {
       const metadata: ChapterUploadMetadata = {
         ...assembled.base,
         sessionId,
+        uploadGroupId,
         kind: part.kind,
         ...(part.topics ? { topics: part.topics } : {}),
       };

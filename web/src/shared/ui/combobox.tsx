@@ -1,10 +1,17 @@
 import { type JSX, type KeyboardEvent as ReactKeyboardEvent, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { IconChevronDown, IconPlus } from './icons.js';
 
+/** An option whose stored value differs from its shown label (e.g. a master id/slug + display name). */
+export type ComboboxOption = { value: string; label: string };
+
 type ComboboxProps = {
   value: string;
   onChange: (value: string) => void;
-  options: readonly string[];
+  /**
+   * The choices. A plain `string` is both value and label; a `{ value, label }` stores `value` while
+   * showing `label` — so a field can display a master's name yet persist its id / behavior slug.
+   */
+  options: readonly (string | ComboboxOption)[];
   /** Allow committing free text that isn't an existing option (creatable). Default true. */
   allowCustom?: boolean;
   placeholder?: string;
@@ -15,7 +22,8 @@ type ComboboxProps = {
  * A searchable, optionally creatable select: type to filter existing values, pick one with the
  * mouse or keyboard, or (when `allowCustom`) commit the typed text as a new value. The one control
  * for every "choose from known values, maybe add a new one" field — replaces native `<select>` plus
- * the parallel "Custom…" text input.
+ * the parallel "Custom…" text input. Options may carry a separate value/label so the stored value
+ * (a master id or behavior slug) can differ from the displayed name.
  */
 export function Combobox({
   value,
@@ -41,14 +49,25 @@ export function Combobox({
     return () => { document.removeEventListener('mousedown', onDown); };
   }, [open]);
 
+  const opts = useMemo<ComboboxOption[]>(
+    () => options.map((option) => (typeof option === 'string' ? { value: option, label: option } : option)),
+    [options],
+  );
+
+  /** The label shown for the current value (its option's label, or the raw value for free text). */
+  const displayLabel = useMemo(
+    () => opts.find((option) => option.value === value)?.label ?? value,
+    [opts, value],
+  );
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return [...options];
-    return options.filter((option) => option.toLowerCase().includes(q));
-  }, [options, query]);
+    if (!q) return opts;
+    return opts.filter((option) => option.label.toLowerCase().includes(q));
+  }, [opts, query]);
 
   const trimmed = query.trim();
-  const exactMatch = options.some((option) => option.toLowerCase() === trimmed.toLowerCase());
+  const exactMatch = opts.some((option) => option.label.toLowerCase() === trimmed.toLowerCase());
   const showCreate = allowCustom && trimmed.length > 0 && !exactMatch;
   const rowCount = filtered.length + (showCreate ? 1 : 0);
 
@@ -66,7 +85,7 @@ export function Combobox({
       return;
     }
     const picked = filtered[active];
-    if (picked !== undefined) commit(picked);
+    if (picked !== undefined) commit(picked.value);
     else if (allowCustom && trimmed) commit(trimmed);
   };
 
@@ -95,7 +114,7 @@ export function Combobox({
           aria-controls={listId}
           aria-autocomplete="list"
           placeholder={placeholder}
-          value={open ? query : value}
+          value={open ? query : displayLabel}
           onFocus={openList}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -115,14 +134,14 @@ export function Combobox({
           ) : null}
           {filtered.map((option, index) => (
             <li
-              key={option}
+              key={option.value}
               role="option"
-              aria-selected={option === value}
+              aria-selected={option.value === value}
               className={`combobox__option ${index === active ? 'is-active' : ''}`}
               onMouseEnter={() => { setActive(index); }}
-              onMouseDown={(event) => { event.preventDefault(); commit(option); }}
+              onMouseDown={(event) => { event.preventDefault(); commit(option.value); }}
             >
-              {option}
+              {option.label}
             </li>
           ))}
           {showCreate ? (

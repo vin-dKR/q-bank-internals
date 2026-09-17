@@ -30,6 +30,13 @@ export const ChapterUploadMetadataSchema = ChapterPathSchema.extend({
   module: z.string(),
   chapter: z.string(),
   sessionId: z.string().min(1),
+  /**
+   * A client-minted id shared by the question/answer/solution parts of ONE upload action, and fresh for
+   * every new upload. It is the document's identity within a session (not the file name), so uploading
+   * the same file twice yields TWO distinct documents while an idempotent retry of the same action still
+   * replaces in place — and the extractor binds each answer/solution to its OWN question by this id.
+   */
+  uploadGroupId: z.string().min(1),
   sectionName: z.string().min(1),
   // Unit-level fallback type; optional because a PYQ paper's questions are of mixed types.
   questionType: QuestionTypeSchema.optional(),

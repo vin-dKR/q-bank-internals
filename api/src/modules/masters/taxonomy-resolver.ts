@@ -14,6 +14,7 @@ export type Resolved = { id: string; name: string; kind: string | null; rank: nu
 export type QuestionTaxonomyInput = {
   exam?: string | null;
   subject?: string | null;
+  module?: string | null;
   chapter?: string | null;
   section?: string | null;
   questionType?: string | null;
@@ -30,6 +31,8 @@ export type ResolvedTaxonomy = {
   examName: string | null;
   subjectId: string | null;
   subjectName: string | null;
+  moduleId: string | null;
+  moduleName: string | null;
   chapterId: string | null;
   chapterName: string | null;
   sectionId: string | null;
@@ -60,6 +63,11 @@ class DimensionDict {
 
   invalidate(): void {
     this.cache = null;
+  }
+
+  /** The current dictionary rows (cached, no create) — the read the extractor injects into its prompt. */
+  snapshot(): Promise<DictionaryRow[]> {
+    return this.rows();
   }
 
   private rows(): Promise<DictionaryRow[]> {
@@ -111,7 +119,7 @@ class DimensionDict {
       aliases: [canon.name],
       kind: this.dimension === 'questionType' ? (canon.kind ?? null) : null,
       rank: this.dimension === 'level' ? levelRank(canon.key) : null,
-      subjectId: this.dimension === 'chapter' ? parentId : null,
+      subjectId: this.dimension === 'chapter' || this.dimension === 'module' ? parentId : null,
       chapterId: this.dimension === 'topic' ? parentId : null,
     };
     try {
@@ -147,12 +155,18 @@ export class TaxonomyResolver {
     this.dicts = {
       exam: dict('exam'),
       subject: dict('subject'),
+      module: dict('module'),
       chapter: dict('chapter'),
       section: dict('section'),
       questionType: dict('questionType'),
       level: dict('level'),
       topic: dict('topic'),
     };
+  }
+
+  /** One dimension's current dictionary rows (cached, no create) — for injecting live masters context. */
+  snapshot(dimension: TaxonomyDimension): Promise<DictionaryRow[]> {
+    return this.dicts[dimension].snapshot();
   }
 
   async resolveQuestionTaxonomy(input: QuestionTaxonomyInput): Promise<ResolvedTaxonomy> {
@@ -163,9 +177,13 @@ export class TaxonomyResolver {
       this.dicts.questionType.resolve(input.questionType),
       this.dicts.level.resolve(input.level),
     ]);
-    // Resolve the chapter AFTER its subject so a newly-created chapter is scoped to that subject id
-    // (Chapter.subjectId) rather than orphaned — keeping the masters subject→chapter cascade honest.
-    const chapter = await this.dicts.chapter.resolve(input.chapter, subject?.id ?? null);
+    // Resolve chapter + module AFTER their subject so a newly-created row is scoped to that subject id
+    // (Chapter.subjectId / Module.subjectId) rather than orphaned — keeping the masters subject→chapter
+    // and subject→module cascades honest.
+    const [chapter, module] = await Promise.all([
+      this.dicts.chapter.resolve(input.chapter, subject?.id ?? null),
+      this.dicts.module.resolve(input.module, subject?.id ?? null),
+    ]);
     const structuralKind = deriveKindFromStructure({
       group_id: input.groupId,
       passage: input.passage,
@@ -177,6 +195,8 @@ export class TaxonomyResolver {
       examName: exam?.name ?? null,
       subjectId: subject?.id ?? null,
       subjectName: subject?.name ?? null,
+      moduleId: module?.id ?? null,
+      moduleName: module?.name ?? null,
       chapterId: chapter?.id ?? null,
       chapterName: chapter?.name ?? null,
       sectionId: section?.id ?? null,
