@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Passage, Question, UpdatePassage, UpdateQuestion } from '@ingest/contracts';
 import {
+  aiFilledAfterEdit,
   type NewPassage,
   type NewQuestion,
   type QuestionRepository,
@@ -48,6 +49,8 @@ export class InMemoryQuestionRepository implements QuestionRepository {
       questionType: question.questionType,
       sectionName: question.sectionName,
       topic: question.topic,
+      level: null,
+      aiFilled: null,
       subject: question.subject,
       flagged: false,
       isPyq: question.isPyq,
@@ -105,8 +108,10 @@ export class InMemoryQuestionRepository implements QuestionRepository {
       const existing = rows.find((row) => row.id === id);
       if (!existing) continue;
       const index = rows.indexOf(existing);
+      const aiFilled = aiFilledAfterEdit(existing, patch);
       const updated: Question = {
         ...existing,
+        ...(aiFilled !== undefined ? { aiFilled } : {}),
         ...(patch.stem !== undefined ? { stem: patch.stem } : {}),
         ...(patch.options !== undefined ? { options: patch.options } : {}),
         ...(patch.answer !== undefined ? { answer: patch.answer } : {}),

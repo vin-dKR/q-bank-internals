@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MatchDataSchema } from '../questions/question.schema.js';
+import { AiFilledSchema } from '../common/ai-filled.js';
 
 /**
  * One published question as shown on the read-only Questions browse page — a projection of the main
@@ -52,6 +53,9 @@ export const CatalogQuestionSchema = z.object({
   // other type. Assembled from the bank's `match_columns` + `match_key` (written at publish) so the
   // browse renders a real match table instead of the raw "(A) A-p,B-q" option strings.
   match: MatchDataSchema.nullable(),
+  // Which of topic/answer/solution/level hold an AI-written value (the row's `ai_filled`); empty when none
+  // do. Lets the browse mark machine-filled data so it is never mistaken for a human's.
+  aiFilled: AiFilledSchema,
 });
 export type CatalogQuestion = z.infer<typeof CatalogQuestionSchema>;
 
@@ -86,6 +90,8 @@ export const CatalogQuerySchema = z.object({
   hasPassageImage: z.enum(['true', 'false']).optional(),
   hasPassage: z.enum(['true', 'false']).optional(),
   hasMatch: z.enum(['true', 'false']).optional(),
+  // Only rows with at least one AI-filled field.
+  aiFilled: z.enum(['true', 'false']).optional(),
   q: z.string().optional(),
   // Ordering — defaults to newest-first (most recently published on top). A cursor is only valid for
   // the sort it was minted under, so the client refetches from page one whenever the sort changes.

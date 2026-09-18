@@ -1,7 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import type { CatalogQuestion, CatalogSort, MatchData } from '@ingest/contracts';
-import { MatchDataSchema } from '@ingest/contracts';
+import { AiFilledSchema, MatchDataSchema } from '@ingest/contracts';
 import { ejsonBool, ejsonNumber, escapeRegex, firstBatch, oid } from '../database/mongo-ejson.js';
 import type {
   CatalogFilterOptionSets,
@@ -68,6 +68,8 @@ const RawCatalogQuestionSchema = z
     question_image: z.string().nullable().catch(null),
     isOptionImage: ejsonBool.catch(false),
     option_images: z.array(z.string()).catch([]),
+    // AI provenance written by the quality screens; a malformed tag is dropped rather than half-trusted.
+    ai_filled: AiFilledSchema.catch({}),
   })
   .transform(
     (doc): CatalogQuestion => ({
@@ -98,6 +100,7 @@ const RawCatalogQuestionSchema = z
       isOptionImage: doc.isOptionImage,
       optionImages: doc.option_images,
       match: toMatchData(doc.match_columns, doc.match_key),
+      aiFilled: doc.ai_filled,
     }),
   );
 
@@ -331,6 +334,8 @@ export class MongoCatalogStore implements CatalogStore {
     // Matrix-match presence keys off the structured `match_columns` (null on every other type), which
     // is more reliable than the free-text question_type string a matrix row might be mislabelled with.
     if (filters.hasMatch === true) filter.match_columns = { $ne: null };
+    // The tag set is removed whole when its last field is untagged, so its presence means "some AI data".
+    if (filters.aiFilled === true) filter.ai_filled = { $type: 'object' };
 
     const keyword = filters.q?.trim() ?? '';
     if (keyword.length >= MIN_SEARCH_LENGTH) {

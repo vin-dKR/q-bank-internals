@@ -32,6 +32,7 @@ import { CatalogService } from './modules/catalog/index.js';
 import { DriveService } from './modules/drive/index.js';
 import { IngestionService, type UploadStagingStore } from './modules/ingestion/index.js';
 import { PromptService, type PromptOverrideStore, type PromptOverrides } from './modules/prompts/index.js';
+import { QualityService, type QuestionAiFixer } from './modules/quality/index.js';
 import { InMemoryDocumentRepository } from './infrastructure/database/repositories/document.in-memory-repository.js';
 import { InMemorySessionRepository } from './infrastructure/database/repositories/session.in-memory-repository.js';
 import { InMemoryExtractionJobStore } from './infrastructure/database/repositories/extraction-job.in-memory-store.js';
@@ -74,6 +75,22 @@ import { MongoBankQuestionStore } from './infrastructure/bank/mongo.bank-questio
 import { UnconfiguredBankQuestionStore } from './infrastructure/bank/unconfigured.bank-question-store.js';
 import { MongoCatalogStore } from './infrastructure/catalog/mongo.catalog-store.js';
 import { UnconfiguredCatalogStore } from './infrastructure/catalog/unconfigured.catalog-store.js';
+import { MongoQuestionAuditSource } from './infrastructure/quality/mongo.question-audit-source.js';
+import { UnconfiguredQuestionAuditSource } from './infrastructure/quality/unconfigured.question-audit-source.js';
+import { MongoQuestionFixStore } from './infrastructure/quality/mongo.question-fix-store.js';
+import { UnconfiguredQuestionFixStore } from './infrastructure/quality/unconfigured.question-fix-store.js';
+import { SyllabiService } from './modules/syllabi/index.js';
+import { BUNDLED_SYLLABI } from './infrastructure/syllabi/bundled.syllabi.js';
+import { PrismaSyllabusStore } from './infrastructure/database/repositories/syllabus.prisma-store.js';
+import { InMemorySyllabusStore } from './infrastructure/database/repositories/syllabus.in-memory-store.js';
+import { OpenAiQuestionAiFixer } from './infrastructure/ai/openai.question-ai-fixer.js';
+import { UnconfiguredQuestionAiFixer } from './infrastructure/quality/unconfigured.question-ai-fixer.js';
+import { PrismaQualityAnomalyStore } from './infrastructure/database/repositories/quality-anomaly.prisma-store.js';
+import { InMemoryQualityAnomalyStore } from './infrastructure/database/repositories/quality-anomaly.in-memory-store.js';
+import { PrismaQualityScanStore } from './infrastructure/database/repositories/quality-scan.prisma-store.js';
+import { PrismaAiProposalStore } from './infrastructure/database/repositories/quality-ai-proposal.prisma-store.js';
+import { InMemoryAiProposalStore } from './infrastructure/database/repositories/quality-ai-proposal.in-memory-store.js';
+import { InMemoryQualityScanStore } from './infrastructure/database/repositories/quality-scan.in-memory-store.js';
 
 /**
  * The COMPOSITION ROOT (§5). The single file allowed to `new` infrastructure and decide which
@@ -94,6 +111,8 @@ export type Container = {
   driveService: DriveService;
   ingestionService: IngestionService;
   promptsService: PromptService;
+  syllabiService: SyllabiService;
+  qualityService: QualityService;
 };
 
 function buildDrive(): DriveService {
@@ -244,6 +263,16 @@ function buildQuestionReExtractor(): QuestionReExtractor {
   return new UnconfiguredQuestionReExtractor();
 }
 
+/** OpenAI reader for the data-quality "fix with AI" button; otherwise a null-object that fails loudly. */
+function buildQuestionAiFixer(loadPromptOverrides: () => Promise<PromptOverrides>): QuestionAiFixer {
+  if (env.OPENAI_API_KEY) {
+    logger.info(`Quality AI fixer: OpenAI ${env.EXTRACTION_MODEL}`);
+    return new OpenAiQuestionAiFixer(env.OPENAI_API_KEY, env.EXTRACTION_MODEL, loadPromptOverrides);
+  }
+  logger.info('Quality AI fixer: unconfigured. Set OPENAI_API_KEY to fix questions with AI.');
+  return new UnconfiguredQuestionAiFixer();
+}
+
 /** OpenAI vision reader for the cut-upload "AI-fill paper details" button; otherwise a null-object. */
 function buildPaperMetadataExtractor(): PaperMetadataExtractor {
   if (env.OPENAI_API_KEY) {
@@ -302,6 +331,35 @@ export function createContainer(): Container {
       ? new MongoCatalogStore(getPrisma())
       : new UnconfiguredCatalogStore();
   const catalogService = new CatalogService(catalogStore);
+  // Auditing reads the main bank, so it needs Mongo like the catalog; the tracked anomalies and scan log
+  // follow the persistence driver so the dashboard still boots on the in-memory dev driver.
+  const questionAiFixer = buildQuestionAiFixer(loadPromptOverrides);
+  const syllabiService = new SyllabiService(
+    env.DB_DRIVER === 'mongo' ? new PrismaSyllabusStore(getPrisma()) : new InMemorySyllabusStore(),
+    BUNDLED_SYLLABI,
+  );
+  const qualityService =
+    env.DB_DRIVER === 'mongo'
+      ? new QualityService(
+          new MongoQuestionAuditSource(getPrisma()),
+          new PrismaQualityAnomalyStore(getPrisma()),
+          new PrismaQualityScanStore(getPrisma()),
+          new MongoQuestionFixStore(getPrisma()),
+          questionAiFixer,
+          syllabiService,
+          usageService,
+          new PrismaAiProposalStore(getPrisma()),
+        )
+      : new QualityService(
+          new UnconfiguredQuestionAuditSource(),
+          new InMemoryQualityAnomalyStore(),
+          new InMemoryQualityScanStore(),
+          new UnconfiguredQuestionFixStore(),
+          questionAiFixer,
+          syllabiService,
+          usageService,
+          new InMemoryAiProposalStore(),
+        );
   // Shared in-process registry so the cancel action and the worker's deadline signal the same run.
   const runRegistry = new ExtractionRunRegistry();
   const extractionService = new ExtractionService(
@@ -361,5 +419,7 @@ export function createContainer(): Container {
     driveService,
     ingestionService,
     promptsService,
+    syllabiService,
+    qualityService,
   };
 }

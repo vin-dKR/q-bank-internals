@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { z } from 'zod';
-import type { BankQuestion } from '@ingest/contracts';
+import { AiFilledSchema, aiFilledFields, withoutAiFields, type AiFillableField, type BankQuestion } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import { ejsonBool, ejsonNumber, escapeRegex, firstBatch, oid } from '../database/mongo-ejson.js';
 import type { BankImagePatch, BankQuestionStore, BankTextPatch } from '../../modules/bank/index.js';
@@ -60,6 +60,13 @@ const RawBankQuestionSchema = z
       ingestRef: doc.ingest_ref,
     }),
   );
+
+/** Just what a text edit needs to decide whether it overwrites an AI-filled value. */
+const RawAiFilledRowSchema = z.object({
+  answer: z.string().nullable().catch(null),
+  explanation: z.string().nullable().catch(null),
+  ai_filled: AiFilledSchema.catch({}),
+});
 
 /** The `_id` filter that targets a published row by the ingest question id stamped on `ingest_ref`. */
 function byQuestionId(questionId: string): Record<string, unknown> {
@@ -140,13 +147,43 @@ export class MongoBankQuestionStore implements BankQuestionStore {
       set.match_columns = patch.match ? patch.match.columns : null;
       set.match_key = patch.match ? patch.match.key : null;
     }
+    // Before the command is built: it may add the reduced tag set to `set`.
+    const unset = await this.untagEdited(id, patch, set);
     const command = {
       update: this.collection,
-      updates: [{ q: { _id: { $oid: id } }, u: { $set: set } }],
+      updates: [{ q: { _id: { $oid: id } }, u: { $set: set, ...unset } }],
     } as unknown as Prisma.InputJsonObject;
     const reply = await this.prisma.$runCommandRaw(command);
     const matched = ejsonNumber.catch(0).parse((reply as Record<string, unknown>).n ?? 0);
     if (matched === 0) throw errors.bankQuestionNotFound(id);
+  }
+
+  /**
+   * A hand edit to an AI-filled answer, explanation or match table makes it a human's value, so its
+   * `ai_filled` tag must go. Adds the new tag set to `set` (or returns an `$unset` when none remain); no-op when nothing tagged
+   * actually changes.
+   */
+  private async untagEdited(id: string, patch: BankTextPatch, set: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (patch.answer === undefined && patch.explanation === undefined && patch.match === undefined) return {};
+    const command = {
+      find: this.collection,
+      filter: { _id: { $oid: id } },
+      projection: { answer: 1, explanation: 1, ai_filled: 1 },
+      limit: 1,
+    } as unknown as Prisma.InputJsonObject;
+    const row = RawAiFilledRowSchema.safeParse(firstBatch(await this.prisma.$runCommandRaw(command))[0]);
+    if (!row.success) return {};
+    const { ai_filled: filled } = row.data;
+    const drop: AiFillableField[] = [];
+    if (patch.answer !== undefined && patch.answer !== row.data.answer && filled.answer) drop.push('answer');
+    if (patch.explanation !== undefined && patch.explanation !== row.data.explanation && filled.solution) drop.push('solution');
+    // The browse card sends the match table only when the operator changed it, so its presence IS the edit.
+    if (patch.match !== undefined && filled.structure) drop.push('structure');
+    if (drop.length === 0) return {};
+    const next = withoutAiFields(filled, drop);
+    if (aiFilledFields(next).length === 0) return { $unset: { ai_filled: '' } };
+    set.ai_filled = next;
+    return {};
   }
 
   async setPassage(groupId: string, passage: string): Promise<number> {

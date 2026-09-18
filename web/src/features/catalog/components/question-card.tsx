@@ -2,7 +2,7 @@ import type { JSX } from 'react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { CatalogQuestion, MatchData, UpdateBankText } from '@ingest/contracts';
-import { matchKeyToAnswer } from '@ingest/contracts';
+import { aiFilledFields, matchKeyToAnswer } from '@ingest/contracts';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { refineLatex } from '../../../shared/api/refine.js';
 import {
@@ -32,6 +32,26 @@ function optionLabel(index: number): string {
 function pyqLabel(question: CatalogQuestion): string {
   const detail = [question.pyqExam, question.pyqYear].filter((part) => part && part.trim()).join(' ');
   return detail ? `PYQ · ${detail}` : 'PYQ';
+}
+
+/** "AI · answer, topic" plus a tooltip naming the model and when — or null when no field is AI-filled. */
+function aiFilledBadge(question: CatalogQuestion): JSX.Element | null {
+  const fields = aiFilledFields(question.aiFilled);
+  if (fields.length === 0) return null;
+  const detail = fields
+    .map((field) => {
+      const tag = question.aiFilled[field];
+      return tag ? `${field}: ${tag.model}, ${String(Math.round(tag.confidence * 100))}% confident, ${new Date(tag.at).toLocaleDateString()}` : field;
+    })
+    .join('\n');
+  return (
+    <span title={`Filled by AI\n${detail}`}>
+      {/* Outlined, with the sparkle, so it never reads as another taxonomy pill (subject uses the same tone). */}
+      <Badge tone="review" dot={false} className="border border-current normal-case [&>svg]:size-3">
+        <IconSparkle /> AI-filled · {fields.join(', ')}
+      </Badge>
+    </span>
+  );
 }
 
 const FIELD_LABEL = 'flex items-center gap-1.5 text-[13px] font-medium text-ink-2';
@@ -203,6 +223,7 @@ export function QuestionCard({
       {question.section ? <Badge tone="neutral" dot={false}>{question.section}</Badge> : null}
       {question.isPyq ? <Badge tone="progress" dot={false}>{pyqLabel(question)}</Badge> : null}
       {question.flagged ? <Badge tone="danger">Flagged</Badge> : null}
+      {aiFilledBadge(question)}
     </>
   );
 

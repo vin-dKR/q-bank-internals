@@ -207,6 +207,12 @@ model Question {
   questionType    String?
   sectionName     String?
   topic           String?
+  // Difficulty band (easy/medium/hard), set on the Verify/quality screens and carried to the bank on
+  // publish so a correction cannot be undone by re-publishing. Null until a question is graded.
+  level           String?
+  // Which of topic/answer/solution/level hold an AI-written value: { answer: { model, confidence, at, via } }.
+  // Written by the quality screens, cleared per field when an operator edits it, published as `ai_filled`.
+  aiFilled        Json?
   // Per-question subject (a PYQ paper spans subjects), set per node in the structure tree. Null on
   // ordinary questions and legacy rows — publish falls back to the document's subject.
   subject         String?
@@ -299,6 +305,110 @@ model TokenUsage {
 
   @@index([createdAt])
   @@map("ingest_token_usage")
+}
+
+// One tracked data-quality problem on a LIVE shared-bank `Question` row, written by a quality scan. `key`
+// (questionId|kind|field) is the identity a re-scan matches on, so the same problem keeps its row, its
+// firstSeenAt, and an operator's `ignored` decision across scans. The exam/subject/…/preview columns are a
+// snapshot from the last scan that saw it. questionId is a loose reference: the bank has no Prisma model.
+model QualityAnomaly {
+  id               String    @id @default(auto()) @map("_id") @db.ObjectId
+  key              String    @unique
+  questionId       String
+  ingestQuestionId String?
+  documentId       String?
+  kind             String
+  group            String
+  severity         String
+  field            String?
+  detail           String
+  status           String
+  exam             String?
+  subject          String?
+  chapter          String?
+  questionType     String?
+  questionNumber   Int?
+  fileName         String?
+  preview          String
+  firstSeenAt      DateTime
+  lastSeenAt       DateTime
+  resolvedAt       DateTime?
+
+  @@index([status, group, kind])
+  @@index([questionId])
+  @@map("ingest_quality_anomalies")
+}
+
+// One AI proposal for a live bank question, parked for review. A batch run writes these, never the bank;
+// applying an approved proposal is what writes the question (and its staging copy). One row per question —
+// re-running replaces the previous pending proposal rather than stacking duplicates.
+model QualityAiProposal {
+  id               String    @id @default(auto()) @map("_id") @db.ObjectId
+  questionId       String    @unique
+  ingestQuestionId String?
+  fields           String[]
+  topic            String?
+  answer           String?
+  solution         String?
+  level            String?
+  // What the bank holds today, so the review shows before → after without re-reading every question.
+  currentTopic     String?
+  currentAnswer    String?
+  currentLevel     String?
+  subject          String?
+  chapter          String?
+  questionNumber   Int?
+  preview          String
+  confidence       Float
+  notes            String
+  usedImage        Boolean   @default(false)
+  // The model that produced the proposal; stamped on the question's AI-filled tag when it is applied.
+  model            String?
+  // The rebuilt structure ({ match, passage }) when the run was asked for it; null otherwise.
+  structure        Json?
+  status           String
+  createdAt        DateTime  @default(now())
+  decidedAt        DateTime?
+
+  @@index([status, createdAt])
+  @@map("ingest_quality_ai_proposals")
+}
+
+// One run of the quality scan. A `running` row older than the stale window is treated as crashed.
+model QualityScan {
+  id               String    @id @default(auto()) @map("_id") @db.ObjectId
+  status           String
+  startedAt        DateTime
+  finishedAt       DateTime?
+  questionsScanned Int       @default(0)
+  anomaliesFound   Int       @default(0)
+  opened           Int       @default(0)
+  reopened         Int       @default(0)
+  resolved         Int       @default(0)
+  // Optional: scans recorded before this counter existed have no value (read back as 0).
+  removed          Int?
+  error            String?
+
+  @@index([startedAt])
+  @@map("ingest_quality_scans")
+}
+
+// One exam's uploaded syllabus: subjects → chapters → topics, the vocabulary the quality AI may choose a
+// topic from. One row per exam (`exam` is unique) — an upload replaces that exam whole, never patches it —
+// and a row here overrides the exam's file bundled with the app. `subjects` holds the authored tree as
+// uploaded; chapter/topic ids are generated when it is read, so re-ordering a file is safe.
+model Syllabus {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  exam      String   @unique
+  title     String
+  aliases   String[]
+  subjects  Json
+  // The uploaded file's name, shown on the syllabus screen so an exam's origin is traceable.
+  fileName  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+
+  @@map("ingest_syllabi")
 }
 
 // The single global token budget. A null cap means "no limit on that window". One row; the service

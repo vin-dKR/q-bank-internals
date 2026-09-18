@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
-import { IconDroplet, IconEdit, IconFileText, IconImage, IconLayers, IconScan } from '../../shared/ui/index.js';
+import { IconDroplet, IconEdit, IconFileText, IconImage, IconLayers, IconScan, IconWarning } from '../../shared/ui/index.js';
 
 /** localStorage key remembering whether the operator collapsed the sidebar. */
 const SIDEBAR_KEY = 'ingest:sidebarCollapsed';
@@ -228,11 +228,13 @@ export function AppLayout(): JSX.Element {
         <SectionCaption label="Question bank" collapsed={collapsed} />
         <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
           <NavItem to="/questions" icon={<IconQuestions />} label="Questions" collapsed={collapsed} />
+          <NavItem to="/quality" icon={<IconWarning />} label="Data quality" collapsed={collapsed} />
         </nav>
 
         <SectionCaption label="Masters" collapsed={collapsed} />
         <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
           <NavItem to="/masters" icon={<IconMasters />} label="All masters" collapsed={collapsed} />
+          <NavItem to="/syllabi" icon={<IconLayers />} label="Exam syllabus" collapsed={collapsed} />
           <NavItem to="/prompts" icon={<IconFileText />} label="AI prompts" collapsed={collapsed} />
         </nav>
 

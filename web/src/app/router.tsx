@@ -6,9 +6,11 @@ import { TreeIngestPage } from './pages/tree-ingest-page.js';
 import { SessionsPage } from './pages/sessions-page.js';
 import { SessionDetailPage } from './pages/session-detail-page.js';
 import { MastersPage } from './pages/masters-page.js';
+import { SyllabiPage } from './pages/syllabi-page.js';
 import { PromptsPage } from './pages/prompts-page.js';
 import { UsagePage } from './pages/usage-page.js';
 import { QuestionsPage } from './pages/questions-page.js';
+import { QualityPage } from './pages/quality-page.js';
 import { ChapterSplitterPage } from './pages/chapter-splitter-page.js';
 import { PdfCutterPage } from './pages/pdf-cutter-page.js';
 import { QnaPdfPage } from './pages/qna-pdf-page.js';
@@ -35,7 +37,9 @@ export const router = createBrowserRouter([
       // "Fix bank images" folded into Verify — search a published question there. Keep the old link.
       { path: 'bank', element: <Navigate to="/verify" replace />, errorElement },
       { path: 'questions', element: <QuestionsPage />, errorElement },
+      { path: 'quality', element: <QualityPage />, errorElement },
       { path: 'masters', element: <MastersPage />, errorElement },
+      { path: 'syllabi', element: <SyllabiPage />, errorElement },
       { path: 'prompts', element: <PromptsPage />, errorElement },
       { path: 'usage', element: <UsagePage />, errorElement },
       { path: 'tools/chapters', element: <ChapterSplitterPage />, errorElement },

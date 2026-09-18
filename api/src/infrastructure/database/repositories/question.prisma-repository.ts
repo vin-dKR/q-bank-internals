@@ -1,5 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import {
+  type AiFilled,
+  AiFilledSchema,
   type ImageCrop,
   ImageCropSchema,
   type MatchData,
@@ -11,6 +13,7 @@ import {
 } from '@ingest/contracts';
 import { z } from 'zod';
 import {
+  aiFilledAfterEdit,
   type NewPassage,
   type NewQuestion,
   type QuestionRepository,
@@ -44,6 +47,9 @@ type QuestionRow = {
   questionType: string | null;
   sectionName: string | null;
   topic: string | null;
+  level: string | null;
+  // Prisma `Json?`: which fields hold AI-written values, validated back into shape by `toAiFilled`.
+  aiFilled: unknown;
   subject: string | null;
   flagged: boolean;
   isPyq: boolean;
@@ -71,6 +77,13 @@ type PassageRow = {
 function toMatch(value: unknown): MatchData | null {
   if (value === null || value === undefined) return null;
   const parsed = MatchDataSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/** Validate a Prisma `Json?` AI-filled tag set; malformed/absent data → null (nothing claimed as AI's). */
+function toAiFilled(value: unknown): AiFilled | null {
+  if (value === null || value === undefined) return null;
+  const parsed = AiFilledSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
 
@@ -105,6 +118,8 @@ function toQuestion(row: QuestionRow): Question {
     questionType: row.questionType,
     sectionName: row.sectionName,
     topic: row.topic,
+    level: row.level,
+    aiFilled: toAiFilled(row.aiFilled),
     subject: row.subject,
     flagged: row.flagged,
     isPyq: row.isPyq,
@@ -227,9 +242,16 @@ export class PrismaQuestionRepository implements QuestionRepository {
   }
 
   async update(id: string, patch: UpdateQuestion): Promise<Question> {
+    // Only an edit to an AI-fillable field needs the current row: its tag must go when its value changes. The
+    // match table counts — it is the "structure" an AI rebuild writes.
+    const touchesAiField =
+      patch.topic !== undefined || patch.answer !== undefined || patch.explanation !== undefined || patch.match !== undefined;
+    const current = touchesAiField ? await this.prisma.question.findUnique({ where: { id } }) : null;
+    const aiFilled = current ? aiFilledAfterEdit(toQuestion(current), patch) : undefined;
     const row = await this.prisma.question.update({
       where: { id },
       data: {
+        ...(aiFilled !== undefined ? { aiFilled } : {}),
         ...(patch.stem !== undefined ? { stem: patch.stem } : {}),
         ...(patch.options !== undefined ? { options: patch.options } : {}),
         ...(patch.answer !== undefined ? { answer: patch.answer } : {}),

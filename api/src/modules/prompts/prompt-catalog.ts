@@ -179,6 +179,92 @@ Input text: "{text}"
 Return valid JSON only: { "refined_text": "..." }`;
 
 /** Default text for every editable prompt — what the builders fall back to and what "Reset" restores. */
+const QUALITY_FIX_SYSTEM_DEFAULT = `You are a senior subject teacher checking questions in an exam question bank (JEE / NEET / school boards).
+
+You are given ONE question — its text, its options, and whatever metadata is already stored — and asked to work out only the fields listed under WHAT TO RETURN. Follow these rules without exception:
+
+1. SOLVE the question properly before answering anything about it. Reason it through internally; do not pattern-match on how it looks.
+2. Return ONLY valid JSON in the exact shape given. No prose outside the JSON.
+3. Never invent a value you cannot justify from the question. When you cannot decide something, return null for that field and say why in "notes".
+4. Preserve the question's own language and notation. Write maths as LaTeX inside \\( … \\).
+5. If an image is attached, it is part of the question — read it. If the question clearly depends on a figure you were NOT given, return nulls with a note saying the figure is missing.
+6. "confidence" is your own honest estimate (0 to 1) that everything you returned is correct. Be strict with yourself: below 0.6 means a human should check it.`;
+
+const QUALITY_CHAPTER_DEFAULT = `CHAPTER — decide which syllabus chapter this question belongs to and return its ID. Its topic is chosen next, from that chapter only.
+
+CHAPTERS of this question's exam and subject, as "ID = chapter":
+{chapters}
+
+How to choose:
+1. Work out what the question is really testing — the concept needed to solve it, not the words it uses.
+2. Choose the ONE chapter where that concept is taught. When a question draws on several chapters, choose the chapter of the concept it mainly tests.
+3. The stored chapter is a hint only: it may be a coaching-style name ("Modern Physics 1", "KTG & Thermodynamics") or simply wrong. Trust the question over the stored chapter.
+4. Return the ID exactly as listed — never the chapter name.
+5. If the question belongs to none of these chapters (another subject, or outside this syllabus), return null and explain in "notes". Never invent an ID.`;
+
+const QUALITY_TOPIC_DEFAULT = `TOPIC — pick the single most accurate topic for this question and return its ID.
+
+ALLOWED TOPICS for this question, already narrowed to its exam, subject and chapter, as "ID = topic", grouped by chapter:
+{topics}
+
+How to choose:
+1. Work out what the question is really testing — the concept needed to solve it, not the words it uses.
+2. When more than one chapter is listed, decide which one that concept belongs to, then choose the ONE topic under it that matches most precisely.
+3. Prefer the most specific topic that still covers the question. Never choose a broader one when a specific one fits.
+4. The stored chapter is a hint only; it may be named differently from these chapters. Trust the question over the stored chapter.
+5. Return the ID exactly as listed — not the topic text, and never a chapter name.
+6. If no topic in the list genuinely fits, return null and explain in "notes". Never invent an ID.`;
+
+const QUALITY_ANSWER_DEFAULT = `ANSWER — solve the question and give the correct answer.
+
+1. Solve it fully and carefully before deciding.
+2. If the question has options, return the LABEL(s) of the correct option(s) exactly as the options are labelled — "A", or "A, C" when several are correct. Check every option; the answer must be one of the labels shown.
+3. For an integer or numerical question, return just the value ("12", "4.5"), with no unit unless the question demands one.
+4. For a subjective question, return the final result concisely (maths as LaTeX).
+5. If the question is unanswerable as stored — missing figure, missing data, no correct option — return null and explain in "notes". Never pick an option at random.
+6. When a stored answer is already present and your solution disagrees with it, still return YOUR answer and say so in "notes".`;
+
+const QUALITY_SOLUTION_DEFAULT = `SOLUTION — write the worked solution a student can learn from.
+
+1. Show the reasoning step by step, in the order a student would follow it: what is given, which principle applies, then the working to the result.
+2. Keep it tight — the steps that matter, not a lecture.
+3. Maths as LaTeX inside \\( … \\); units written as \\(\\text{m/s}\\).
+4. End with the final answer stated plainly.
+5. If you could not solve the question, return null.`;
+
+const QUALITY_LEVEL_DEFAULT = `LEVEL — grade the question's difficulty from YOUR OWN solution, as one of exactly: easy, medium, hard.
+
+Judge it by the work it takes a prepared student, not by how long the question reads:
+- easy: one concept, a direct formula or definition, one or two steps, no trap.
+- medium: two or more concepts or steps combined, some manipulation, a common mistake to avoid.
+- hard: several concepts chained, a non-obvious insight or setup, heavy derivation, or a deliberate trap that catches most students.
+
+Grade what the question actually demands, not the exam it came from. If you could not solve it, return null.`;
+
+const QUALITY_TYPE_LOCK_DEFAULT = `QUESTION TYPE IS CONFIRMED — a reviewer has checked this question and confirmed it is "{type}". Your answer MUST fit that type:
+- single_correct / assertion_reason: exactly ONE option is correct. Return exactly one label, e.g. "B". If more than one option looks right, re-read the wording (e.g. "most appropriate", "best", "primarily") and decide the ONE the question intends; say in "notes" why the others lose.
+- multi_correct: return every correct label, e.g. "A, C".
+- integer: return only the number.
+Your solution must arrive at exactly the answer you return. If no answer fits the confirmed type, return null and explain in "notes".`;
+
+const QUALITY_STRUCTURE_DEFAULT = `STRUCTURE — rebuild the shape this question has lost. Return it under "structure".
+
+The question is one of two kinds. Do the one that applies and leave the other null.
+
+A) MATCH THE COLUMN (matrix). Its columns were stored as plain text, so the app cannot show the table.
+1. Read the columns off the question exactly as printed. Column I is usually labelled A, B, C, D; Column II p, q, r, s (some papers use 1,2,3,4 — keep the labels the question itself prints).
+2. Copy each entry's text verbatim from the question. Never reword, translate, shorten or invent an entry. If an entry is unreadable, return null for the whole structure and say so in "notes".
+3. Give each column the heading the question prints ("Column I", "List-I", "सूची-I"); use "Column I" / "Column II" if it prints none.
+4. "key" maps each Column-I label to the labels it matches: { "A": ["p"], "B": ["q","t"] }. Take the matching from the question's stored answer whenever it has one — you are restoring a table, not re-solving the question. Only work the matching out yourself when no answer is stored, and say so in "notes".
+5. Options like "(A) A-p, B-q, C-r" are answer CHOICES, not columns. Never turn them into column entries.
+
+B) COMPREHENSION PASSAGE. The question belongs to a passage group but the passage text is missing.
+1. Return the shared passage exactly as printed, in the question's own language.
+2. Return only the passage — not the question, not the options.
+3. If the passage is not in what you were given, return null. Never write a passage yourself: an invented passage silently changes what the question asks.
+
+Maths stays LaTeX inside \\( … \\). Return null for a kind that does not apply, and null for the whole structure when you cannot rebuild it faithfully.`;
+
 export const PROMPT_DEFAULTS: Record<PromptKey, string> = {
   extraction: EXTRACTION_DEFAULT,
   inlineAnswer: INLINE_ANSWER_DEFAULT,
@@ -188,6 +274,14 @@ export const PROMPT_DEFAULTS: Record<PromptKey, string> = {
   solution: SOLUTION_DEFAULT,
   latexSystem: LATEX_SYSTEM_DEFAULT,
   latexUser: LATEX_USER_DEFAULT,
+  qualityFixSystem: QUALITY_FIX_SYSTEM_DEFAULT,
+  qualityChapter: QUALITY_CHAPTER_DEFAULT,
+  qualityTopic: QUALITY_TOPIC_DEFAULT,
+  qualityAnswer: QUALITY_ANSWER_DEFAULT,
+  qualitySolution: QUALITY_SOLUTION_DEFAULT,
+  qualityLevel: QUALITY_LEVEL_DEFAULT,
+  qualityTypeLock: QUALITY_TYPE_LOCK_DEFAULT,
+  qualityStructure: QUALITY_STRUCTURE_DEFAULT,
 };
 
 /** Operator-facing metadata + the `{tokens}` each prompt must keep, in display order. */
@@ -231,6 +325,50 @@ export const PROMPT_META: Record<PromptKey, { label: string; description: string
     label: 'LaTeX fixer (instructions)',
     description: 'Instructions for wrapping math/units in \\(...\\). Must keep the {text} token where the field’s content is inserted.',
     tokens: ['text'],
+  },
+  qualityFixSystem: {
+    label: 'Fix with AI (system)',
+    description: 'System role for the data-quality “fix with AI” run: solve first, return JSON, never guess.',
+    tokens: [],
+  },
+  qualityChapter: {
+    label: 'Fix with AI · chapter',
+    description:
+      'Runs before the topic when the question’s stored chapter matches no chapter of its exam’s syllabus: the AI places the question in a chapter, and the topic is then chosen inside it. Must keep the {chapters} token — the “ID = chapter” list for the question’s exam and subject is inserted there.',
+    tokens: ['chapters'],
+  },
+  qualityTopic: {
+    label: 'Fix with AI · topic',
+    description:
+      'How the topic is chosen. Must keep the {topics} token — the allowed “ID = topic” table for the question’s exam, subject and chapter is inserted there, and an answer that is not one of those IDs is rejected.',
+    tokens: ['topics'],
+  },
+  qualityAnswer: {
+    label: 'Fix with AI · answer',
+    description: 'How the question is solved and how the answer must be formatted (option labels, integer values, subjective results).',
+    tokens: [],
+  },
+  qualitySolution: {
+    label: 'Fix with AI · solution',
+    description: 'How the worked solution is written (steps, LaTeX, final answer).',
+    tokens: [],
+  },
+  qualityLevel: {
+    label: 'Fix with AI · level',
+    description: 'The criteria that decide easy / medium / hard. Edit these to match how your team grades difficulty.',
+    tokens: [],
+  },
+  qualityStructure: {
+    label: 'Fix with AI · structure',
+    description:
+      'How a lost match table or comprehension passage is rebuilt from the question itself. The rules against inventing entries live here — edit with care.',
+    tokens: [],
+  },
+  qualityTypeLock: {
+    label: 'Fix with AI · re-ask with the type confirmed',
+    description:
+      'Added when a reviewer re-asks the AI because its answer did not fit the question type (e.g. two answers on a single-correct question). Must keep the {type} token — the confirmed type is inserted there.',
+    tokens: ['type'],
   },
 };
 
