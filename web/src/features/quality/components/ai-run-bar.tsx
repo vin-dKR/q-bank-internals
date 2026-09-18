@@ -198,7 +198,7 @@ export function AiRunBar({
             <span className="text-ok">{progress.proposed.toLocaleString()} proposed</span>
             {progress.skipped > 0 ? ` · ${progress.skipped.toLocaleString()} already filled in` : ''}
             {progress.blocked > 0
-              ? ` · ${progress.blocked.toLocaleString()} need an exam/subject set (or have no syllabus) before a topic can be matched`
+              ? ` · ${progress.blocked.toLocaleString()} need a subject set (or topics added in Question taxonomy) before a topic can be matched`
               : ''}
             {progress.undecided > 0 ? ` · ${progress.undecided.toLocaleString()} the AI could not decide` : ''}
             {progress.failed > 0 ? ` · ${progress.failed.toLocaleString()} failed` : ''}

@@ -205,7 +205,7 @@ export class OpenAiQuestionAiFixer implements QuestionAiFixer {
       questionBlock(input),
       '',
       '=== WHAT TO RETURN ===',
-      fillTokens(resolvePrompt(overrides, 'qualityChapter'), { chapters: `${input.syllabus}\n${chapters}` }),
+      fillTokens(resolvePrompt(overrides, 'qualityChapter'), { chapters: `${input.scope}\n${chapters}` }),
       '',
       `Return ONLY this JSON object:\n${jsonShape([`  "chapter": the chosen chapter's ID exactly as listed, or null`])}`,
     ].join('\n');

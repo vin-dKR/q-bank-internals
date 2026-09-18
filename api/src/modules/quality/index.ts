@@ -13,7 +13,6 @@ export type {
   ChapterOption,
   NewAiProposal,
   QuestionAiFixer,
-  SyllabusCatalog,
   TopicOption,
   AnomalyFilters,
   AnomalyListPage,

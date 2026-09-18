@@ -184,7 +184,7 @@ export class MongoQuestionFixStore implements QuestionFixStore {
       updates: [
         ...fixes.map((write) => ({
           q: { _id: { $oid: write.questionId } },
-          u: updateDoc(bankSet(write.fix), write.aiFilled, 'ai_filled'),
+          u: updateDoc({ ...bankSet(write.fix), ...write.bankTaxonomy }, write.aiFilled, 'ai_filled'),
         })),
         // A comprehension passage is denormalized onto every row of its group, so correcting it on one row
         // would leave the siblings showing the old text. Written to the whole group, in the same command.

@@ -8,7 +8,6 @@ import { SessionDetailPage } from './pages/session-detail-page.js';
 import { DocumentDataPage } from './pages/document-data-page.js';
 import { TaxonomyPage } from './pages/taxonomy-page.js';
 import { ExamAccessPage } from './pages/exam-access-page.js';
-import { SyllabiPage } from './pages/syllabi-page.js';
 import { PromptsPage } from './pages/prompts-page.js';
 import { UsagePage } from './pages/usage-page.js';
 import { QuestionsPage } from './pages/questions-page.js';
@@ -41,7 +40,6 @@ export const router = createBrowserRouter([
       { path: 'bank', element: <Navigate to="/verify" replace />, errorElement },
       { path: 'questions', element: <QuestionsPage />, errorElement },
       { path: 'quality', element: <QualityPage />, errorElement },
-      { path: 'syllabi', element: <SyllabiPage />, errorElement },
       // Masters split into three pages; keep /masters as a redirect to the first for old links.
       { path: 'masters', element: <Navigate to="/masters/taxonomy" replace />, errorElement },
       { path: 'masters/taxonomy', element: <TaxonomyPage />, errorElement },

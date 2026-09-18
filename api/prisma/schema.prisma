@@ -397,24 +397,6 @@ model QualityScan {
   @@map("ingest_quality_scans")
 }
 
-// One exam's uploaded syllabus: subjects → chapters → topics, the vocabulary the quality AI may choose a
-// topic from. One row per exam (`exam` is unique) — an upload replaces that exam whole, never patches it —
-// and a row here overrides the exam's file bundled with the app. `subjects` holds the authored tree as
-// uploaded; chapter/topic ids are generated when it is read, so re-ordering a file is safe.
-model Syllabus {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  exam      String   @unique
-  title     String
-  aliases   String[]
-  subjects  Json
-  // The uploaded file's name, shown on the syllabus screen so an exam's origin is traceable.
-  fileName  String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime
-
-  @@map("ingest_syllabi")
-}
-
 // The single global token budget. A null cap means "no limit on that window". One row; the service
 // upserts it. dailyLimit/weeklyLimit are counts of total tokens per UTC-day / trailing-7-day window.
 model TokenLimit {

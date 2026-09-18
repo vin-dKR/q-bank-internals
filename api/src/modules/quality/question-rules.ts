@@ -17,7 +17,7 @@ const OPTION_ANSWER_TYPES = CHOICE_TYPES;
 /** Values an operator typed instead of a real answer. */
 const PLACEHOLDER_ANSWER = /^\s*(should\s+be\b.*|n\/?a|-+|\?+|not\s+given|refer\b.*|see\s+(image|solution)\b.*|image)\s*$/i;
 
-/** Topic values that are really the exercise/section a question sat under, not a syllabus topic. */
+/** Topic values that are really the exercise/section a question sat under, not a real topic. */
 const SECTION_LIKE_TOPIC = /\b(exercise|level|section|part|dpp|worksheet|sheet|assignment)\b|\((s|o)-\d\)/i;
 
 /** Wording that means the question depends on a figure. */

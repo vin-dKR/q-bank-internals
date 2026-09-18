@@ -446,8 +446,8 @@ export const AiFixSuggestionSchema = z.object({
    */
   topicOptions: z.array(z.string()),
   /**
-   * Where those topics came from, e.g. "JEE › Physics › Thermodynamics (Class 11)". Null when the topic was not
-   * matched against a syllabus (not asked for, or blocked — the reason is in `notes`).
+   * Where those topics came from in Question taxonomy, e.g. "Physics › Thermodynamics". Null when no topic
+   * was matched (not asked for, or blocked — the reason is in `notes`).
    */
   topicScope: z.string().nullable(),
   /** The model that answered — recorded on the question if this suggestion is saved. */
@@ -537,8 +537,8 @@ export const AiBatchResultSchema = z.object({
   /** Questions skipped because every requested field already had a value (and overwrite was off). */
   skipped: z.number().int().nonnegative(),
   /**
-   * Topic-only questions not sent to the AI because their topic cannot be matched yet: no exam or subject set,
-   * or no syllabus loaded for their exam. Fix the metadata (or add the syllabus) and run again.
+   * Topic-only questions not sent to the AI because their topic cannot be matched yet: no subject set, or
+   * their subject has no chapters with topics in Question taxonomy. Fix one of those and run again.
    */
   blocked: z.number().int().nonnegative(),
   nextCursor: z.string().nullable(),

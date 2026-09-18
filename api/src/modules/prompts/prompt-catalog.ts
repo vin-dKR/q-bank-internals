@@ -190,7 +190,7 @@ You are given ONE question — its text, its options, and whatever metadata is a
 5. If an image is attached, it is part of the question — read it. If the question clearly depends on a figure you were NOT given, return nulls with a note saying the figure is missing.
 6. "confidence" is your own honest estimate (0 to 1) that everything you returned is correct. Be strict with yourself: below 0.6 means a human should check it.`;
 
-const QUALITY_CHAPTER_DEFAULT = `CHAPTER — decide which syllabus chapter this question belongs to and return its ID. Its topic is chosen next, from that chapter only.
+const QUALITY_CHAPTER_DEFAULT = `CHAPTER — decide which chapter of its subject this question belongs to and return its ID. Its topic is chosen next, from that chapter only.
 
 CHAPTERS of this question's exam and subject, as "ID = chapter":
 {chapters}
@@ -200,7 +200,7 @@ How to choose:
 2. Choose the ONE chapter where that concept is taught. When a question draws on several chapters, choose the chapter of the concept it mainly tests.
 3. The stored chapter is a hint only: it may be a coaching-style name ("Modern Physics 1", "KTG & Thermodynamics") or simply wrong. Trust the question over the stored chapter.
 4. Return the ID exactly as listed — never the chapter name.
-5. If the question belongs to none of these chapters (another subject, or outside this syllabus), return null and explain in "notes". Never invent an ID.`;
+5. If the question belongs to none of these chapters (another subject, or none of these chapters fits), return null and explain in "notes". Never invent an ID.`;
 
 const QUALITY_TOPIC_DEFAULT = `TOPIC — pick the single most accurate topic for this question and return its ID.
 
@@ -334,7 +334,7 @@ export const PROMPT_META: Record<PromptKey, { label: string; description: string
   qualityChapter: {
     label: 'Fix with AI · chapter',
     description:
-      'Runs before the topic when the question’s stored chapter matches no chapter of its exam’s syllabus: the AI places the question in a chapter, and the topic is then chosen inside it. Must keep the {chapters} token — the “ID = chapter” list for the question’s exam and subject is inserted there.',
+      'Runs before the topic when the question’s stored chapter matches no chapter of its subject in Question taxonomy: the AI places the question in a chapter, and the topic is then chosen inside it. Must keep the {chapters} token — the “ID = chapter” list for the question’s subject is inserted there.',
     tokens: ['chapters'],
   },
   qualityTopic: {

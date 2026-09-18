@@ -157,15 +157,8 @@ export const errors = {
   aiCouldNotDecide: (detail: string): AppError =>
     new AppError('AI_COULD_NOT_DECIDE', 422, `The AI could not decide an answer that fits: ${detail || 'no reason given.'}`),
 
-  /** A topic was asked for on a question whose exam/subject is unset or whose exam has no syllabus. */
+  /** A topic was asked for on a question whose subject is unset or has no topics in Question taxonomy. */
   topicNotMatchable: (reason: string): AppError => new AppError('TOPIC_NOT_MATCHABLE', 422, reason),
-
-  /** An uploaded syllabus file could not be read; the detail names the row or field to fix. */
-  syllabusUploadInvalid: (detail: string): AppError =>
-    new AppError('SYLLABUS_UPLOAD_INVALID', 400, `That syllabus file could not be read: ${detail}`),
-
-  syllabusNotFound: (exam: string): AppError =>
-    new AppError('SYLLABUS_NOT_FOUND', 404, `No syllabus is stored for the exam "${exam}".`),
 
   qualityWriteFailed: (reason: string): AppError =>
     new AppError('QUALITY_WRITE_FAILED', 502, `Saving quality anomalies failed: ${reason}`),

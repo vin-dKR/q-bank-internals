@@ -15,6 +15,5 @@ export * from './catalog/index.js';
 export * from './extraction/index.js';
 export * from './usage/index.js';
 export * from './quality/index.js';
-export * from './syllabi/index.js';
 export * from './exam-access/index.js';
 export * from './masters/index.js';

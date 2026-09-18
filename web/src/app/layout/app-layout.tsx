@@ -235,7 +235,6 @@ export function AppLayout(): JSX.Element {
         <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
           <NavItem to="/masters/taxonomy" icon={<IconMasters />} label="Question taxonomy" collapsed={collapsed} />
           <NavItem to="/masters/exam-access" icon={<IconLayers />} label="Exam access" collapsed={collapsed} />
-          <NavItem to="/syllabi" icon={<IconLayers />} label="Exam syllabus" collapsed={collapsed} />
           <NavItem to="/prompts" icon={<IconFileText />} label="AI prompts" collapsed={collapsed} />
         </nav>
 

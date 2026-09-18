@@ -16,7 +16,6 @@ import type {
   QuestionFix,
   UpdateAnomaly,
 } from '@ingest/contracts';
-import type { Syllabus } from '@ingest/contracts';
 import type { AuditQuestion, DetectedAnomaly } from './quality.types.js';
 
 /**
@@ -51,6 +50,11 @@ export type QuestionFixWrite = {
   ingestQuestionId: string | null;
   /** The comprehension group this question belongs to, so a passage fix reaches every row of it. */
   groupId?: string | null | undefined;
+  /**
+   * Taxonomy ids and labels to restamp on the BANK row (main's `examId`, `subjectId`, `chapterId`, …), when
+   * the fix changed a value they are resolved from. Keys are the bank's own column names.
+   */
+  bankTaxonomy?: Record<string, unknown> | undefined;
   fix: QuestionFix;
   /**
    * The question's complete AI-filled tag set after this write, replacing what the row holds (empty removes
@@ -126,22 +130,14 @@ export type ScanCounts = Pick<
  */
 export type TopicOption = { id: string; topic: string; chapter: string };
 
-/**
- * PORT: every exam syllabus the app knows (exam → subjects → chapters → topics), bundled or uploaded. A
- * question's topic is only chosen inside its own exam's syllabus; an exam with none cannot be matched.
- */
-export interface SyllabusCatalog {
-  syllabi(): Promise<readonly Syllabus[]>;
-}
-
 /** One choosable chapter: the id the model answers with, and its name. */
 export type ChapterOption = { id: string; chapter: string };
 
 /** What the AI is given to place a question in a chapter when its stored chapter matched none. */
 export type ChapterChoiceInput = {
   question: AuditQuestion;
-  /** The syllabus the chapters come from, e.g. "JEE Main 2026 — NCERT chapter-wise topics · Physics". */
-  syllabus: string;
+  /** Where the chapters come from, e.g. "Physics (Question taxonomy)". */
+  scope: string;
   chapters: ChapterOption[];
   imageUrls: string[];
 };

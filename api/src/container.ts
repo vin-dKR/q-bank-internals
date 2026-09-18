@@ -83,10 +83,6 @@ import { MongoQuestionAuditSource } from './infrastructure/quality/mongo.questio
 import { UnconfiguredQuestionAuditSource } from './infrastructure/quality/unconfigured.question-audit-source.js';
 import { MongoQuestionFixStore } from './infrastructure/quality/mongo.question-fix-store.js';
 import { UnconfiguredQuestionFixStore } from './infrastructure/quality/unconfigured.question-fix-store.js';
-import { SyllabiService } from './modules/syllabi/index.js';
-import { BUNDLED_SYLLABI } from './infrastructure/syllabi/bundled.syllabi.js';
-import { PrismaSyllabusStore } from './infrastructure/database/repositories/syllabus.prisma-store.js';
-import { InMemorySyllabusStore } from './infrastructure/database/repositories/syllabus.in-memory-store.js';
 import { OpenAiQuestionAiFixer } from './infrastructure/ai/openai.question-ai-fixer.js';
 import { UnconfiguredQuestionAiFixer } from './infrastructure/quality/unconfigured.question-ai-fixer.js';
 import { PrismaQualityAnomalyStore } from './infrastructure/database/repositories/quality-anomaly.prisma-store.js';
@@ -121,7 +117,6 @@ export type Container = {
   driveService: DriveService;
   ingestionService: IngestionService;
   promptsService: PromptService;
-  syllabiService: SyllabiService;
   qualityService: QualityService;
 };
 
@@ -364,10 +359,6 @@ export function createContainer(): Container {
   // Auditing reads the main bank, so it needs Mongo like the catalog; the tracked anomalies and scan log
   // follow the persistence driver so the dashboard still boots on the in-memory dev driver.
   const questionAiFixer = buildQuestionAiFixer(loadPromptOverrides);
-  const syllabiService = new SyllabiService(
-    env.DB_DRIVER === 'mongo' ? new PrismaSyllabusStore(getPrisma()) : new InMemorySyllabusStore(),
-    BUNDLED_SYLLABI,
-  );
   const qualityService =
     env.DB_DRIVER === 'mongo'
       ? new QualityService(
@@ -376,7 +367,8 @@ export function createContainer(): Container {
           new PrismaQualityScanStore(getPrisma()),
           new MongoQuestionFixStore(getPrisma()),
           questionAiFixer,
-          syllabiService,
+          // Topics come from Masters → Question taxonomy — the same dictionaries publish stamps ids from.
+          taxonomyResolver,
           usageService,
           new PrismaAiProposalStore(getPrisma()),
         )
@@ -386,7 +378,7 @@ export function createContainer(): Container {
           new InMemoryQualityScanStore(),
           new UnconfiguredQuestionFixStore(),
           questionAiFixer,
-          syllabiService,
+          taxonomyResolver,
           usageService,
           new InMemoryAiProposalStore(),
         );
@@ -458,7 +450,6 @@ export function createContainer(): Container {
     driveService,
     ingestionService,
     promptsService,
-    syllabiService,
     qualityService,
   };
 }
