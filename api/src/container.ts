@@ -8,6 +8,8 @@ import {
   ExtractionWorker,
   type ExtractionJobStore,
   type JobQueue,
+  type MasterOption,
+  type MastersSnapshot,
   type PdfRasterizer,
   type VisionExtractor,
 } from './modules/extraction/index.js';
@@ -29,6 +31,8 @@ import { PagesService } from './modules/pages/index.js';
 import { PublishService } from './modules/publish/index.js';
 import { BankService } from './modules/bank/index.js';
 import { CatalogService } from './modules/catalog/index.js';
+import { ExamAccessService } from './modules/exam-access/index.js';
+import { MastersService, TaxonomyResolver, type DictionaryRow } from './modules/masters/index.js';
 import { DriveService } from './modules/drive/index.js';
 import { IngestionService, type UploadStagingStore } from './modules/ingestion/index.js';
 import { PromptService, type PromptOverrideStore, type PromptOverrides } from './modules/prompts/index.js';
@@ -91,6 +95,10 @@ import { PrismaQualityScanStore } from './infrastructure/database/repositories/q
 import { PrismaAiProposalStore } from './infrastructure/database/repositories/quality-ai-proposal.prisma-store.js';
 import { InMemoryAiProposalStore } from './infrastructure/database/repositories/quality-ai-proposal.in-memory-store.js';
 import { InMemoryQualityScanStore } from './infrastructure/database/repositories/quality-scan.in-memory-store.js';
+import { MongoExamAccessStore } from './infrastructure/exam-access/mongo.exam-access-store.js';
+import { UnconfiguredExamAccessStore } from './infrastructure/exam-access/unconfigured.exam-access-store.js';
+import { MongoTaxonomyStore } from './infrastructure/taxonomy/mongo.taxonomy-store.js';
+import { UnconfiguredTaxonomyStore } from './infrastructure/taxonomy/unconfigured.taxonomy-store.js';
 
 /**
  * The COMPOSITION ROOT (§5). The single file allowed to `new` infrastructure and decide which
@@ -105,6 +113,8 @@ export type Container = {
   publishService: PublishService;
   bankService: BankService;
   catalogService: CatalogService;
+  examAccessService: ExamAccessService;
+  mastersService: MastersService;
   extractionService: ExtractionService;
   extractionWorker: ExtractionWorker;
   jobQueue: JobQueue;
@@ -202,10 +212,13 @@ function buildQueue(): JobQueue {
 }
 
 /** OpenAI gpt-4o when a key is present; otherwise a null-object that fails extraction loudly. */
-function buildExtractor(loadPromptOverrides: () => Promise<PromptOverrides>): VisionExtractor {
+function buildExtractor(
+  loadPromptOverrides: () => Promise<PromptOverrides>,
+  loadMasters: () => Promise<MastersSnapshot>,
+): VisionExtractor {
   if (env.OPENAI_API_KEY) {
     logger.info(`Extractor: OpenAI ${env.EXTRACTION_MODEL}`);
-    return new OpenAiVisionExtractor(env.OPENAI_API_KEY, env.EXTRACTION_MODEL, loadPromptOverrides);
+    return new OpenAiVisionExtractor(env.OPENAI_API_KEY, env.EXTRACTION_MODEL, loadPromptOverrides, loadMasters);
   }
   logger.info('Extractor: unconfigured. Set OPENAI_API_KEY to run extraction.');
   return new UnconfiguredVisionExtractor();
@@ -291,7 +304,24 @@ export function createContainer(): Container {
   const loadPromptOverrides = (): Promise<PromptOverrides> => promptsService.overrides();
   const jobQueue = buildQueue();
   const rasterizer: PdfRasterizer = new PdfToImgRasterizer();
-  const extractor = buildExtractor(loadPromptOverrides);
+  // The taxonomy dictionaries back Masters CRUD, the publish-time FK resolver, AND the extractor's
+  // classification prompt — build the one store here (before the extractor) and share it. The resolver
+  // caches each dimension's rows, so its `snapshot` is a cheap live read for the prompt vocabulary.
+  const taxonomyStore =
+    env.DB_DRIVER === 'mongo'
+      ? new MongoTaxonomyStore(getPrisma())
+      : new UnconfiguredTaxonomyStore();
+  const taxonomyResolver = new TaxonomyResolver(taxonomyStore);
+  const loadMasters = async (): Promise<MastersSnapshot> => {
+    const [questionType, level] = await Promise.all([
+      taxonomyResolver.snapshot('questionType'),
+      taxonomyResolver.snapshot('level'),
+    ]);
+    const toOptions = (rows: DictionaryRow[]): MasterOption[] =>
+      rows.map((row) => ({ id: row.id, name: row.name, key: row.key, kind: row.kind }));
+    return { questionType: toOptions(questionType), level: toOptions(level) };
+  };
+  const extractor = buildExtractor(loadPromptOverrides, loadMasters);
   const driveService = buildDrive();
 
   // The age past which a stuck `queued`/`extracting` document is auto-reset on read. Floored to always
@@ -324,7 +354,7 @@ export function createContainer(): Container {
     env.DB_DRIVER === 'mongo'
       ? new MongoBankPublisher(getPrisma())
       : new UnconfiguredBankPublisher();
-  const publishService = new PublishService(documents, questions, bankPublisher);
+  const publishService = new PublishService(documents, questions, bankPublisher, taxonomyResolver);
   const bankService = new BankService(bankQuestionStore);
   const catalogStore =
     env.DB_DRIVER === 'mongo'
@@ -360,6 +390,13 @@ export function createContainer(): Container {
           usageService,
           new InMemoryAiProposalStore(),
         );
+
+  const examAccessStore =
+    env.DB_DRIVER === 'mongo'
+      ? new MongoExamAccessStore(getPrisma())
+      : new UnconfiguredExamAccessStore();
+  const examAccessService = new ExamAccessService(examAccessStore);
+  const mastersService = new MastersService(taxonomyStore);
   // Shared in-process registry so the cancel action and the worker's deadline signal the same run.
   const runRegistry = new ExtractionRunRegistry();
   const extractionService = new ExtractionService(
@@ -413,6 +450,8 @@ export function createContainer(): Container {
     publishService,
     bankService,
     catalogService,
+    examAccessService,
+    mastersService,
     extractionService,
     extractionWorker,
     jobQueue,

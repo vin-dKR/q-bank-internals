@@ -74,18 +74,18 @@ export class IngestionService {
     const bytes = await this.staging.download(storagePath);
 
     const path = { module: metadata.module, chapter: metadata.chapter, section: metadata.sectionName };
-    // A PYQ paper may omit the chapter, so fall back to the exam for a still-meaningful file name.
+    // A PYQ paper may omit the chapter, so fall back to the exam for a still-meaningful file name. This
+    // is a DISPLAY label only — the document's identity is the client-minted uploadGroupId, so two
+    // uploads of the same file (same derived name) are two distinct documents.
     const name = `${metadata.chapter.trim() || metadata.exam.trim() || 'paper'}-${metadata.kind}.pdf`;
 
-    // Dedup a re-cut/re-upload: at most one live document may occupy this (unit · kind · file) slot.
-    // A not-yet-extracted version is replaced in place by the new upload; a version that already carries
-    // results — or is still in flight — is left untouched and the upload is rejected, so the operator
-    // stops or deletes it first. This is what stops the duplicate "question 2 / answer 2" rows.
+    // Identity is (session · uploadGroupId · kind). Only an idempotent retry of the SAME upload action
+    // (same id) finds a twin — a genuine second upload mints a fresh id and creates a new document. A
+    // twin already in flight / extracted is left untouched (the retry must not clobber its results).
     const twin = await this.documents.findLiveByIdentity({
       sessionId: metadata.sessionId,
-      path,
+      uploadGroupId: metadata.uploadGroupId,
       kind: metadata.kind,
-      fileName: name,
     });
     if (twin && twin.status !== 'uploaded' && twin.status !== 'failed') {
       throw errors.documentUnitVersionExists(name, twin.status);
@@ -98,6 +98,7 @@ export class IngestionService {
       sessionId: metadata.sessionId,
       driveFileId: driveFile.id,
       fileName: name,
+      uploadGroupId: metadata.uploadGroupId,
       path,
       kind: metadata.kind,
       sectionName: metadata.sectionName,

@@ -1,10 +1,12 @@
 import { OpenAI } from 'openai';
 import type { Document, MatchData } from '@ingest/contracts';
+import { KNOWN_LEVELS } from '@ingest/contracts';
 import type {
   AnswerExtraction,
   AnswerSheet,
   ExtractedQuestion,
   ExtractionProgress,
+  MastersSnapshot,
   PageImage,
   QuestionExtraction,
   VisionExtractor,
@@ -28,9 +30,11 @@ type RawQuestion = {
   options?: unknown;
   /** Only present for comprehension questions — the shared passage, repeated on each sub-question. */
   passage?: unknown;
-  /** Only present for comprehension sub-questions — that sub-question's OWN real type (a group holds
-   *  questions of any type: single_correct, multi_correct, matrix, …). */
+  /** The question's own type, classified by the model (one of KNOWN_QUESTION_TYPES) — for every
+   *  question, and for each comprehension sub-question (a group holds questions of any type). */
   question_type?: unknown;
+  /** The question's difficulty, classified by the model — one of KNOWN_LEVELS (easy/medium/hard). */
+  difficulty?: unknown;
   /** Only present for matrix-match questions — the ordered columns and (optionally) the answer key. */
   columns?: unknown;
   match?: unknown;
@@ -44,6 +48,12 @@ type RawQuestion = {
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+/** The model's difficulty, normalized to the closed vocabulary (easy/medium/hard) — else null. */
+function normalizeDifficulty(value: unknown): string | null {
+  const text = asString(value).trim().toLowerCase();
+  return (KNOWN_LEVELS as readonly string[]).includes(text) ? text : null;
 }
 
 /**
@@ -165,6 +175,9 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     apiKey: string,
     private readonly model: string,
     private readonly loadPromptOverrides: () => Promise<PromptOverrides>,
+    // A live snapshot of the closed masters dimensions (questionType / level) so the classification
+    // prompt lists the OPERATOR-managed vocabulary, not a hardcoded constant. Cached upstream.
+    private readonly loadMasters: () => Promise<MastersSnapshot>,
   ) {
     this.client = new OpenAI({ apiKey });
   }
@@ -180,9 +193,12 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     const pagesTotal = input.pages.length;
     let pagesDone = 0;
     const overrides = await this.loadPromptOverrides();
+    // The live masters vocabulary for the closed classification dimensions — fetched once per run so the
+    // prompt lists the current questionType / level rows (dynamic; a rename/edit needs no code change).
+    const masters = await this.loadMasters();
     for (const page of input.pages) {
       // Per page: the topic config can bind different pages to different fixed question types.
-      const prompt = questionPrompt(input.document, page.pageNumber, overrides);
+      const prompt = questionPrompt(input.document, page.pageNumber, overrides, masters);
       const raws = await this.readPageQuestions(prompt, page, input.document, usage, input.signal);
       for (const raw of raws) {
         results.push({
@@ -192,10 +208,10 @@ export class OpenAiVisionExtractor implements VisionExtractor {
           answer: asStringOrNull(raw.answer),
           explanation: asStringOrNull(raw.explanation),
           sectionName: input.document.sectionName,
-          // A comprehension member returns its OWN real type; ordinary pages don't emit question_type,
-          // so this falls back to the document type (only consulted for comprehension members in
-          // toNewQuestion — the operator's binding fixes an ordinary question's type).
-          questionType: asStringOrNull(raw.question_type) ?? input.document.questionType,
+          // The model now classifies each question's own type (and difficulty). Null when it returned
+          // nothing usable — toNewQuestion falls back to the operator's binding for the type.
+          questionType: asStringOrNull(raw.question_type),
+          level: normalizeDifficulty(raw.difficulty),
           sourcePage: page.pageNumber,
           pyqExam: asStringOrNull(raw.pyq_exam),
           pyqYear: asStringOrNull(raw.pyq_year),

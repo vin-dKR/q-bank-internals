@@ -138,10 +138,12 @@ export const QuestionSchema = z.object({
   imageCrops: z.array(ImageCropSchema).default([]),
   // Editable metadata on the verify screen (mirrors the bank fields).
   questionType: z.string().nullable(),
+  // Per-question difficulty (easy | medium | hard), classified by the AI at extraction and correctable
+  // on the Verify screen. Resolved to the bank's Level FK on publish. Defaulted so rows extracted
+  // before difficulty existed still parse (absent → null).
+  level: z.string().nullable().default(null),
   sectionName: z.string().nullable(),
   topic: z.string().nullable(),
-  // Difficulty band (easy/medium/hard); defaulted so rows written before it existed still parse.
-  level: z.string().nullable().default(null),
   // Which of topic/answer/solution/level hold an AI-written value (see AiFilledSchema). Null or empty when
   // none do; carried to the bank's `ai_filled` on publish so the provenance survives a re-publish.
   aiFilled: AiFilledSchema.nullable().default(null),
@@ -243,6 +245,7 @@ export const UpdateQuestionSchema = QuestionSchema.pick({
   explanationImages: true,
   imageCrops: true,
   questionType: true,
+  level: true,
   sectionName: true,
   topic: true,
   pyqExam: true,

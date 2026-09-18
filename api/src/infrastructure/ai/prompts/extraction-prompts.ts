@@ -1,6 +1,7 @@
 import type { Document } from '@ingest/contracts';
-import { PAPER_METADATA_FIELDS } from '@ingest/contracts';
-import { topicBindingForPage } from '../../../modules/extraction/index.js';
+import { KNOWN_LEVELS, KNOWN_QUESTION_TYPES, PAPER_METADATA_FIELDS } from '@ingest/contracts';
+import { topicBindingForPage, type MastersSnapshot } from '../../../modules/extraction/index.js';
+import { slugForKind } from '../../../shared/taxonomy/fold-maps.js';
 import { fillTokens, resolvePrompt, type PromptOverrides } from '../../../modules/prompts/index.js';
 
 /**
@@ -85,30 +86,63 @@ function resolvePyq(document: Document, binding: ReturnType<typeof topicBindingF
 }
 
 /**
- * The question-extraction prompt for one page of a document. The question type comes from the
- * operator's topic config when the page is covered by a block (stated as fixed so the model cannot
- * re-classify), else from the document-level question type — exactly mirroring how the worker stamps
- * the persisted questions. When the paper's answer layout is `inline`, an extra rule tells the model
- * to read each question's printed answer key in the same pass (no sibling answer sheet exists).
+ * Ask the model to CLASSIFY each question — the "AI picks the dictionary ids" step. Every question
+ * object also carries its own `question_type` (from the closed vocabulary, resolved to the bank's
+ * QuestionType FK on publish) and a `difficulty` (easy/medium/hard, resolved to the Level FK). When the
+ * operator filed the page under a type, it is offered as a strong hint the model keeps unless a
+ * question is clearly a different type — so a mixed PYQ page is classified per question, and a uniform
+ * coaching section stays on its known type.
+ */
+function classificationRule(expectedType: string | null, masters?: MastersSnapshot): string {
+  // The allowed vocabulary comes from the LIVE questionType / level masters when present (so an operator
+  // edit is reflected with no code change), falling back to the built-in constants when no snapshot is
+  // available (e.g. the unconfigured taxonomy store). questionType rows are presented as the pipeline
+  // SLUG the model must emit (single/multi get the `_correct` suffix) paired with their display name.
+  const typeRows = masters && masters.questionType.length > 0
+    ? masters.questionType.map((row) => ({ slug: slugForKind(row.kind) ?? row.key, name: row.name }))
+    : (KNOWN_QUESTION_TYPES as readonly string[]).map((slug) => ({ slug, name: slug }));
+  const levelRows = masters && masters.level.length > 0
+    ? masters.level.map((row) => ({ slug: row.key, name: row.name }))
+    : (KNOWN_LEVELS as readonly string[]).map((slug) => ({ slug, name: slug }));
+  const types = typeRows.map((row) => row.slug).join('", "');
+  const levels = levelRows.map((row) => row.slug).join('", "');
+  const typeLegend = typeRows.map((row) => `    • "${row.slug}" — ${row.name}`).join('\n');
+  const typeHint = expectedType
+    ? `Usually "${expectedType}" on this page — keep that unless a question is clearly a different type.`
+    : 'Pick the type that matches how each question is actually printed.';
+  return [
+    'CLASSIFY EACH QUESTION using ONLY the operator-managed masters vocabulary below — never invent a type or difficulty. In addition to question_number, question_text and options, add TWO more fields to EVERY question object (and, for a comprehension, to every sub-question):',
+    `- "question_type": the question's own type, exactly one of "${types}". ${typeHint}\n  The current question-type masters (choose from these only):\n${typeLegend}`,
+    `- "difficulty": how hard the question is for a student preparing for this exam — exactly one of "${levels}" (easy = direct recall or a single step, medium = a couple of steps, hard = multi-step or conceptually tricky).`,
+  ].join('\n');
+}
+
+/**
+ * The question-extraction prompt for one page of a document. The model classifies each question's own
+ * type + difficulty (see {@link classificationRule}); the operator's topic-config type, when set, is a
+ * strong hint (and selects the type-specific extraction rule). When the paper's answer layout is
+ * `inline`, an extra rule tells the model to read each question's printed answer key in the same pass.
  */
 export function questionPrompt(
   document: Document,
   pageNumber: number,
   overrides: PromptOverrides,
+  masters?: MastersSnapshot,
 ): string {
   const binding = topicBindingForPage(document.topics, pageNumber);
-  const questionType = binding?.questionType ?? document.questionType;
-  const typeRule = questionType ? TYPE_RULES[questionType] : undefined;
-  // Only assert a fixed type when the operator actually set one — a PYQ paper's questions are of mixed
-  // types, so its segments leave the type blank and are extracted generically.
+  const expectedType = binding?.questionType ?? document.questionType;
+  const typeRule = expectedType ? TYPE_RULES[expectedType] : undefined;
+  // The operator's type is a HINT (the model classifies each question), and it selects the extraction
+  // rule for the dominant type. A PYQ paper's segments leave it blank, so those pages classify freely.
   const bindingNote = binding?.questionType
-    ? `This page belongs to the topic "${binding.matchKey}" and its questions are of the fixed type "${binding.questionType}", chosen by the operator. Extract the questions exactly as printed for that type — do NOT re-classify them or invent a different type.`
+    ? `The operator filed this page (topic "${binding.matchKey}") as "${binding.questionType}" questions — extract each exactly as printed for that type.`
     : '';
   return [
     `You are given an image of an exam question paper (${context(document)}).`,
     bindingNote,
     resolvePrompt(overrides, 'extraction'),
     typeRule ? `TYPE-SPECIFIC RULE:\n${typeRule}` : '',
+    classificationRule(expectedType, masters),
     document.answerLayout === 'inline' ? resolvePrompt(overrides, 'inlineAnswer') : '',
     resolvePyq(document, binding) ? resolvePrompt(overrides, 'pyq') : '',
   ]

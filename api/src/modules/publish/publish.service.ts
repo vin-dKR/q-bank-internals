@@ -12,19 +12,22 @@ import {
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { QuestionRepository } from '../questions/index.js';
+import type { QuestionTaxonomyInput, ResolvedTaxonomy, TaxonomyResolver } from '../masters/index.js';
 import type { BankPublisher, BankQuestion } from './bank-publisher.js';
 
 /**
  * Promotes a document's verified questions into the MAIN bank. Maps each ingest question into the
  * bank's `Question` shape (pulling exam/subject/PYQ provenance from the document the operator filed
- * them under), inserts them, and marks the document `published`. This is the one place the temporary
- * staging becomes real bank data.
+ * them under), resolves each taxonomy string to its normalized dictionary FK + label (so the bank
+ * filters seek an indexed id, not a regex — eduents' QUESTION_WRITE_CONTRACT §3.1), inserts them, and
+ * marks the document `published`. This is the one place the temporary staging becomes real bank data.
  */
 export class PublishService {
   constructor(
     private readonly documents: DocumentRepository,
     private readonly questions: QuestionRepository,
     private readonly bank: BankPublisher,
+    private readonly taxonomy: TaxonomyResolver,
   ) {}
 
   async publishDocument(documentId: string): Promise<{ published: number }> {
@@ -49,8 +52,14 @@ export class PublishService {
     const passages = await this.questions.findPassagesByDocument(documentId);
     const passageById = new Map(passages.map((passage) => [passage.id, passage] as const));
 
-    const rows = questions.map((question, index) =>
-      toBankQuestion(question, index, document, passageById),
+    // Resolve each question's taxonomy strings to dictionary FKs before mapping. The resolver caches
+    // per dimension and dedupes concurrent creates, so this stays a handful of reads even across a
+    // whole document; a value the operator hasn't curated self-registers (§8.1 of the write contract).
+    const rows = await Promise.all(
+      questions.map(async (question, index) => {
+        const taxonomy = await this.taxonomy.resolveQuestionTaxonomy(taxonomyInput(question, document));
+        return toBankQuestion(question, index, document, passageById, taxonomy);
+      }),
     );
     // Ordered: the bank write must be confirmed complete (upsertQuestions throws on any partial or
     // failed write) BEFORE status flips to `published`, so a failed write never marks a document done.
@@ -115,12 +124,33 @@ function toBankPaper(paper: PaperMetadata | null): Record<string, string> | null
   return row;
 }
 
+/**
+ * The taxonomy strings a question is filed under, gathered from the same per-question/per-document
+ * sources the raw bank columns use, plus the structural signals (passage → comprehension, match →
+ * matrix) that decide `questionKind`. `level` has no source yet — the AI difficulty pass populates it.
+ */
+function taxonomyInput(question: Question, document: Document): QuestionTaxonomyInput {
+  return {
+    exam: document.exam,
+    subject: question.subject ?? document.subject,
+    module: question.path.module,
+    chapter: question.path.chapter,
+    section: question.sectionName ?? document.sectionName ?? question.path.section,
+    questionType: question.questionType ?? document.questionType,
+    level: question.level,
+    groupId: question.passageId,
+    matchColumns: question.match ? question.match.columns : null,
+    matchKey: question.match ? question.match.key : null,
+  };
+}
+
 /** Map one ingest question into the main bank's Question document shape. */
 function toBankQuestion(
   question: Question,
   index: number,
   document: Document,
   passageById: Map<string, Passage>,
+  taxonomy: ResolvedTaxonomy,
 ): BankQuestion {
   // Resolve this row's comprehension passage (null on ordinary questions). A comprehension member has a
   // passageId (v2) — or, on a row extracted under v1 before the passage was normalized, a non-null
@@ -173,8 +203,14 @@ function toBankQuestion(
     // sourced per-question first (a PYQ paper spans subjects — the node's subject wins), then the document.
     exam_name: document.exam,
     subject: question.subject ?? document.subject,
-    // The module lives on the ingest path; stamping it onto the bank row is what lets the Questions
-    // Module filter narrow the published list (the bank had no module column before).
+    // Normalized taxonomy FKs + clean labels + questionKind/levelRank, resolved from the raw strings
+    // above through the SAME foldMaps eduents uses (QUESTION_WRITE_CONTRACT §3.1). The keys are the
+    // exact bank column names, so the bank filters seek an indexed id instead of a case-folded regex;
+    // the raw columns stay untouched for losslessness. All null when a value is junk/absent.
+    ...taxonomy,
+    // The module name lives on the ingest path; stamping it lets the Questions Module filter narrow the
+    // published list. Its normalized FK (`moduleId`/`moduleName`) comes from the `...taxonomy` spread
+    // above — resolved against the new Module master so eduents can index it like the other dimensions.
     module: question.path.module,
     // PYQ provenance so a previous-year question shows and filters as such in the Questions browse.
     // Sourced per-question (the model reads the source exam/year off the page for a PYQ segment),

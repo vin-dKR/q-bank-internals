@@ -12,12 +12,15 @@ import type {
   UpdateDocument,
 } from '@ingest/contracts';
 
-/** Identity of one upload slot within a session: the (unit · kind · fileName) a re-cut would reuse. */
+/**
+ * Identity of one upload within a session: its client-minted `uploadGroupId` + `kind`. A fresh upload
+ * mints a new id, so uploading the same file twice makes two distinct documents; an idempotent retry of
+ * the SAME action reuses the id and replaces in place. Not filename- or path-derived (those collide).
+ */
 export type DocumentIdentity = {
   sessionId: string | null;
-  path: SourcePath;
+  uploadGroupId: string;
   kind: ChapterKind;
-  fileName: string;
 };
 
 /** Everything needed to persist a freshly-uploaded (or registered) section PDF. */
@@ -25,6 +28,8 @@ export type CreateDocumentInput = {
   sessionId: string | null;
   driveFileId: string;
   fileName: string;
+  /** The upload's identity within its session (shared by its question/answer/solution parts). */
+  uploadGroupId: string;
   path: SourcePath;
   kind: ChapterKind;
   sectionName: string | null;
@@ -56,9 +61,9 @@ export interface DocumentRepository {
   findById(id: string): Promise<Document | null>;
   findByDriveFileId(driveFileId: string): Promise<Document | null>;
   /**
-   * The live (non-deleted) document occupying an upload slot — same session, unit, kind, and file
-   * name. Used to dedup a re-cut/re-upload so it reuses or is rejected against the existing row
-   * instead of silently creating a second copy of the same file. Null when the slot is free.
+   * The live (non-deleted) document with this session + uploadGroupId + kind. Only an idempotent retry
+   * of the SAME upload action matches (the id is fresh per upload), so this makes a same-action retry
+   * replace in place while two genuine uploads stay separate. Null when no such row exists.
    */
   findLiveByIdentity(identity: DocumentIdentity): Promise<Document | null>;
   list(query: DocumentListQuery): Promise<{ items: Document[]; total: number }>;

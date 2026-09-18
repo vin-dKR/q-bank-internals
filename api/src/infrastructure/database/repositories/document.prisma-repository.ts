@@ -38,6 +38,8 @@ type DocumentRow = {
   sessionId: string | null;
   driveFileId: string;
   fileName: string;
+  // Legacy rows predate this column, so a read can come back without it — default to '' on map.
+  uploadGroupId: string | null;
   path: { module: string; chapter: string; section: string };
   kind: string;
   sectionName: string | null;
@@ -102,6 +104,7 @@ function toDocument(row: DocumentRow): Document {
     sessionId: row.sessionId,
     driveFileId: row.driveFileId,
     fileName: row.fileName,
+    uploadGroupId: row.uploadGroupId ?? '',
     path: row.path,
     kind: row.kind as Document['kind'],
     sectionName: row.sectionName,
@@ -141,24 +144,18 @@ export class PrismaDocumentRepository implements DocumentRepository {
   }
 
   async findLiveByIdentity(identity: DocumentIdentity): Promise<Document | null> {
-    // Narrow on the indexed scalar columns first, then match the embedded `path` in memory — this
-    // avoids depending on Mongo composite-type filter syntax, and (session, kind, fileName) already
-    // scopes to a tiny handful of rows.
-    const rows = await this.prisma.document.findMany({
+    // A fresh upload always mints a non-empty uploadGroupId; an empty id (never sent by a real upload)
+    // must not collapse legacy rows that share the default '' — so it never matches.
+    if (!identity.uploadGroupId) return null;
+    const row = await this.prisma.document.findFirst({
       where: {
         sessionId: identity.sessionId,
         kind: identity.kind,
-        fileName: identity.fileName,
+        uploadGroupId: identity.uploadGroupId,
         ...notSoftDeleted(),
       },
     });
-    const match = rows.find(
-      (row) =>
-        row.path.module === identity.path.module &&
-        row.path.chapter === identity.path.chapter &&
-        row.path.section === identity.path.section,
-    );
-    return match ? toDocument(match) : null;
+    return row ? toDocument(row) : null;
   }
 
   async list(query: DocumentListQuery): Promise<{ items: Document[]; total: number }> {
@@ -201,6 +198,7 @@ export class PrismaDocumentRepository implements DocumentRepository {
         sessionId: input.sessionId,
         driveFileId: input.driveFileId,
         fileName: input.fileName,
+        uploadGroupId: input.uploadGroupId,
         path: input.path,
         kind: input.kind,
         sectionName: input.sectionName,
@@ -226,6 +224,7 @@ export class PrismaDocumentRepository implements DocumentRepository {
       data: {
         driveFileId: input.driveFileId,
         fileName: input.fileName,
+        uploadGroupId: input.uploadGroupId,
         path: input.path,
         kind: input.kind,
         sectionName: input.sectionName,

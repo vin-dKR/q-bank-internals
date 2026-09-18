@@ -12,7 +12,7 @@ import {
   useUpdateSession,
 } from '../../features/sessions/index.js';
 import { DocumentUnitList, useDeleteDocument, useDocuments, useUpdateDocument } from '../../features/documents/index.js';
-import { ConfigsModal, usePublishDocument } from '../../features/questions/index.js';
+import { usePublishDocument } from '../../features/questions/index.js';
 import { Badge, IconTrash, IconWarning, LoadingState, PageHeader, Spinner, StatusBadge, useConfirm } from '../../shared/ui/index.js';
 
 type StatusFilter = DocumentStatus | 'all';
@@ -41,7 +41,6 @@ export function SessionDetailPage(): JSX.Element {
   const [status, setStatus] = useState<StatusFilter>('all');
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState('');
-  const [configsFor, setConfigsFor] = useState<string | null>(null);
   // Document ids whose live progress bar is shown. Seeded from the shared documents list (any file that
   // is queued/extracting), so a run started here OR by another operator surfaces the same bar; each bar
   // prunes itself a moment after its run ends.
@@ -127,9 +126,7 @@ export function SessionDetailPage(): JSX.Element {
       {isExtracted(doc) ? (
         <>
           <Link className="btn btn--xs" to={`/verify?documentId=${doc.id}`}>View</Link>
-          <button type="button" className="btn btn--xs" onClick={() => { setConfigsFor(doc.id); }}>
-            Configs
-          </button>
+          <Link className="btn btn--xs" to={`/documents/${doc.id}/data`}>Data</Link>
           {doc.status === 'published' ? (
             <span className="badge badge--success">published</span>
           ) : (
@@ -298,7 +295,6 @@ export function SessionDetailPage(): JSX.Element {
         )}
       </div>
 
-      {configsFor ? <ConfigsModal documentId={configsFor} onClose={() => { setConfigsFor(null); }} /> : null}
       {confirmDialog}
     </section>
   );

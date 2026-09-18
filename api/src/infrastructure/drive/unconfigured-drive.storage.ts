@@ -7,19 +7,11 @@ import type { DriveStorage } from '../../modules/drive/index.js';
  * Any actual Drive call fails loudly with a clear error instead of a confusing crash.
  */
 export class UnconfiguredDriveStorage implements DriveStorage {
-  listPdfs(_folderId: string): Promise<DriveFile[]> {
-    return Promise.reject(errors.driveUnavailable());
-  }
-
   listFolders(_parentId: string): Promise<DriveFolder[]> {
     return Promise.reject(errors.driveUnavailable());
   }
 
   createFolder(_name: string, _parentId: string): Promise<DriveFolder> {
-    return Promise.reject(errors.driveUnavailable());
-  }
-
-  deleteFolder(_folderId: string): Promise<void> {
     return Promise.reject(errors.driveUnavailable());
   }
 

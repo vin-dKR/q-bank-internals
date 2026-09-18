@@ -28,6 +28,8 @@ export type NewQuestion = {
   explanation: string | null;
   images: QuestionImage[];
   questionType: string | null;
+  // Per-question difficulty (easy|medium|hard) the AI classified; null when it gave nothing usable.
+  level: string | null;
   sectionName: string | null;
   topic: string | null;
   // Per-question subject stamped from the node's subject; null falls back to the document at publish.

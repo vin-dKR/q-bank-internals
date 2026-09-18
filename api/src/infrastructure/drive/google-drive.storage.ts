@@ -23,19 +23,6 @@ function driveError(error: unknown): Error {
 export class GoogleDriveStorage implements DriveStorage {
   constructor(private readonly drive: drive_v3.Drive) {}
 
-  async listPdfs(folderId: string): Promise<DriveFile[]> {
-    const response = await this.drive.files.list({
-      q: `'${folderId}' in parents and mimeType='${PDF_MIME}' and trashed=false`,
-      fields: 'files(id,name,mimeType,modifiedTime,size)',
-      orderBy: 'modifiedTime desc',
-      pageSize: 100,
-      supportsAllDrives: true,
-      includeItemsFromAllDrives: true,
-    });
-
-    return (response.data.files ?? []).map((file) => toDriveFile(file));
-  }
-
   async listFolders(parentId: string): Promise<DriveFolder[]> {
     const response = await this.drive.files.list({
       q: `'${parentId}' in parents and mimeType='${FOLDER_MIME}' and trashed=false`,
@@ -57,14 +44,6 @@ export class GoogleDriveStorage implements DriveStorage {
         supportsAllDrives: true,
       });
       return toDriveFolder(response.data);
-    } catch (error) {
-      throw driveError(error);
-    }
-  }
-
-  async deleteFolder(folderId: string): Promise<void> {
-    try {
-      await this.drive.files.delete({ fileId: folderId, supportsAllDrives: true });
     } catch (error) {
       throw driveError(error);
     }

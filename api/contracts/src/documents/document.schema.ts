@@ -82,6 +82,12 @@ export const DocumentSchema = z.object({
   sessionId: z.string().nullable(),
   driveFileId: z.string(),
   fileName: z.string(),
+  /**
+   * The upload's identity within its session: shared by the question/answer/solution parts of one
+   * upload, fresh per upload. Empty string on legacy rows uploaded before this existed (they fall back
+   * to the old unit-path sibling matching).
+   */
+  uploadGroupId: z.string().default(''),
   path: SourcePathSchema,
   kind: ChapterKindSchema,
   sectionName: z.string().nullable(),

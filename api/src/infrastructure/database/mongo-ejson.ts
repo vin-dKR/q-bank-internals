@@ -54,3 +54,22 @@ export function firstBatch(result: unknown): unknown[] {
   const batch = cursor?.firstBatch;
   return Array.isArray(batch) ? batch : [];
 }
+
+/** Distinct, non-empty strings out of a raw array value (drops nulls / non-strings). */
+export function cleanStrings(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const strings = value.filter((v): v is string => typeof v === 'string' && v.length > 0);
+  return [...new Set(strings)];
+}
+
+/** An optional Mongo `_id`: `{ $oid }` / hex string → the hex; null / absent → null. */
+export const optionalOid = z
+  .preprocess((value) => {
+    if (value == null) return null;
+    if (typeof value === 'object') {
+      const hex = (value as Record<string, unknown>).$oid;
+      return typeof hex === 'string' ? hex : null;
+    }
+    return value;
+  }, z.string().nullable())
+  .catch(null);

@@ -177,5 +177,60 @@ export const errors = {
       `A quality scan is already running (${scanId}). Wait for it to finish before starting another.`,
     ),
 
+  // Exam-access (Masters → Exam access) writes target live Eduents accounts by their Mongo `_id`.
+  organizationNotFound: (id: string): AppError =>
+    new AppError('ORGANIZATION_NOT_FOUND', 404, `No organization with id "${id}".`),
+
+  userNotFound: (id: string): AppError =>
+    new AppError('USER_NOT_FOUND', 404, `No user with id "${id}".`),
+
+  // Masters → Question taxonomy: CRUD over the shared bank's dictionary collections.
+  dictionaryValueRejected: (dimension: string, value: string): AppError =>
+    new AppError(
+      'DICTIONARY_VALUE_REJECTED',
+      400,
+      `"${value}" is not a valid ${dimension} value (it is empty, junk, or outside a closed vocabulary).`,
+    ),
+
+  dictionaryEntryExists: (dimension: string, name: string): AppError =>
+    new AppError(
+      'DICTIONARY_ENTRY_EXISTS',
+      409,
+      `A ${dimension} entry for "${name}" already exists. Edit that entry to add a spelling instead.`,
+    ),
+
+  dictionaryEntryNotFound: (dimension: string, id: string): AppError =>
+    new AppError('DICTIONARY_ENTRY_NOT_FOUND', 404, `No ${dimension} entry with id "${id}".`),
+
+  dictionaryEntryInUse: (name: string, count: number): AppError =>
+    new AppError(
+      'DICTIONARY_ENTRY_IN_USE',
+      409,
+      `"${name}" is used by ${String(count)} bank question(s) and cannot be deleted. Reassign them first.`,
+    ),
+
+  dictionaryDimensionClosed: (dimension: string): AppError =>
+    new AppError(
+      'DICTIONARY_DIMENSION_CLOSED',
+      400,
+      `The ${dimension} vocabulary is closed; its entries cannot be deleted (edit name/aliases instead).`,
+    ),
+
+  dictionaryFieldNotAllowed: (dimension: string, field: string): AppError =>
+    new AppError('DICTIONARY_FIELD_NOT_ALLOWED', 400, `"${field}" cannot be set on a ${dimension} entry.`),
+
+  dictionaryParentNotFound: (parent: string, id: string): AppError =>
+    new AppError('DICTIONARY_PARENT_NOT_FOUND', 400, `No ${parent} with id "${id}" to scope this entry to.`),
+
+  dictionaryWriteFailed: (reason: string): AppError =>
+    new AppError('DICTIONARY_WRITE_FAILED', 502, `Writing the taxonomy dictionary failed: ${reason}`),
+
+  taxonomyUnavailable: (): AppError =>
+    new AppError(
+      'TAXONOMY_UNAVAILABLE',
+      400,
+      'Question taxonomy requires DB_DRIVER=mongo + DATABASE_URL (the shared Eduents database).',
+    ),
+
   internal: (): AppError => new AppError('INTERNAL', 500, 'Something went wrong.'),
 } as const;

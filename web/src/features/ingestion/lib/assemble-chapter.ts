@@ -13,7 +13,8 @@ import { leaves, resolveQuestionType, resolveSubject } from './structure-tree.js
 /** One unit per chapter, so its section name is a constant — the per-section detail lives in topics. */
 const UNIT_SECTION = 'All sections';
 
-type Base = Omit<ChapterUploadMetadata, 'kind' | 'sessionId' | 'topics'>;
+// `uploadGroupId` (like sessionId/kind) is stamped per upload action in the page, not by the assembler.
+type Base = Omit<ChapterUploadMetadata, 'kind' | 'sessionId' | 'topics' | 'uploadGroupId'>;
 
 /**
  * The whole chapter assembled into a single upload unit: one question PDF (all leaves' question

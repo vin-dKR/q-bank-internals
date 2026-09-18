@@ -1,15 +1,19 @@
 import { useMemo } from 'react';
-import { KNOWN_EXAMS, KNOWN_MODULES, KNOWN_QUESTION_TYPES, KNOWN_SOURCES } from '@ingest/contracts';
-import { useDocuments } from '../../documents/index.js';
-import { useDriveVocabulary } from '../../drive-folders/index.js';
-import { useSessions } from '../../sessions/index.js';
+import { KNOWN_SOURCES } from '@ingest/contracts';
+import type { ComboboxOption } from '../../../shared/ui/index.js';
+import { toQuestionTypeOptions, useDictionary } from '../../taxonomy/index.js';
 
 /**
- * The known-value suggestion lists that seed every metadata Combobox in the ingestion flow, plus the
+ * The masters-backed suggestion lists that seed every metadata Combobox in the ingestion flow, plus the
  * dependent lookups (`subjectsFor`, `modulesFor`, `chaptersFor`, `sectionsFor`) that scope a child
- * field to the parent already chosen — so the chapter list shows only that module's chapters instead
- * of every chapter that exists. Each lookup falls back to the full flat list when its parent is empty
- * or unknown, so no field is ever dead and a brand-new value can still be typed.
+ * field to the parent already chosen. Every value comes from the all-masters dictionaries only — never
+ * the Drive tree, past documents/sessions, or hardcoded constants — so an operator can only file a
+ * chapter under managed vocabulary the extractor and publisher already resolve against.
+ *
+ * `questionTypes` carries a value/label pair: the label is the master's display name (e.g. "Matrix
+ * Match"), the value is the behavior SLUG (e.g. `matrix`) the extraction TYPE_RULES key on. Every other
+ * list is plain names — publish folds a chosen name to its dictionary FK, and the name is also the Drive
+ * folder segment. `sources` is a fixed behavioral enum (it drives the PYQ pipeline), not a dictionary.
  */
 export type ChapterVocabulary = {
   sources: string[];
@@ -18,114 +22,81 @@ export type ChapterVocabulary = {
   modules: string[];
   chapters: string[];
   sections: string[];
-  questionTypes: string[];
+  questionTypes: ComboboxOption[];
   subjectsFor: (exam: string) => string[];
   modulesFor: (subject: string) => string[];
-  chaptersFor: (module: string) => string[];
+  chaptersFor: (subject: string) => string[];
   sectionsFor: (module: string, chapter: string) => string[];
 };
 
-function distinct(values: readonly (string | null | undefined)[]): string[] {
-  return [...new Set(values.filter((v): v is string => Boolean(v && v.trim())))].sort((a, b) =>
-    a.localeCompare(b),
-  );
-}
-
-/** Compose a module+chapter into one unambiguous key for the section lookup (JSON avoids collisions). */
-function unitKey(module: string, chapter: string): string {
-  return JSON.stringify([module.trim(), chapter.trim()]);
-}
-
-/** Record one parent→child edge, ignoring blanks, in a name-keyed relation being accumulated. */
-function link(relation: Map<string, Set<string>>, parent: string | null | undefined, child: string | null | undefined): void {
-  const p = parent?.trim();
-  const c = child?.trim();
-  if (!p || !c) return;
-  let set = relation.get(p);
-  if (!set) {
-    set = new Set();
-    relation.set(p, set);
-  }
-  set.add(c);
+/** Accumulate a parent-id → child-name edge, ignoring blanks. */
+function push(relation: Map<string, string[]>, key: string | null, child: string): void {
+  if (!key) return;
+  const list = relation.get(key);
+  if (list) list.push(child);
+  else relation.set(key, [child]);
 }
 
 /**
- * The single source of Combobox suggestions for chapter metadata: known defaults + values already
- * used across existing documents/sessions + everything in the masters Drive tree. Extracted so the
- * chapter form and the structure-tree builder offer identical known values (one concept, one place).
+ * The single source of Combobox suggestions for chapter metadata — every list read from the all-masters
+ * dictionaries (with ids, so the dependent cascade can scope children to the chosen subject). Extracted
+ * so the chapter form and the structure-tree builder offer identical managed values (one concept, one
+ * place). Chapters and modules are subject-scoped in masters; exam/subject/section are global lists.
  */
 export function useChapterVocabulary(): ChapterVocabulary {
-  const documents = useDocuments();
-  const sessions = useSessions();
-  const driveVocabulary = useDriveVocabulary();
+  const exam = useDictionary('exam', {});
+  const subject = useDictionary('subject', {});
+  const moduleDict = useDictionary('module', {});
+  const chapter = useDictionary('chapter', {});
+  const section = useDictionary('section', {});
+  const questionType = useDictionary('questionType', {});
 
   return useMemo(() => {
-    const docs = documents.data?.items ?? [];
-    const sess = sessions.data?.items ?? [];
-    const drive = driveVocabulary.data;
+    const subjectEntries = subject.data?.entries ?? [];
+    const moduleEntries = moduleDict.data?.entries ?? [];
+    const chapterEntries = chapter.data?.entries ?? [];
 
-    // Parent→child relations, merged from every source that carries the linkage: the Drive tree
-    // (exam→subject→module→chapter), sessions (exam→subject→module), and registered documents
-    // (module→chapter→section, via each document's source path).
-    const subjectsByExam = new Map<string, Set<string>>();
-    const modulesBySubject = new Map<string, Set<string>>();
-    const chaptersByModule = new Map<string, Set<string>>();
-    const sectionsByUnit = new Map<string, Set<string>>();
+    // Entries arrive sorted by name from the API, so the flat lists are display-ready as-is.
+    const exams = (exam.data?.entries ?? []).map((entry) => entry.name);
+    const subjects = subjectEntries.map((entry) => entry.name);
+    const modules = moduleEntries.map((entry) => entry.name);
+    const chapters = chapterEntries.map((entry) => entry.name);
+    const sections = (section.data?.entries ?? []).map((entry) => entry.name);
+    const questionTypes: ComboboxOption[] = toQuestionTypeOptions(questionType.data?.entries ?? []);
 
-    for (const [exam, subjects] of Object.entries(drive?.subjectsByExam ?? {})) {
-      for (const subject of subjects) link(subjectsByExam, exam, subject);
-    }
-    for (const [subject, modules] of Object.entries(drive?.modulesBySubject ?? {})) {
-      for (const module of modules) link(modulesBySubject, subject, module);
-    }
-    for (const [module, chapters] of Object.entries(drive?.chaptersByModule ?? {})) {
-      for (const chapter of chapters) link(chaptersByModule, module, chapter);
-    }
-    for (const s of sess) {
-      link(subjectsByExam, s.exam, s.subject);
-      link(modulesBySubject, s.subject, s.module);
-    }
-    for (const d of docs) {
-      link(chaptersByModule, d.path.module, d.path.chapter);
-      const unit = unitKey(d.path.module, d.path.chapter);
-      link(sectionsByUnit, unit, d.path.section);
-      link(sectionsByUnit, unit, d.sectionName);
-    }
+    // Subject name → id, and the subject-scoped child lists, so picking a subject narrows its modules
+    // and chapters (the only parent link masters encodes for these dimensions).
+    const subjectIdByName = new Map(subjectEntries.map((entry) => [entry.name.trim().toLowerCase(), entry.id]));
+    const modulesBySubjectId = new Map<string, string[]>();
+    const chaptersBySubjectId = new Map<string, string[]>();
+    for (const entry of moduleEntries) push(modulesBySubjectId, entry.subjectId, entry.name);
+    for (const entry of chapterEntries) push(chaptersBySubjectId, entry.subjectId, entry.name);
 
-    const sources = distinct([...KNOWN_SOURCES, ...docs.map((d) => d.source)]);
-    const exams = distinct([...KNOWN_EXAMS, ...sess.map((s) => s.exam), ...(drive?.exams ?? [])]);
-    const subjects = distinct([...sess.map((s) => s.subject), ...(drive?.subjects ?? [])]);
-    const modules = distinct([
-      ...KNOWN_MODULES,
-      ...sess.map((s) => s.module),
-      ...docs.map((d) => d.path.module),
-      ...(drive?.modules ?? []),
-    ]);
-    const chapters = distinct([...docs.map((d) => d.path.chapter), ...(drive?.chapters ?? [])]);
-    const sections = distinct([...docs.map((d) => d.path.section), ...docs.map((d) => d.sectionName)]);
-    const questionTypes = distinct([...KNOWN_QUESTION_TYPES, ...docs.map((d) => d.questionType)]);
-
-    // Children scoped to a chosen parent; the full list when the parent is blank or has no recorded
-    // children (unknown/custom), so the field still suggests something and never blocks a new value.
-    const scoped = (relation: Map<string, Set<string>>, key: string, fallback: string[]): string[] => {
-      const trimmed = key.trim();
+    // Children scoped to the chosen subject; the full list when the subject is blank/unknown or has no
+    // recorded children yet — so the field always offers managed values and is never dead.
+    const forSubject = (relation: Map<string, string[]>, subjectName: string, fallback: string[]): string[] => {
+      const trimmed = subjectName.trim();
       if (!trimmed) return fallback;
-      const set = relation.get(trimmed);
-      return set ? [...set].sort((a, b) => a.localeCompare(b)) : fallback;
+      const id = subjectIdByName.get(trimmed.toLowerCase());
+      if (!id) return fallback;
+      const list = relation.get(id);
+      return list && list.length > 0 ? list : fallback;
     };
 
     return {
-      sources,
+      sources: [...KNOWN_SOURCES],
       exams,
       subjects,
       modules,
       chapters,
       sections,
       questionTypes,
-      subjectsFor: (exam) => scoped(subjectsByExam, exam, subjects),
-      modulesFor: (subject) => scoped(modulesBySubject, subject, modules),
-      chaptersFor: (module) => scoped(chaptersByModule, module, chapters),
-      sectionsFor: (module, chapter) => scoped(sectionsByUnit, unitKey(module, chapter), sections),
+      // Subjects are global taxonomy (Physics is Physics across exams), so exam does not narrow them.
+      subjectsFor: () => subjects,
+      modulesFor: (subjectName) => forSubject(modulesBySubjectId, subjectName, modules),
+      chaptersFor: (subjectName) => forSubject(chaptersBySubjectId, subjectName, chapters),
+      // Sections are global exercise/section labels (Exercise-1, PYQ …), shared across chapters.
+      sectionsFor: () => sections,
     };
-  }, [documents.data, sessions.data, driveVocabulary.data]);
+  }, [exam.data, subject.data, moduleDict.data, chapter.data, section.data, questionType.data]);
 }

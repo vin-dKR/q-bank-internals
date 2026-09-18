@@ -8,6 +8,34 @@ import type { BankPublisher, BankQuestion } from '../../modules/publish/index.js
 const INGEST_QUESTION_ID_PATH = 'ingest_ref.question_id';
 
 /**
+ * Bank `Question` columns eduents declares as `@db.ObjectId`. The publish mapper stamps them from the
+ * resolver's hex-STRING ids, but `$runCommandRaw` does NOT coerce a hex string to an ObjectId — so
+ * unless each is written as an Extended-JSON `{ $oid }`, the row stores a BSON string where eduents
+ * (and its indexed FK filters / the masters usage counts) expect an ObjectId, and the row is either
+ * unreadable or invisible to every one of those queries. `organizationId` stays null and is untouched.
+ */
+const OBJECT_ID_FIELDS = [
+  'examId',
+  'subjectId',
+  'chapterId',
+  'sectionId',
+  'questionTypeId',
+  'levelId',
+  'topicId',
+] as const;
+const OBJECT_ID = /^[a-f0-9]{24}$/i;
+
+/** Shallow copy with every taxonomy FK hex-string rewritten as a BSON ObjectId for the raw write. */
+function withObjectIdFks(question: BankQuestion): BankQuestion {
+  const out: Record<string, unknown> = { ...question };
+  for (const field of OBJECT_ID_FIELDS) {
+    const value = out[field];
+    if (typeof value === 'string' && OBJECT_ID.test(value)) out[field] = { $oid: value };
+  }
+  return out;
+}
+
+/**
  * The relevant fields of a raw Mongo `update` reply (Extended JSON, so counts may arrive wrapped as
  * `{ $numberInt }`). Everything is tolerant so a shape surprise degrades to "no rows / no errors"
  * rather than throwing before the explicit reliability checks below run.
@@ -52,7 +80,7 @@ export class MongoBankPublisher implements BankPublisher {
       update: this.collection,
       updates: questions.map((question) => ({
         q: { [INGEST_QUESTION_ID_PATH]: ingestQuestionId(question) },
-        u: question,
+        u: withObjectIdFks(question),
         upsert: true,
       })),
       // Unordered: attempt every row even if one fails, so writeErrors aggregate the full picture.

@@ -67,3 +67,12 @@ export const KNOWN_QUESTION_TYPES = [
  */
 export const QuestionTypeSchema = z.union([z.enum(KNOWN_QUESTION_TYPES), z.string().min(1)]);
 export type QuestionType = z.infer<typeof QuestionTypeSchema>;
+
+/**
+ * Per-question difficulty. A CLOSED vocabulary (unlike the exam/type dynamic unions): the AI classifies
+ * every extracted question as exactly one of these, and the operator picks from the same three on the
+ * Verify screen. Resolved to the `Level` dictionary (easy→hard rank 1/2/3) by the publisher.
+ */
+export const KNOWN_LEVELS = ['easy', 'medium', 'hard'] as const;
+export const LevelSchema = z.enum(KNOWN_LEVELS);
+export type Level = z.infer<typeof LevelSchema>;
