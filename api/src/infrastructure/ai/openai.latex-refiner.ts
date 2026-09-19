@@ -2,6 +2,7 @@ import { OpenAI } from 'openai';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { LatexRefinement, LatexRefiner } from '../../modules/questions/index.js';
 import { fillTokens, resolvePrompt, type PromptOverrides } from '../../modules/prompts/index.js';
+import { sanitizeExtractedLatex } from './latex-sanitizer.js';
 
 /**
  * {@link LatexRefiner} backed by OpenAI — ported from the standalone question-editor, but run on the
@@ -42,7 +43,8 @@ export class OpenAiLatexRefiner implements LatexRefiner {
     try {
       const parsed: unknown = JSON.parse(content);
       const refined = (parsed as { refined_text?: unknown }).refined_text;
-      return { text: typeof refined === 'string' ? refined : text, usage };
+      // The refiner now emits chemistry too, so repair the same `\ce` JSON-escape corruption on its output.
+      return { text: typeof refined === 'string' ? sanitizeExtractedLatex(refined) : text, usage };
     } catch {
       throw errors.extractionFailed('The AI returned malformed JSON while refining LaTeX.');
     }

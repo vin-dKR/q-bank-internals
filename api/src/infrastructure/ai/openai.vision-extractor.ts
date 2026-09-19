@@ -15,6 +15,7 @@ import type { AiTokenUsage } from '../../modules/usage/index.js';
 import { errors } from '../../shared/errors/error-catalog.js';
 import { logger } from '../../shared/logger/logger.js';
 import { answerPrompt, questionPrompt, solutionPrompt } from './prompts/extraction-prompts.js';
+import { sanitizeExtractedLatex } from './latex-sanitizer.js';
 import type { PromptOverrides } from '../../modules/prompts/index.js';
 
 /**
@@ -50,6 +51,17 @@ function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
+/** A model string with its mhchem `\ce{…}` JSON-escape corruption repaired (see {@link sanitizeExtractedLatex}). */
+function cleanString(value: unknown): string {
+  return sanitizeExtractedLatex(asString(value));
+}
+
+/** Non-empty repaired string, or null — for answers/explanations kept as an explicit absence. */
+function cleanStringOrNull(value: unknown): string | null {
+  const text = sanitizeExtractedLatex(asString(value)).trim();
+  return text.length > 0 ? text : null;
+}
+
 /** The model's difficulty, normalized to the closed vocabulary (easy/medium/hard) — else null. */
 function normalizeDifficulty(value: unknown): string | null {
   const text = asString(value).trim().toLowerCase();
@@ -70,11 +82,11 @@ function toMatchData(rawColumns: unknown, rawMatch: unknown): MatchData | null {
       ? record.entries
           .map((rawEntry) => {
             const entry = rawEntry as { label?: unknown; body?: unknown };
-            return { label: asString(entry.label).trim(), body: asString(entry.body), image: null };
+            return { label: asString(entry.label).trim(), body: cleanString(entry.body), image: null };
           })
           .filter((entry) => entry.label.length > 0)
       : [];
-    if (entries.length > 0) columns.push({ title: asString(record.title), entries });
+    if (entries.length > 0) columns.push({ title: cleanString(record.title), entries });
   }
   if (columns.length < 2) return null;
 
@@ -126,7 +138,7 @@ function parseAnswerSheets(content: string, fallbackSection: string | null): Ans
       const entries: AnswerSheet['entries'] = {};
       if (record.answers && typeof record.answers === 'object') {
         for (const [key, value] of Object.entries(record.answers as Record<string, unknown>)) {
-          entries[key] = { answer: asStringOrNull(value), explanation: null };
+          entries[key] = { answer: cleanStringOrNull(value), explanation: null };
         }
       }
       return { sectionName: asString(record.section_name) || fallbackSection, entries };
@@ -149,8 +161,8 @@ function parseSolutionSheets(content: string, fallbackSection: string | null): A
         for (const [key, value] of Object.entries(record.solutions as Record<string, unknown>)) {
           const entry = (value ?? {}) as { answer?: unknown; explanation?: unknown };
           entries[key] = {
-            answer: asStringOrNull(entry.answer),
-            explanation: asStringOrNull(entry.explanation),
+            answer: cleanStringOrNull(entry.answer),
+            explanation: cleanStringOrNull(entry.explanation),
           };
         }
       }
@@ -203,10 +215,10 @@ export class OpenAiVisionExtractor implements VisionExtractor {
       for (const raw of raws) {
         results.push({
           questionNumber: toQuestionNumber(raw.question_number),
-          questionText: asString(raw.question_text),
-          options: Array.isArray(raw.options) ? raw.options.map(asString).filter(Boolean) : [],
-          answer: asStringOrNull(raw.answer),
-          explanation: asStringOrNull(raw.explanation),
+          questionText: cleanString(raw.question_text),
+          options: Array.isArray(raw.options) ? raw.options.map(cleanString).filter(Boolean) : [],
+          answer: cleanStringOrNull(raw.answer),
+          explanation: cleanStringOrNull(raw.explanation),
           sectionName: input.document.sectionName,
           // The model now classifies each question's own type (and difficulty). Null when it returned
           // nothing usable — toNewQuestion falls back to the operator's binding for the type.
@@ -216,7 +228,7 @@ export class OpenAiVisionExtractor implements VisionExtractor {
           pyqExam: asStringOrNull(raw.pyq_exam),
           pyqYear: asStringOrNull(raw.pyq_year),
           match: toMatchData(raw.columns, raw.match),
-          passage: asStringOrNull(raw.passage),
+          passage: cleanStringOrNull(raw.passage),
           // passageId/groupOrder are assigned later by materializePassages (post answer-merge), not here.
           passageId: null,
           groupOrder: null,

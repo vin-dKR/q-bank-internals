@@ -12,6 +12,7 @@ import type { AiTokenUsage } from '../../modules/usage/index.js';
 import { errors } from '../../shared/errors/error-catalog.js';
 import { logger } from '../../shared/logger/logger.js';
 import { reExtractGroupPrompt, reExtractQuestionPrompt } from './prompts/extraction-prompts.js';
+import { sanitizeExtractedLatex } from './latex-sanitizer.js';
 
 /**
  * Output-token budget for the first re-extract attempt. Covers a reasoning model's hidden reasoning
@@ -65,9 +66,14 @@ function normalizeLabel(raw: unknown, index: number): string {
   return String.fromCharCode(65 + index); // A, B, C, D by position
 }
 
-/** Non-empty trimmed string, or null — keeps a blank explanation an explicit absence. */
-function asStringOrNull(value: unknown): string | null {
-  const text = asString(value).trim();
+/** A model string with its mhchem `\ce{…}` JSON-escape corruption repaired (see {@link sanitizeExtractedLatex}), trimmed. */
+function cleanString(value: unknown): string {
+  return sanitizeExtractedLatex(asString(value)).trim();
+}
+
+/** Non-empty repaired string, or null — keeps a blank answer/explanation an explicit absence. */
+function cleanStringOrNull(value: unknown): string | null {
+  const text = cleanString(value);
   return text.length > 0 ? text : null;
 }
 
@@ -92,7 +98,7 @@ function toOptions(raw: unknown): QuestionOption[] {
   if (!Array.isArray(raw)) return [];
   return (raw as RawOption[]).map((item, index) => ({
     label: normalizeLabel(item.label, index),
-    body: asString(item.body).trim(),
+    body: cleanString(item.body),
     isCorrect: item.is_correct === true,
   }));
 }
@@ -112,11 +118,11 @@ function toMatchData(rawColumns: unknown, rawMatch: unknown): MatchData | null {
       ? record.entries
           .map((rawEntry) => {
             const entry = rawEntry as { label?: unknown; body?: unknown };
-            return { label: asString(entry.label).trim(), body: asString(entry.body), image: null };
+            return { label: asString(entry.label).trim(), body: cleanString(entry.body), image: null };
           })
           .filter((entry) => entry.label.length > 0)
       : [];
-    if (entries.length > 0) columns.push({ title: asString(record.title), entries });
+    if (entries.length > 0) columns.push({ title: cleanString(record.title), entries });
   }
   if (columns.length < 2) return null;
 
@@ -245,10 +251,10 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     const options = toOptions(parsed.options);
     // When the columns are stored structurally, remove any duplicate column dump the model left in the
     // stem so the same lists don't appear twice (question text + match table).
-    const rawStem = asString(parsed.stem).trim();
+    const rawStem = cleanString(parsed.stem);
     const stem = match ? stripMatchColumnsFromStem(rawStem) : rawStem;
-    const answer = asString(parsed.answer).trim();
-    const explanation = asStringOrNull(parsed.explanation);
+    const answer = cleanString(parsed.answer);
+    const explanation = cleanStringOrNull(parsed.explanation);
     // A genuine question always has a stem, options, or a match table; a reply with none means the read
     // failed (bad JSON, wrong page, refusal) rather than a truly blank question — don't hand back a wipe.
     if (!stem && options.length === 0 && !match && !answer && !explanation) {
@@ -271,14 +277,14 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     const { content, usage } = await this.callVision(prompt, input.png, GROUP_MAX_TOKENS);
 
     const parsed = parseReply(content) as RawGroupReExtract;
-    const passage = asString(parsed.passage).trim();
+    const passage = cleanString(parsed.passage);
     const rawQuestions = Array.isArray(parsed.questions) ? (parsed.questions as RawGroupQuestion[]) : [];
     const subQuestions: ReExtractedSubDraft[] = rawQuestions.map((raw) => ({
       questionNumber: toQuestionNumber(raw.question_number),
-      stem: asString(raw.stem).trim(),
+      stem: cleanString(raw.stem),
       options: toOptions(raw.options),
-      answer: asString(raw.answer).trim(),
-      explanation: asStringOrNull(raw.explanation),
+      answer: cleanString(raw.answer),
+      explanation: cleanStringOrNull(raw.explanation),
       // A comprehension sub-question is never a matrix; keep the shape uniform with the single re-read.
       match: null,
     }));

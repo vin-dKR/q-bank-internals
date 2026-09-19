@@ -1,10 +1,11 @@
 import { type JSX, useRef, useState } from 'react';
-import { BlockMath, InlineMath } from 'react-katex';
 import 'katex/dist/katex.min.css';
+import { renderMathToHtml } from './katex-setup.js'; // one katex instance, mhchem-enabled (`\ce{...}`)
+import { SmilesStructure } from './smiles.js';
 import { IconSigma } from '../ui/index.js';
 import { MathEquationEditor } from './math-equation-editor.js';
 
-type Part = { type: 'text' | 'inline' | 'block'; value: string };
+type Part = { type: 'text' | 'inline' | 'block' | 'smiles'; value: string };
 
 /**
  * The math delimiters we recognise, checked in this order. `\( … \)` is the app's canonical inline form
@@ -13,6 +14,7 @@ type Part = { type: 'text' | 'inline' | 'block'; value: string };
  * with currency ("$5") and none of our data uses it.
  */
 const DELIMITERS = [
+  { open: '<smiles>', close: '</smiles>', type: 'smiles' as const },
   { open: '$$', close: '$$', type: 'block' as const },
   { open: '\\[', close: '\\]', type: 'block' as const },
   { open: '\\(', close: '\\)', type: 'inline' as const },
@@ -53,10 +55,14 @@ export function RenderLatex({ text }: { text: string }): JSX.Element {
   const parts = toParts(text);
   return (
     <>
-      {parts.map((part, index) =>
-        part.type === 'inline' || part.type === 'block' ? (
-          <SafeMath key={index} value={part.value} block={part.type === 'block'} />
-        ) : (
+      {parts.map((part, index) => {
+        if (part.type === 'inline' || part.type === 'block') {
+          return <SafeMath key={index} value={part.value} block={part.type === 'block'} />;
+        }
+        if (part.type === 'smiles') {
+          return <SmilesStructure key={index} smiles={part.value} />;
+        }
+        return (
           <span key={index}>
             {part.value.split('\n').map((line, lineIndex, lines) => (
               <span key={lineIndex}>
@@ -65,15 +71,20 @@ export function RenderLatex({ text }: { text: string }): JSX.Element {
               </span>
             ))}
           </span>
-        ),
-      )}
+        );
+      })}
     </>
   );
 }
 
 function SafeMath({ value, block = false }: { value: string; block?: boolean }): JSX.Element {
   try {
-    return block ? <BlockMath math={value} /> : <InlineMath math={value} />;
+    const html = renderMathToHtml(value, block);
+    return block ? (
+      <div dangerouslySetInnerHTML={{ __html: html }} />
+    ) : (
+      <span dangerouslySetInnerHTML={{ __html: html }} />
+    );
   } catch {
     return <span>{block ? `$$${value}$$` : `\\(${value}\\)`}</span>;
   }

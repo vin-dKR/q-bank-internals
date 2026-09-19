@@ -143,6 +143,8 @@ export function questionPrompt(
     resolvePrompt(overrides, 'extraction'),
     typeRule ? `TYPE-SPECIFIC RULE:\n${typeRule}` : '',
     classificationRule(expectedType, masters),
+    resolvePrompt(overrides, 'chemistry'),
+    resolvePrompt(overrides, 'smiles'),
     document.answerLayout === 'inline' ? resolvePrompt(overrides, 'inlineAnswer') : '',
     resolvePyq(document, binding) ? resolvePrompt(overrides, 'pyq') : '',
   ]
@@ -205,7 +207,7 @@ export function reExtractQuestionPrompt(target: {
 4. columns/match: leave "columns" as [] and OMIT "match" UNLESS this is a MATRIX MATCH question (see the type-specific rule).
 5. answer: use "" when the page does not indicate the correct answer (question papers usually do not).
 6. explanation: use null when no worked solution is printed on this page.
-7. Preserve all math as LaTeX. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`,
+7. Preserve all math as LaTeX, and write any chemistry (formulae, ions, reactions) with mhchem \\(\\ce{...}\\) — e.g. \\(\\ce{H2O}\\), \\(\\ce{SO4^2-}\\), \\(\\ce{2H2 + O2 -> 2H2O}\\); one whole reaction per \\ce, keep units/quantities as ordinary math (not \\ce), and never wrap prose words in \\ce. A molecule DRAWN as a 2-D diagram (a benzene ring, a skeletal/organic structure) is written inline as <smiles>RAW_SMILES</smiles> — e.g. <smiles>c1ccccc1</smiles>, <smiles>Oc1ccccc1</smiles> — never as \\ce and never wrapped in \\( \\); leave a wedge/dash-stereo or unreadable drawing for image. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`,
     isMatrix
       ? 'MATRIX MATCH: put ONLY the instruction/stem in "stem" — do NOT copy the columns into it. Fill "columns" — an array of EVERY printed column in order (usually two, sometimes three), each { "title": the heading, "entries": [ { "label": the printed label e.g. "A"/"p"/"t", "body": that entry\'s text with math as LaTeX } ] }. ALSO fill "options" with the printed multiple-choice ANSWERS (usually four), each { "label": one of "A"–"D" in printed order (normalize (1)(2)(3)(4)), "body": that choice\'s FULL matching text EXACTLY as printed, e.g. "A-i, B-ii, C-iii, D-iv, E-v", "is_correct": true only for the choice the page marks correct else false }. When the page prints the matching (or marks the correct option), add "match" mapping each first-column label to the labels it matches, e.g. { "A": ["iv"], "B": ["v"] }; omit "match" when no answer is shown.'
       : (typeRule ? `TYPE-SPECIFIC RULE:\n${typeRule}` : ''),
@@ -254,7 +256,7 @@ export function reExtractGroupPrompt(target: {
 4. options: one entry per printed choice. The "label" MUST be exactly one of "A","B","C","D" in printed order (normalize (1)(2)(3)(4) to A/B/C/D). NEVER repeat or merge labels. Set is_correct true only when the page marks that choice correct, else false. Use [] when a sub-question has no options.
 5. answer: use "" when the page does not state the correct answer. explanation: use null when no worked solution is printed.
 6. Ignore every question on the page that is NOT under this passage.
-7. Preserve all math as LaTeX. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`,
+7. Preserve all math as LaTeX, and write any chemistry (formulae, ions, reactions) with mhchem \\(\\ce{...}\\) — e.g. \\(\\ce{H2O}\\), \\(\\ce{SO4^2-}\\), \\(\\ce{2H2 + O2 -> 2H2O}\\); one whole reaction per \\ce, keep units/quantities as ordinary math (not \\ce), and never wrap prose words in \\ce. A molecule DRAWN as a 2-D diagram (a benzene ring, a skeletal/organic structure) is written inline as <smiles>RAW_SMILES</smiles> — e.g. <smiles>c1ccccc1</smiles>, <smiles>Oc1ccccc1</smiles> — never as \\ce and never wrapped in \\( \\); leave a wedge/dash-stereo or unreadable drawing for image. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`,
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -295,6 +297,8 @@ export function solutionPrompt(
   return [
     fillTokens(resolvePrompt(overrides, 'solution'), { context: context(document) }),
     typeRule ? `ANSWER TYPE-SPECIFIC RULE:\n${typeRule}` : '',
+    resolvePrompt(overrides, 'chemistry'),
+    resolvePrompt(overrides, 'smiles'),
   ]
     .filter(Boolean)
     .join('\n\n');

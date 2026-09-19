@@ -10,6 +10,8 @@ export const PROMPT_KEYS = [
   'extraction',
   'inlineAnswer',
   'pyq',
+  'chemistry',
+  'smiles',
   'detection',
   'answerKey',
   'solution',
