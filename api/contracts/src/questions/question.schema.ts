@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { SourcePathSchema } from '../common/source-path.js';
 import { PaperMetadataSchema } from '../common/paper-metadata.js';
+import { AiFilledSchema } from '../common/ai-filled.js';
 
 /** A figure extracted from the page, stored in Drive and referenced by the question. */
 export const QuestionImageSchema = z.object({
@@ -143,6 +144,9 @@ export const QuestionSchema = z.object({
   level: z.string().nullable().default(null),
   sectionName: z.string().nullable(),
   topic: z.string().nullable(),
+  // Which of topic/answer/solution/level hold an AI-written value (see AiFilledSchema). Null or empty when
+  // none do; carried to the bank's `ai_filled` on publish so the provenance survives a re-publish.
+  aiFilled: AiFilledSchema.nullable().default(null),
   // Per-question subject, set per node in the structure tree — for a paper that spans subjects (a PYQ
   // paper) each question publishes under its own subject. Null falls back to the document's subject.
   subject: z.string().nullable(),

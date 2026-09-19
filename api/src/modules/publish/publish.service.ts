@@ -1,4 +1,5 @@
 import {
+  aiFilledFields,
   type Document,
   hasPaperMetadata,
   matchKeyToAnswer,
@@ -192,6 +193,11 @@ function toBankQuestion(
     section_name: question.sectionName ?? document.sectionName ?? question.path.section,
     question_type: question.questionType ?? document.questionType ?? null,
     topic: question.topic,
+    // Difficulty band, carried through so a graded question keeps its level across re-publishes.
+    level: question.level,
+    // Which of those values an AI wrote. Carried so a re-publish keeps the provenance; omitted (not null)
+    // when nothing is AI-filled, so ordinary rows are unchanged.
+    ...(aiFilledFields(question.aiFilled).length > 0 && { ai_filled: question.aiFilled }),
     // Authoritative exam/subject: the operator's per-chapter pick on the document (not the session's
     // first-write-wins backfill), so a Biology/NEET chapter never publishes as Physics/JEE. Subject is
     // sourced per-question first (a PYQ paper spans subjects — the node's subject wins), then the document.

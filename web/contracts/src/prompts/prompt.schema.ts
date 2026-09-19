@@ -15,6 +15,15 @@ export const PROMPT_KEYS = [
   'solution',
   'latexSystem',
   'latexUser',
+  // The data-quality "fix with AI" prompts: one system role plus a block per field it may fill in.
+  'qualityFixSystem',
+  'qualityChapter',
+  'qualityTopic',
+  'qualityAnswer',
+  'qualitySolution',
+  'qualityLevel',
+  'qualityTypeLock',
+  'qualityStructure',
 ] as const;
 export const PromptKeySchema = z.enum(PROMPT_KEYS);
 export type PromptKey = z.infer<typeof PromptKeySchema>;

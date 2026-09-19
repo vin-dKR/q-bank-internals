@@ -120,7 +120,7 @@ function targetLabelsOf(match: QuestionViewMatch): string[] {
 }
 
 /** Read-only match-the-column: the columns (with entry figures) then the correct matching. */
-function MatchTableView({ match }: { match: QuestionViewMatch }): JSX.Element {
+export function MatchTableView({ match }: { match: QuestionViewMatch }): JSX.Element {
   const first = match.columns[0];
   const targets = targetLabelsOf(match);
   const hasKey = Object.values(match.key).some((values) => values.length > 0);

@@ -148,6 +148,28 @@ export const errors = {
         `window or the limit is raised.`,
     ),
 
+  anomalyNotFound: (id: string): AppError =>
+    new AppError('ANOMALY_NOT_FOUND', 404, `No quality anomaly with id "${id}".`),
+
+  aiProposalNotPending: (id: string): AppError =>
+    new AppError('AI_PROPOSAL_NOT_PENDING', 404, `No pending AI proposal with id "${id}" — it may already have been applied or discarded.`),
+
+  aiCouldNotDecide: (detail: string): AppError =>
+    new AppError('AI_COULD_NOT_DECIDE', 422, `The AI could not decide an answer that fits: ${detail || 'no reason given.'}`),
+
+  /** A topic was asked for on a question whose subject is unset or has no topics in Question taxonomy. */
+  topicNotMatchable: (reason: string): AppError => new AppError('TOPIC_NOT_MATCHABLE', 422, reason),
+
+  qualityWriteFailed: (reason: string): AppError =>
+    new AppError('QUALITY_WRITE_FAILED', 502, `Saving quality anomalies failed: ${reason}`),
+
+  qualityScanInProgress: (scanId: string): AppError =>
+    new AppError(
+      'QUALITY_SCAN_IN_PROGRESS',
+      409,
+      `A quality scan is already running (${scanId}). Wait for it to finish before starting another.`,
+    ),
+
   // Exam-access (Masters → Exam access) writes target live Eduents accounts by their Mongo `_id`.
   organizationNotFound: (id: string): AppError =>
     new AppError('ORGANIZATION_NOT_FOUND', 404, `No organization with id "${id}".`),

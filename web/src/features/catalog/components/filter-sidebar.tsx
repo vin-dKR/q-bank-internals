@@ -126,6 +126,7 @@ export function FilterSidebar({
     filters.hasPassageImage !== '' ||
     filters.hasPassage !== '' ||
     filters.hasMatch !== '' ||
+    filters.aiFilled !== '' ||
     filters.q !== '';
 
   return (
@@ -225,6 +226,15 @@ export function FilterSidebar({
           label="Matrix match"
           checked={filters.hasMatch === 'true'}
           onChange={(on) => { onChange({ hasMatch: on ? 'true' : '' }); }}
+        />
+      </div>
+
+      <div className="flex flex-col gap-1.5 border-t border-line pt-4">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">Provenance</span>
+        <ToggleFilter
+          label="Filled by AI"
+          checked={filters.aiFilled === 'true'}
+          onChange={(on) => { onChange({ aiFilled: on ? 'true' : '' }); }}
         />
       </div>
     </div>

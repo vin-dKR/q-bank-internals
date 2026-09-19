@@ -22,6 +22,7 @@ export {
   type QuestionViewMatchColumn,
   type QuestionViewMatchEntry,
   type PassageViewModel,
+  MatchTableView,
 } from './question-view.js';
 export { CropImageButton } from './crop-image-button.js';
 export { MatchTableEditor } from './match-table-editor.js';

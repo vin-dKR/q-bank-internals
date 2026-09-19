@@ -14,7 +14,7 @@ export function createCatalogController(service: CatalogService): {
     list: asyncHandler(async (req, res) => {
       const {
         exam, subject, module, chapter, section, questionType, flagged, pyq,
-        hasImage, hasQuestionImage, hasOptionImage, hasPassageImage, hasPassage, hasMatch,
+        hasImage, hasQuestionImage, hasOptionImage, hasPassageImage, hasPassage, hasMatch, aiFilled,
         q, sort, cursor, limit,
       } = parseOrThrow(CatalogQuerySchema, req.query);
       // Build with only the present keys — the repo runs `exactOptionalPropertyTypes`, so an
@@ -34,6 +34,7 @@ export function createCatalogController(service: CatalogService): {
         ...(hasPassageImage !== undefined && { hasPassageImage: hasPassageImage === 'true' }),
         ...(hasPassage !== undefined && { hasPassage: hasPassage === 'true' }),
         ...(hasMatch !== undefined && { hasMatch: hasMatch === 'true' }),
+        ...(aiFilled !== undefined && { aiFilled: aiFilled === 'true' }),
         ...(q !== undefined && { q }),
       };
       ok(res, await service.listQuestions(filters, sort, cursor ?? null, limit));

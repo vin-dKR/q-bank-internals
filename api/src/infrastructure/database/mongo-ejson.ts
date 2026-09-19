@@ -34,6 +34,15 @@ export const oid = z.preprocess((value) => {
   return value;
 }, z.string());
 
+/**
+ * The creation time embedded in a Mongo ObjectId (its first 4 bytes are seconds since the epoch). The bank
+ * stores no created-at column, so this is when a row was first inserted. Null for a non-ObjectId string.
+ */
+export function objectIdDate(hex: string): Date | null {
+  if (!/^[a-f\d]{24}$/i.test(hex)) return null;
+  return new Date(Number.parseInt(hex.slice(0, 8), 16) * 1000);
+}
+
 /** Escape user text so it is matched as a literal substring by `$regex`, never as a pattern. */
 export function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

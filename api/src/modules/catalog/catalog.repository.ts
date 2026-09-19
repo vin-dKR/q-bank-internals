@@ -17,6 +17,8 @@ export type CatalogFilters = {
   hasPassageImage?: boolean;
   hasPassage?: boolean;
   hasMatch?: boolean;
+  /** true = only rows holding at least one AI-filled field. */
+  aiFilled?: boolean;
   q?: string;
 };
 

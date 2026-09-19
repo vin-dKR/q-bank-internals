@@ -27,6 +27,8 @@ export type CatalogFilterState = {
   hasPassageImage: '' | 'true';
   hasPassage: '' | 'true';
   hasMatch: '' | 'true';
+  /** '' = off, 'true' = only questions holding at least one AI-filled field. */
+  aiFilled: '' | 'true';
   q: string;
   /** List ordering. Part of the filter state so a change re-keys the query and refetches from page one. */
   sort: CatalogSort;
@@ -48,6 +50,7 @@ export const EMPTY_FILTERS: CatalogFilterState = {
   hasPassageImage: '',
   hasPassage: '',
   hasMatch: '',
+  aiFilled: '',
   q: '',
   sort: 'newest',
 };

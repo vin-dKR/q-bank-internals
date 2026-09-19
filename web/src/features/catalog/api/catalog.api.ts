@@ -20,6 +20,7 @@ function toListQuery(filters: CatalogFilterState, cursor: string | null): string
   if (filters.hasPassageImage) params.set('hasPassageImage', filters.hasPassageImage);
   if (filters.hasPassage) params.set('hasPassage', filters.hasPassage);
   if (filters.hasMatch) params.set('hasMatch', filters.hasMatch);
+  if (filters.aiFilled) params.set('aiFilled', filters.aiFilled);
   const keyword = filters.q.trim();
   if (keyword) params.set('q', keyword);
   params.set('sort', filters.sort);

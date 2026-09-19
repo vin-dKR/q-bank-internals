@@ -11,6 +11,7 @@ import { ExamAccessPage } from './pages/exam-access-page.js';
 import { PromptsPage } from './pages/prompts-page.js';
 import { UsagePage } from './pages/usage-page.js';
 import { QuestionsPage } from './pages/questions-page.js';
+import { QualityPage } from './pages/quality-page.js';
 import { ChapterSplitterPage } from './pages/chapter-splitter-page.js';
 import { PdfCutterPage } from './pages/pdf-cutter-page.js';
 import { QnaPdfPage } from './pages/qna-pdf-page.js';
@@ -38,6 +39,7 @@ export const router = createBrowserRouter([
       // "Fix bank images" folded into Verify — search a published question there. Keep the old link.
       { path: 'bank', element: <Navigate to="/verify" replace />, errorElement },
       { path: 'questions', element: <QuestionsPage />, errorElement },
+      { path: 'quality', element: <QualityPage />, errorElement },
       // Masters split into three pages; keep /masters as a redirect to the first for old links.
       { path: 'masters', element: <Navigate to="/masters/taxonomy" replace />, errorElement },
       { path: 'masters/taxonomy', element: <TaxonomyPage />, errorElement },
