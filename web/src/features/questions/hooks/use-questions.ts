@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-query';
 import type {
   BatchUpdateQuestionsResult,
+  Document,
   Passage,
   Question,
   QuestionBatchUpdate,
@@ -58,18 +59,26 @@ export function usePageCount(documentId: string | null): UseQueryResult<number> 
 }
 
 /** Publishes a document's questions into the main bank, then refreshes documents + sessions. */
-export function usePublishDocument(): UseMutationResult<{ published: number }, Error, string> {
+export function usePublishDocument(): UseMutationResult<{ published: number }, Error, string, { updating: boolean }> {
   const queryClient = useQueryClient();
   const { success, error } = useToast();
   return useMutation({
     mutationFn: (documentId: string) => questionsApi.publishDocument(documentId),
-    onSuccess: (result) => {
-      success('Published to bank', `${String(result.published)} question(s) are now live.`);
+    onMutate: (documentId) => ({
+      updating: queryClient.getQueryData<Document>(['document', documentId])?.status === 'published',
+    }),
+    onSuccess: (result, documentId, context) => {
+      success(context?.updating ? 'Bank updated' : 'Published to bank',
+        result.published === 0 ? 'The bank is already up to date.' : `${String(result.published)} question(s) ${context?.updating ? 'updated in the bank' : 'are now live'}.`);
+      void queryClient.invalidateQueries({ queryKey: ['document', documentId] });
+      void queryClient.invalidateQueries({ queryKey: ['catalog'] });
+      void queryClient.invalidateQueries({ queryKey: ['bank-search'] });
+      void queryClient.invalidateQueries({ queryKey: ['catalog-filter-options'] });
       void queryClient.invalidateQueries({ queryKey: ['documents'] });
       void queryClient.invalidateQueries({ queryKey: ['sessions'] });
       void queryClient.invalidateQueries({ queryKey: ['session'] });
     },
-    onError: (err) => { error('Publish failed', err.message); },
+    onError: (err, _documentId, context) => { error(context?.updating ? 'Bank update failed' : 'Publish failed', err.message); },
   });
 }
 

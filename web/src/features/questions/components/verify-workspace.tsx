@@ -441,7 +441,7 @@ export function VerifyWorkspace({
   documentId: string;
   autoRun?: boolean;
   /** The unit picker + publish controls, rendered pinned to the top of the right panel. */
-  sessionBar?: ReactNode;
+  sessionBar?: ReactNode | ((hasUnsavedEdits: boolean, isSaving: boolean) => ReactNode);
   /** Page to open on (a searched question's source page); defaults to the first page. */
   initialPage?: number;
   /** A question to scroll to and briefly ring once loaded — the one a bank search opened. */
@@ -2033,7 +2033,9 @@ export function VerifyWorkspace({
       <div className="verify__panel" ref={panelRef}>
         <div className="verify__pinned">
           <div className="verify__session">
-            {sessionBar ? <div className="verify__session-row">{sessionBar}</div> : null}
+            {sessionBar ? <div className="verify__session-row">{typeof sessionBar === 'function'
+              ? sessionBar(drafts.dirtyIds.size + passageDrafts.dirtyIds.size > 0, drafts.isSaving || passageDrafts.isSaving)
+              : sessionBar}</div> : null}
             <div className="verify__session-row" hidden={viewModes.length <= 1}>
               <span className="text-sm text-ink-2">View</span>
               <div className="ml-auto flex flex-wrap justify-end gap-x-3 gap-y-1.5" role="group" aria-label="Visible source previews">

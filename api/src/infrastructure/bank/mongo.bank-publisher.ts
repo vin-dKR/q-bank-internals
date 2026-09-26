@@ -25,6 +25,21 @@ const OBJECT_ID_FIELDS = [
 ] as const;
 const OBJECT_ID = /^[a-f0-9]{24}$/i;
 
+/** Compare Extended JSON values without depending on object key order. */
+function comparable(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'undefined';
+  if (Array.isArray(value)) return `[${value.map(comparable).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  for (const key of ['$numberInt', '$numberLong', '$numberDouble']) {
+    if (typeof record[key] === 'string' && Object.keys(record).length === 1) return comparable(Number(record[key]));
+  }
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${comparable(record[key])}`).join(',')}}`;
+}
+
+const FindReplySchema = z.object({
+  cursor: z.object({ firstBatch: z.array(z.record(z.unknown())) }),
+});
+
 /** Shallow copy with every taxonomy FK hex-string rewritten as a BSON ObjectId for the raw write. */
 function withObjectIdFks(question: BankQuestion): BankQuestion {
   const out: Record<string, unknown> = { ...question };
@@ -64,8 +79,8 @@ function ingestQuestionId(question: BankQuestion): string {
  * alter the bank's schema or indexes.
  *
  * Idempotent by design: each row is an `upsert` keyed on `ingest_ref.question_id` (the same key the
- * bank read/fix store uses), so re-publishing a document overwrites its rows instead of appending
- * duplicates. The reply is inspected for `writeErrors` / `writeConcernError` and for a short match
+ * bank read/fix store uses). Later saves patch changed fields and skip unchanged rows, retaining
+ * each row's bank id and unrelated fields. The reply is inspected for errors and a short match
  * count — a partial or failed write throws instead of silently returning fewer rows than sent.
  */
 export class MongoBankPublisher implements BankPublisher {
@@ -76,13 +91,43 @@ export class MongoBankPublisher implements BankPublisher {
 
   async upsertQuestions(questions: BankQuestion[]): Promise<number> {
     if (questions.length === 0) return 0;
+    // Read existing rows in bounded batches before selecting changed questions.
+    const existing = new Map<string, BankQuestion>();
+    for (let offset = 0; offset < questions.length; offset += 100) {
+      const ids = questions.slice(offset, offset + 100).map(ingestQuestionId);
+      const result = FindReplySchema.parse(await this.prisma.$runCommandRaw({
+        find: this.collection,
+        filter: { [INGEST_QUESTION_ID_PATH]: { $in: ids } },
+        batchSize: 100,
+        singleBatch: true,
+      } as unknown as Prisma.InputJsonObject));
+      for (const row of result.cursor.firstBatch) existing.set(ingestQuestionId(row), row);
+    }
+    const updates = questions.flatMap((question) => {
+      const id = ingestQuestionId(question);
+      const previous = existing.get(id);
+      const next = withObjectIdFks(question);
+      const changed = Object.fromEntries(Object.entries(next).filter(([key, value]) =>
+        !previous || comparable(previous[key]) !== comparable(value),
+      ));
+      // The mapper omits empty provenance. Clear an old AI tag after a human edits it.
+      const unset = previous?.ai_filled !== undefined && next.ai_filled === undefined
+        ? { ai_filled: '' } : {};
+      if (Object.keys(changed).length === 0 && Object.keys(unset).length === 0) return [];
+      return [{
+        q: { [INGEST_QUESTION_ID_PATH]: id },
+        u: {
+          ...(Object.keys(changed).length > 0 ? { $set: changed } : {}),
+          ...(Object.keys(unset).length > 0 ? { $unset: unset } : {}),
+        },
+        // A deleted existing row must fail the match check, rather than insert an incomplete patch.
+        upsert: !previous,
+      }];
+    });
+    if (updates.length === 0) return 0;
     const command = {
       update: this.collection,
-      updates: questions.map((question) => ({
-        q: { [INGEST_QUESTION_ID_PATH]: ingestQuestionId(question) },
-        u: withObjectIdFks(question),
-        upsert: true,
-      })),
+      updates,
       // Unordered: attempt every row even if one fails, so writeErrors aggregate the full picture.
       ordered: false,
     } as unknown as Prisma.InputJsonObject;
@@ -95,12 +140,12 @@ export class MongoBankPublisher implements BankPublisher {
     if (reply.writeErrors.length > 0) {
       const detail = reply.writeErrors[0]?.errmsg ?? 'unknown write error';
       throw errors.publishWriteFailed(
-        `${String(reply.writeErrors.length)} of ${String(questions.length)} rows failed (${detail}).`,
+        `${String(reply.writeErrors.length)} of ${String(updates.length)} rows failed (${detail}).`,
       );
     }
-    if (reply.n < questions.length) {
+    if (reply.n < updates.length) {
       throw errors.publishWriteFailed(
-        `only ${String(reply.n)} of ${String(questions.length)} rows were written.`,
+        `only ${String(reply.n)} of ${String(updates.length)} rows were written.`,
       );
     }
     return reply.n;

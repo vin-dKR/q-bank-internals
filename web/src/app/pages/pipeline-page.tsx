@@ -29,6 +29,7 @@ export function PipelinePage(): JSX.Element {
   const document = useDocument(documentId);
   const reextract = useReextractDocument();
   const [confirm, confirmDialog] = useConfirm();
+  const isPublished = document.data?.status === 'published';
 
   // Arriving from a published question's "Open in Verify" (?restore=1): un-hide its source document +
   // session if they were soft-deleted, so the direct question link can always reach its source. Fires
@@ -67,9 +68,11 @@ export function PipelinePage(): JSX.Element {
   const onPublish = (): void => {
     if (!documentId) return;
     void confirm({
-      title: 'Publish to the main bank?',
-      body: 'These verified questions become live in the main question bank. Re-publishing an already-published unit updates its bank copies with your latest edits.',
-      confirmLabel: 'Publish',
+      title: isPublished ? 'Update the question bank?' : 'Publish to the main bank?',
+      body: isPublished
+        ? 'Apply your saved edits to the existing bank questions. Unchanged questions are skipped.'
+        : 'These verified questions become live in the main question bank.',
+      confirmLabel: isPublished ? 'Update bank' : 'Publish',
     }).then((ok) => { if (ok && documentId) publish.mutate(documentId); });
   };
 
@@ -119,7 +122,7 @@ export function PipelinePage(): JSX.Element {
 
   // The unit picker + publish now live at the top of the workspace's right panel (beside the page),
   // so the PDF and question editor own the full viewport height instead of losing a top bar to them.
-  const sessionBar = (
+  const sessionBar = (hasUnsavedEdits: boolean, isSaving: boolean): JSX.Element => (
     <>
       <div className="min-w-0 flex-1">
         <DocumentPicker value={documentId} onChange={selectUnit} />
@@ -134,8 +137,11 @@ export function PipelinePage(): JSX.Element {
           {reextract.isPending ? <><Spinner /> Re-extracting…</> : 'Re-extract'}
         </Button>
       ) : null}
-      <Button variant="primary" className="flex-none" disabled={publish.isPending} onClick={onPublish}>
-        {publish.isPending ? <><Spinner /> Publishing…</> : 'Publish to bank →'}
+      <Button variant="primary" className="flex-none" disabled={publish.isPending || !document.data || hasUnsavedEdits || isSaving}
+        title={hasUnsavedEdits ? 'Save your edits with Update all first' : undefined} onClick={onPublish}>
+        {publish.isPending
+          ? <><Spinner /> {isPublished ? 'Updating bank…' : 'Publishing…'}</>
+          : isPublished ? 'Update bank →' : 'Publish to bank →'}
       </Button>
     </>
   );
