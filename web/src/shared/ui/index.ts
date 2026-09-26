@@ -4,7 +4,7 @@ export { Card } from './card.js';
 export { Badge, type BadgeTone } from './badge.js';
 export { StatusBadge } from './status-badge.js';
 export { PageHeader } from './page-header.js';
-export { CropCanvas, type CanvasBox, type CanvasSize } from './crop-canvas.js';
+export { CropCanvas, ZoomControls, type CanvasBox, type CanvasSize } from './crop-canvas.js';
 export { DraggableBox, type BoxRect } from './draggable-box.js';
 export { IconButton } from './icon-button.js';
 export { Toolbar, ToolbarGroup, ToolbarDivider, ToolbarSpacer, ToolbarHelp } from './toolbar.js';

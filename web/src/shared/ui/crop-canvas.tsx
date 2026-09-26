@@ -1,5 +1,13 @@
-import { type CSSProperties, type JSX, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import {
+  type CSSProperties,
+  type JSX,
+  type MouseEvent as ReactMouseEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { cn } from '../lib/cn.js';
 import { type BoxRect, DraggableBox } from './draggable-box.js';
 import { IconButton } from './icon-button.js';
@@ -37,17 +45,15 @@ function rectFromPoints(from: { x: number; y: number }, to: { x: number; y: numb
 }
 
 /**
- * Drag-to-zoom magnifier: `LENS_ZOOM` is the fixed magnification the drawn region is shown at, so the
- * preview panel is just the selection scaled by it — a bigger drag makes a bigger panel at the *same*
- * zoom, a smaller drag a smaller one (never the fixed-square "bigger drag looks smaller" trap). It is
- * capped so it never upscales past the page's native resolution, and the panel is capped to `LENS_MAX`
- * and the viewport. `LENS_GAP` is the gap kept from the image/screen edges; `LENS_MIN_SEL` is the
- * smallest drag (display px, either axis) that counts as a real region to enlarge.
+ * Drag-to-zoom. `LENS_MIN_SEL` is the smallest drag (display px, either axis) that counts as a region to zoom
+ * into — anything less is a click. `OVERZOOM` caps the zoom at twice the page's native resolution: past that
+ * a scan is only blurrier, not more legible. `ZOOM_FILL` leaves a margin so the chosen region never touches
+ * the viewer's edges, and `ZOOM_STEP` is what the +/− buttons multiply by.
  */
-const LENS_ZOOM = 3.5;
-const LENS_MAX = 720;
-const LENS_GAP = 12;
 const LENS_MIN_SEL = 8;
+const OVERZOOM = 2;
+const ZOOM_FILL = 0.92;
+const ZOOM_STEP = 1.6;
 
 type CropCanvasProps = {
   imageSrc: string;
@@ -67,16 +73,19 @@ type CropCanvasProps = {
   onBoxGrab?: (id: string) => void;
   /** A drag/resize on an existing box ended; `moved` is false when the rect never changed. */
   onBoxRelease?: (id: string, moved: boolean) => void;
-  /** A non-editable, temporary source-region outline used when Verify opens a bank question directly. */
+  /** A non-editable source-region outline for a bank question. */
   focus?: { rect: BoxRect; label: string } | null;
 };
 
 /**
- * The left pane: the page image with draggable/resizable crop regions drawn over it. The whole page is
- * fit inside the available frame (`scale = min(frameW/pageW, frameH/pageH)`, contain-fit) so it is
- * always fully visible — no scrolling, no zoom — matching the school-test viewer. The frame is sized to
- * the fitted pixels and the image fills it, so the box coordinate space is exactly those display pixels
- * and the display↔natural crop maths key off it. A ResizeObserver re-fits when the column resizes.
+ * The left pane: the page image with draggable/resizable crop regions drawn over it. At rest the whole page
+ * is fit inside the available frame (`scale = min(frameW/pageW, frameH/pageH)`, contain-fit). Dragging a box
+ * on the bare page ZOOMS into it: the page is drawn `zoom` times larger inside a scrolling viewport, scrolled
+ * so the chosen region fills the view, and stays there until "Fit page" (or Esc, or a double-click). The
+ * frame is sized to the displayed pixels and the image fills it, so the box coordinate space is exactly
+ * those display pixels — a zoom is just another display-size change, which the owner already rescales its
+ * boxes for through `onSize`. A ResizeObserver on the (non-scrolling) outer box re-fits when the column
+ * resizes.
  *
  * With `draw` set, an overlay captures a rubber-band drag and reports the drawn rect via `onDraw` —
  * the auto-save crop flow's entry point.
@@ -129,8 +138,15 @@ export function CropCanvas({
     natural && frame.width > 0 && frame.height > 0 && natural.width > 0 && natural.height > 0
       ? Math.min(frame.width / natural.width, frame.height / natural.height)
       : null;
-  const displayWidth = natural && scale ? natural.width * scale : 0;
-  const displayHeight = natural && scale ? natural.height * scale : 0;
+  // Zoom multiplies the fit. It is capped at OVERZOOM × native resolution, and never below the fit.
+  const [zoom, setZoom] = useState(1);
+  const maxZoom = scale ? Math.max(1, OVERZOOM / scale) : 1;
+  const effectiveZoom = Math.min(zoom, maxZoom);
+  const displayWidth = natural && scale ? natural.width * scale * effectiveZoom : 0;
+  const displayHeight = natural && scale ? natural.height * scale * effectiveZoom : 0;
+  const zoomed = effectiveZoom > 1.001;
+  // A new page starts fitted: a zoom into page 3's diagram means nothing on page 4.
+  useEffect(() => { setZoom(1); }, [imageSrc]);
 
   // Publish the fitted size so the workspace can map display pixels ↔ natural pixels for cropping.
   useEffect(() => {
@@ -148,14 +164,60 @@ export function CropCanvas({
   const drawStart = useRef<{ x: number; y: number } | null>(null);
   const [rubber, setRubber] = useState<BoxRect | null>(null);
 
-  // --- Drag-to-zoom magnifier: press and drag anywhere on the page to rubber-band a region; while the
-  // drag is held, an enlarged view of exactly that region shows in a panel beside the page, and a
-  // release dismisses it. `lensOn` is the feature toggle; `lensStart` holds the drag's origin (non-null
-  // only mid-drag, like the draw rubber-band); `lensSel` is the live selection rect in frame (display)
-  // pixels the panel + on-image marquee derive from. ---
-  const [lensOn, setLensOn] = useState(true);
+  // --- Drag-to-zoom: press and drag on the bare page to rubber-band a region; on release the page zooms so
+  // that region fills the viewer. `lensStart` holds the drag's origin (non-null only mid-drag, like the draw
+  // rubber-band); `lensSel` is the live selection in frame (display) pixels, drawn as a marquee. ---
+  const viewportRef = useRef<HTMLDivElement>(null);
   const lensStart = useRef<{ x: number; y: number } | null>(null);
   const [lensSel, setLensSel] = useState<BoxRect | null>(null);
+  // Where to scroll once the zoomed size is laid out: the point (in the NEW display pixels) to centre.
+  const pendingCentre = useRef<{ x: number; y: number } | null>(null);
+
+  /** Zoom to `next`, keeping `focus` (current display pixels) at the centre of the viewer. */
+  const zoomTo = useCallback(
+    (next: number, focus: { x: number; y: number }): void => {
+      const target = Math.min(Math.max(next, 1), maxZoom);
+      const ratio = target / effectiveZoom;
+      pendingCentre.current = { x: focus.x * ratio, y: focus.y * ratio };
+      setZoom(target);
+    },
+    [maxZoom, effectiveZoom],
+  );
+
+  /** The centre of what the viewer shows now, in display pixels — the anchor for the +/− buttons. */
+  const viewCentre = (): { x: number; y: number } => {
+    const viewport = viewportRef.current;
+    const frameEl = frameRef.current;
+    if (!viewport || !frameEl) return { x: displayWidth / 2, y: displayHeight / 2 };
+    const v = viewport.getBoundingClientRect();
+    const f = frameEl.getBoundingClientRect();
+    return { x: v.left + v.width / 2 - f.left, y: v.top + v.height / 2 - f.top };
+  };
+
+  const fitPage = useCallback((): void => {
+    pendingCentre.current = null;
+    setZoom(1);
+  }, []);
+
+  // After a zoom has laid out at its new size, scroll the chosen point to the middle of the viewer.
+  useLayoutEffect(() => {
+    const centre = pendingCentre.current;
+    const viewport = viewportRef.current;
+    if (!centre || !viewport) return;
+    pendingCentre.current = null;
+    viewport.scrollLeft = centre.x - viewport.clientWidth / 2;
+    viewport.scrollTop = centre.y - viewport.clientHeight / 2;
+  }, [displayWidth, displayHeight]);
+
+  // Esc goes back to the whole page — unless a crop is being drawn, where Esc belongs to cancelling it.
+  useEffect(() => {
+    if (!zoomed || draw) return undefined;
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') fitPage();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('keydown', onKey); };
+  }, [zoomed, draw, fitPage]);
 
   const framePoint = useCallback((clientX: number, clientY: number): { x: number; y: number } => {
     const rect = frameRef.current?.getBoundingClientRect();
@@ -208,26 +270,32 @@ export function CropCanvas({
 
   // A press-drag on the bare page rubber-bands a zoom region. A mousedown on a crop box (or resize
   // handle) stops propagation in DraggableBox, so this never fires there — box move/resize is
-  // untouched, and the zoom only ever begins on the empty page. Suppressed in draw mode / lens off.
+  // untouched, and the zoom only ever begins on the empty page. Suppressed while drawing a crop or loading.
   const beginLensDrag = (event: ReactMouseEvent<HTMLDivElement>): void => {
-    if (event.button !== 0 || draw || !lensOn) return;
+    if (event.button !== 0 || draw || loading) return;
     event.preventDefault();
     const point = framePoint(event.clientX, event.clientY);
     lensStart.current = point;
     setLensSel({ x: point.x, y: point.y, width: 0, height: 0 });
   };
 
-  // Track the rubber-band at the document level so a fast drag — or one that slips past the frame edge
-  // — keeps growing the selection, and a release anywhere clears it (mirrors the draw/box drag model).
+  // Track the rubber-band at the document level so a fast drag — or one that slips past the frame edge —
+  // keeps growing the selection, and a release anywhere ends it (mirrors the draw/box drag model). A real
+  // region zooms the page so it fills the viewer; a click leaves the view alone.
   useEffect(() => {
     const onMove = (event: globalThis.MouseEvent): void => {
       if (!lensStart.current) return;
       setLensSel(rectFromPoints(lensStart.current, framePoint(event.clientX, event.clientY)));
     };
-    const onUp = (): void => {
+    const onUp = (event: globalThis.MouseEvent): void => {
       if (!lensStart.current) return;
+      const sel = rectFromPoints(lensStart.current, framePoint(event.clientX, event.clientY));
       lensStart.current = null;
       setLensSel(null);
+      const viewport = viewportRef.current;
+      if (!viewport || sel.width < LENS_MIN_SEL || sel.height < LENS_MIN_SEL) return;
+      const fill = Math.min(viewport.clientWidth / sel.width, viewport.clientHeight / sel.height) * ZOOM_FILL;
+      zoomTo(effectiveZoom * fill, { x: sel.x + sel.width / 2, y: sel.y + sel.height / 2 });
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -235,51 +303,16 @@ export function CropCanvas({
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
-  }, [framePoint]);
+  }, [framePoint, zoomTo, effectiveZoom]);
 
   const frameStyle: CSSProperties =
     displayWidth > 0 && displayHeight > 0 ? { width: displayWidth, height: displayHeight } : {};
 
-  // Drag-to-zoom: the operator's rubber-band marks the region; a large panel shows exactly that region
-  // enlarged (contain-fit into the square), floated to the right of the image and flipped left when the
-  // viewport can't hold it there. The panel is `position: fixed` and portalled to <body> so it escapes
-  // the canvas' `overflow: hidden`. `marquee` shows for the whole drag; `panel` only once the selection
-  // is a deliberate region — a stray click would otherwise blow a 1px sliver up to nonsense.
-  const magnifier: { marquee: CSSProperties; panel: CSSProperties } | null = (() => {
-    if (!lensOn || !lensSel || draw || loading || displayWidth <= 0 || displayHeight <= 0) return null;
-    if (lensSel.width < LENS_MIN_SEL || lensSel.height < LENS_MIN_SEL) return null;
-    const frameEl = frameRef.current;
-    if (!frameEl) return null;
-    const rect = frameEl.getBoundingClientRect();
-    const viewportW = document.documentElement.clientWidth;
-    const viewportH = document.documentElement.clientHeight;
-    // Fixed magnification: the panel is the selection scaled by LENS_ZOOM, so it grows/shrinks with the
-    // drag at a constant zoom. Capped so it never upscales past native resolution (1/scale) and never
-    // outgrows the panel cap or the viewport.
-    const nativeCap = scale ? 1 / scale : Number.POSITIVE_INFINITY;
-    const capW = Math.min(LENS_MAX, viewportW - 2 * LENS_GAP);
-    const capH = Math.min(LENS_MAX, viewportH - 2 * LENS_GAP);
-    const zoom = Math.min(LENS_ZOOM, nativeCap, capW / lensSel.width, capH / lensSel.height);
-    const panelW = lensSel.width * zoom;
-    const panelH = lensSel.height * zoom;
-    const toRight = rect.right + LENS_GAP;
-    const left = toRight + panelW <= viewportW ? toRight : Math.max(LENS_GAP, rect.left - LENS_GAP - panelW);
-    const top = Math.min(Math.max(rect.top, LENS_GAP), Math.max(LENS_GAP, viewportH - panelH - LENS_GAP));
-    return {
-      marquee: { left: lensSel.x, top: lensSel.y, width: lensSel.width, height: lensSel.height },
-      // The panel IS the selection scaled by `zoom` — no letterbox, so it shows exactly the drawn region
-      // at a constant magnification, sized to match the drag.
-      panel: {
-        left,
-        top,
-        width: panelW,
-        height: panelH,
-        backgroundImage: `url("${imageSrc}")`,
-        backgroundSize: `${String(displayWidth * zoom)}px ${String(displayHeight * zoom)}px`,
-        backgroundPosition: `${String(-lensSel.x * zoom)}px ${String(-lensSel.y * zoom)}px`,
-      },
-    };
-  })();
+  // The marquee shows the region being chosen while the drag is held; release zooms into it.
+  const marquee: CSSProperties | null =
+    lensSel && !draw && lensSel.width >= LENS_MIN_SEL && lensSel.height >= LENS_MIN_SEL
+      ? { left: lensSel.x, top: lensSel.y, width: lensSel.width, height: lensSel.height }
+      : null;
 
   return (
     <div ref={containerRef} className={draw ? 'crop-canvas crop-canvas--draw' : 'crop-canvas'}>
@@ -300,84 +333,129 @@ export function CropCanvas({
           ) : null}
         </div>
       ) : null}
-      <div
-        ref={frameRef}
-        className={cn(
-          'crop-canvas__frame',
-          lensOn && !draw && !loading && 'crop-canvas__frame--zoomable',
-        )}
-        style={frameStyle}
-        onMouseDown={beginLensDrag}
-      >
-        <img
-          ref={imgRef}
-          src={imageSrc}
-          alt="Source page"
-          draggable={false}
-          className="crop-canvas__img"
-          onLoad={onLoad}
-          onError={onError}
-        />
-        {focus ? (
-          <div
-            className="crop-canvas__focus"
-            aria-label={`Focused source region: ${focus.label}`}
-            style={{
-              left: focus.rect.x,
-              top: focus.rect.y,
-              width: focus.rect.width,
-              height: focus.rect.height,
-            }}
-          >
-            <span className="crop-canvas__focus-label">{focus.label}</span>
-          </div>
-        ) : null}
-        {boxes.map((box) => (
-          <DraggableBox
-            key={box.id}
-            id={box.id}
-            x={box.x}
-            y={box.y}
-            width={box.width}
-            height={box.height}
-            label={box.label}
-            variant={box.variant ?? 'manual'}
-            busy={box.busy ?? false}
-            flash={box.flash ?? false}
-            scale={1}
-            onUpdate={onUpdateBox}
-            onDelete={onDeleteBox}
-            onGrab={onBoxGrab}
-            onRelease={onBoxRelease}
-          />
-        ))}
-        {draw ? (
-          <div className="crop-canvas__overlay" onMouseDown={beginDraw}>
-            {rubber ? (
-              <div
-                className="crop-canvas__rubber"
-                style={{ left: rubber.x, top: rubber.y, width: rubber.width, height: rubber.height }}
-              />
-            ) : null}
-          </div>
-        ) : null}
-        {/* Drag-to-zoom: the rubber-band marks the region being magnified; its enlarged view renders in
-            a portalled panel beside the image (below), once the selection is a deliberate region. */}
-        {magnifier ? <div className="crop-canvas__lens-area" style={magnifier.marquee} /> : null}
-      </div>
-      {magnifier
-        ? createPortal(<div className="crop-canvas__zoom" style={magnifier.panel} />, document.body)
-        : null}
-      {!draw && !loading ? (
-        <button
-          type="button"
-          className="crop-canvas__lens-toggle btn btn--ghost btn--icon-only btn--icon-only-sm"
-          aria-pressed={lensOn}
-          aria-label={lensOn ? 'Turn off drag zoom' : 'Turn on drag zoom'}
-          title={lensOn ? 'Drag zoom on — drag a box on the page to magnify it' : 'Drag zoom off'}
-          onClick={() => { setLensOn((on) => !on); }}
+      {/* The viewport scrolls; the outer box does not, so the fit (measured on the outer box) never shifts
+          when scrollbars appear at a zoom. */}
+      <div ref={viewportRef} className={cn('crop-canvas__viewport', zoomed && 'crop-canvas__viewport--zoomed')}>
+        <div
+          ref={frameRef}
+          className={cn('crop-canvas__frame', !draw && !loading && 'crop-canvas__frame--zoomable')}
+          style={frameStyle}
+          onMouseDown={beginLensDrag}
+          onDoubleClick={(event) => {
+            // A double-click on the page itself (not a crop box) goes back to the whole page.
+            if (zoomed && !draw && event.target === imgRef.current) fitPage();
+          }}
         >
-          {lensOn ? <IconZoomIn /> : <IconZoomOut />}
+          <img
+            ref={imgRef}
+            src={imageSrc}
+            alt="Source page"
+            draggable={false}
+            className="crop-canvas__img"
+            onLoad={onLoad}
+            onError={onError}
+          />
+          {focus ? (
+            <div
+              className="crop-canvas__focus"
+              aria-label={`Focused source region: ${focus.label}`}
+              style={{
+                left: focus.rect.x,
+                top: focus.rect.y,
+                width: focus.rect.width,
+                height: focus.rect.height,
+              }}
+            >
+              <span className="crop-canvas__focus-label">{focus.label}</span>
+            </div>
+          ) : null}
+          {boxes.map((box) => (
+            <DraggableBox
+              key={box.id}
+              id={box.id}
+              x={box.x}
+              y={box.y}
+              width={box.width}
+              height={box.height}
+              label={box.label}
+              variant={box.variant ?? 'manual'}
+              busy={box.busy ?? false}
+              flash={box.flash ?? false}
+              scale={1}
+              onUpdate={onUpdateBox}
+              onDelete={onDeleteBox}
+              onGrab={onBoxGrab}
+              onRelease={onBoxRelease}
+            />
+          ))}
+          {draw ? (
+            <div className="crop-canvas__overlay" onMouseDown={beginDraw}>
+              {rubber ? (
+                <div
+                  className="crop-canvas__rubber"
+                  style={{ left: rubber.x, top: rubber.y, width: rubber.width, height: rubber.height }}
+                />
+              ) : null}
+            </div>
+          ) : null}
+          {marquee ? <div className="crop-canvas__lens-area" style={marquee} /> : null}
+        </div>
+      </div>
+      {!loading ? (
+        <ZoomControls
+          zoom={effectiveZoom}
+          canZoomIn={effectiveZoom < maxZoom - 0.001}
+          onZoomIn={() => { zoomTo(effectiveZoom * ZOOM_STEP, viewCentre()); }}
+          onZoomOut={() => { zoomTo(effectiveZoom / ZOOM_STEP, viewCentre()); }}
+          onFit={fitPage}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The zoom buttons in the viewer's corner: zoom in/out around the middle of the view, and — once zoomed —
+ * the level and a "Fit page" to go back. Shared by the question page and the answer/solution pane.
+ */
+export function ZoomControls({
+  zoom,
+  canZoomIn,
+  onZoomIn,
+  onZoomOut,
+  onFit,
+  placement = 'corner',
+}: {
+  zoom: number;
+  canZoomIn: boolean;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onFit: () => void;
+  /** `corner` floats over the viewer; `inline` sits in a toolbar row. */
+  placement?: 'corner' | 'inline';
+}): JSX.Element {
+  const zoomed = zoom > 1.001;
+  return (
+    <div
+      className={placement === 'corner' ? 'crop-canvas__zoombar' : 'crop-canvas__zoombar--inline'}
+      onMouseDown={(event) => { event.stopPropagation(); }}
+    >
+      {zoomed ? (
+        <>
+          <IconButton icon={<IconZoomOut />} label="Zoom out" size="sm" onClick={onZoomOut} />
+          <span className="crop-canvas__zoomlevel">{Math.round(zoom * 100)}%</span>
+        </>
+      ) : null}
+      <IconButton
+        icon={<IconZoomIn />}
+        label={zoomed ? 'Zoom in' : 'Zoom in — or drag a box on the page to zoom into it'}
+        size="sm"
+        disabled={!canZoomIn}
+        onClick={onZoomIn}
+      />
+      {zoomed ? (
+        <button type="button" className="crop-canvas__fit" onClick={onFit} title="Show the whole page (Esc)">
+          Fit page
         </button>
       ) : null}
     </div>

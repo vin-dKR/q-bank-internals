@@ -646,7 +646,12 @@ export function VerifyWorkspace({
       (prev.displayWidth !== next.displayWidth || prev.displayHeight !== next.displayHeight)) {
       const rx = next.displayWidth / prev.displayWidth;
       const ry = next.displayHeight / prev.displayHeight;
-      applyBoxes((bs) => bs.map((b) => ({ ...b, x: b.x * rx, y: b.y * ry, width: b.width * rx, height: b.height * ry })));
+      const rescale = (bs: Box[]): Box[] =>
+        bs.map((b) => ({ ...b, x: b.x * rx, y: b.y * ry, width: b.width * rx, height: b.height * ry }));
+      applyBoxes(rescale);
+      // Undo/redo snapshots use display pixels and must follow changes in zoom too.
+      past.current = past.current.map(rescale);
+      future.current = future.current.map(rescale);
     }
     sizeRef.current = next;
     setSize(next);

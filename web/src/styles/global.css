@@ -1073,7 +1073,7 @@
     @apply flex min-h-0 min-w-0 flex-1 flex-col border-l border-line;
   }
   .verify__source-head {
-    @apply flex flex-none items-center gap-2 border-b border-line px-2 py-1.5;
+    @apply flex flex-none flex-wrap items-center gap-2 border-b border-line px-2 py-1.5;
   }
   .verify__source-name {
     @apply min-w-0 flex-1 truncate text-[11px] text-ink-3;
@@ -1091,10 +1091,14 @@
   /* The wrapper hugs the fitted image (fit-content, capped to the pane) so the crop overlay can sit
      exactly over it; the image fills the wrapper. */
   .verify__source-cropwrap {
-    @apply relative flex-none;
+    @apply relative m-auto flex-none;
+  }
+  .verify__source-cropwrap--zoomable {
+    cursor: crosshair;
   }
   .verify__source-img {
-    @apply block h-full w-full rounded-lg border border-line bg-white;
+    @apply block h-full w-full select-none rounded-lg border border-line bg-white;
+    -webkit-user-drag: none;
   }
   .verify__source-cropoverlay {
     @apply absolute inset-0 z-20 cursor-crosshair;
@@ -1184,10 +1188,10 @@
     @apply relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-lg bg-surface-2;
   }
   .crop-canvas__frame {
-    @apply relative leading-none;
+    @apply relative m-auto flex-none leading-none;
     user-select: none;
   }
-  /* Drag-to-zoom affordance: a crosshair over the page when the magnifier is armed, so it reads as
+  /* Drag-to-zoom affordance: a crosshair over the page, so it reads as
      "drag a box to magnify". Crop boxes carry their own move/resize cursors, which win over this on
      the box itself. */
   .crop-canvas__frame--zoomable {
@@ -1226,21 +1230,31 @@
     @apply pointer-events-none absolute border-2 border-dashed border-brand;
     background: color-mix(in srgb, var(--color-brand) 10%, transparent);
   }
-  /* Drag-to-zoom magnifier: the operator's rubber-band marks the region being magnified, and a large
-     panel (portalled to <body>, positioned inline) shows that exact region enlarged beside the image. */
+  /* Drag-to-zoom selection: releasing the rectangle enlarges this region inside the viewer. */
   .crop-canvas__lens-area {
     @apply pointer-events-none absolute z-30 rounded-[2px];
     border: 2px solid var(--color-brand);
     background: color-mix(in srgb, var(--color-brand) 14%, transparent);
     box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-surface) 70%, transparent);
   }
-  .crop-canvas__zoom {
-    @apply pointer-events-none fixed z-50 overflow-hidden rounded-lg border border-line-strong bg-surface;
-    background-repeat: no-repeat;
-    box-shadow: 0 12px 40px rgb(0 0 0 / 0.28);
+  .crop-canvas__viewport {
+    @apply absolute inset-0 flex overflow-hidden;
   }
-  .crop-canvas__lens-toggle {
-    @apply absolute right-2 top-2 z-40;
+  .crop-canvas__viewport--zoomed {
+    @apply overflow-auto;
+  }
+  .crop-canvas__zoombar {
+    @apply absolute right-2 top-2 z-40 flex items-center gap-0.5 rounded-lg border border-line bg-surface p-0.5 shadow-sm;
+  }
+  .crop-canvas__zoombar--inline {
+    @apply flex flex-none items-center gap-0.5;
+  }
+  .crop-canvas__zoomlevel {
+    @apply min-w-[3rem] px-1 text-center text-[11px] font-medium text-ink-2;
+    font-variant-numeric: tabular-nums;
+  }
+  .crop-canvas__fit {
+    @apply cursor-pointer rounded-md px-2 py-1 text-[12px] font-semibold text-brand transition-colors hover:bg-brand-soft;
   }
 
   .q-list {
@@ -1674,7 +1688,7 @@
     overflow: visible;
   }
   .crop-canvas {
-    max-height: 74vh;
+    height: 74vh;
   }
 }
 
