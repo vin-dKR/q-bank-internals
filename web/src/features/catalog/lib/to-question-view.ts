@@ -58,9 +58,9 @@ export function catalogQuestionToView(question: CatalogQuestion): QuestionViewMo
     options,
     match,
     answer: question.answer,
+    answerImages: question.answerImages,
     explanation: question.explanation,
-    // The bank has no explanation-figure column; verify keeps those in staging only.
-    explanationImages: [],
+    explanationImages: question.explanationImages,
   };
 }
 

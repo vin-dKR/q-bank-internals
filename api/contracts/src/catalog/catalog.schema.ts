@@ -40,15 +40,20 @@ export const CatalogQuestionSchema = z.object({
   isPyq: z.boolean(),
   pyqExam: z.string().nullable(),
   pyqYear: z.string().nullable(),
-  // The ingest document this question was published from (read off `ingest_ref.document_id`), so the
-  // browse card's "Edit" can reopen it in Verify at `/verify?documentId=…`. Null on legacy rows
-  // published before provenance was stamped — those cannot be reopened, so Edit is hidden.
+  // The exact ingest source this question was published from. `questionId` lets a browse card reopen
+  // Verify on the original page and ring the original extracted question, not merely reopen the unit.
+  // Both are null on legacy rows published before provenance was stamped.
   documentId: z.string().nullable(),
+  ingestQuestionId: z.string().nullable(),
   options: z.array(z.string()),
   isQuestionImage: z.boolean(),
   questionImage: z.string().nullable(),
   isOptionImage: z.boolean(),
   optionImages: z.array(z.string()),
+  // Figures printed with the answer key and the worked solution. The bank stores each as a
+  // comma-separated field for compatibility with its existing question-image format.
+  answerImages: z.array(z.string()),
+  explanationImages: z.array(z.string()),
   // Structured match-the-column data (columns + correct matching) for MATRIX questions; null for every
   // other type. Assembled from the bank's `match_columns` + `match_key` (written at publish) so the
   // browse renders a real match table instead of the raw "(A) A-p,B-q" option strings.

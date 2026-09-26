@@ -36,6 +36,23 @@ export class ExtractionService {
   }
 
   /**
+   * Re-run a question document using the prompts currently saved in Prompt Studio.
+   * The worker's document-level replace is intentional: a fresh extraction must
+   * not leave stale questions, crops, or comprehension groups beside the new set.
+   */
+  async reextract(documentId: string): Promise<ExtractionJob> {
+    const document = await this.documents.findById(documentId);
+    if (!document) throw errors.documentNotFound(documentId);
+    if (document.kind !== 'question' || document.status === 'published') {
+      throw errors.documentNotReextractable(documentId, document.status);
+    }
+    if (document.status === 'extracting' || document.status === 'queued') {
+      throw errors.extractionInProgress(documentId);
+    }
+    return this.enqueue(documentId);
+  }
+
+  /**
    * Queue extraction for every not-yet-extracted question document in a session — the "run the whole
    * batch" action. Answer/solution PDFs are pulled in automatically by their question sibling, and
    * already-extracted files are skipped, so this never re-does completed work.

@@ -67,6 +67,8 @@ type CropCanvasProps = {
   onBoxGrab?: (id: string) => void;
   /** A drag/resize on an existing box ended; `moved` is false when the rect never changed. */
   onBoxRelease?: (id: string, moved: boolean) => void;
+  /** A non-editable, temporary source-region outline used when Verify opens a bank question directly. */
+  focus?: { rect: BoxRect; label: string } | null;
 };
 
 /**
@@ -91,6 +93,7 @@ export function CropCanvas({
   onDrawCancel,
   onBoxGrab,
   onBoxRelease,
+  focus = null,
 }: CropCanvasProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -315,6 +318,20 @@ export function CropCanvas({
           onLoad={onLoad}
           onError={onError}
         />
+        {focus ? (
+          <div
+            className="crop-canvas__focus"
+            aria-label={`Focused source region: ${focus.label}`}
+            style={{
+              left: focus.rect.x,
+              top: focus.rect.y,
+              width: focus.rect.width,
+              height: focus.rect.height,
+            }}
+          >
+            <span className="crop-canvas__focus-label">{focus.label}</span>
+          </div>
+        ) : null}
         {boxes.map((box) => (
           <DraggableBox
             key={box.id}

@@ -1,9 +1,10 @@
 import { type JSX, useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { BankQuestion } from '@ingest/contracts';
-import { DocumentPicker, useRestoreDocument } from '../../features/documents/index.js';
+import { DocumentPicker, useDocument, useRestoreDocument } from '../../features/documents/index.js';
 import { VerifyWorkspace, usePublishDocument } from '../../features/questions/index.js';
 import { BankQuestionSearch } from '../../features/bank/index.js';
+import { useReextractDocument } from '../../features/sessions/index.js';
 import { Button, Card, PageHeader, Spinner, useConfirm } from '../../shared/ui/index.js';
 
 /**
@@ -15,19 +16,23 @@ import { Button, Card, PageHeader, Spinner, useConfirm } from '../../shared/ui/i
  * (picker + publish), so the PDF and question editor own the screen.
  */
 export function PipelinePage(): JSX.Element {
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [documentId, setDocumentId] = useState<string | null>(searchParams.get('documentId'));
-  // When a search hit opens the workspace, land on its page with its question ringed; both are null
-  // for the plain unit-pick path (open at page 1, nothing pre-focused).
+  // When a search hit or Questions-browse link opens the workspace, land on its page with its question
+  // ringed; both are null for the plain unit-pick path (open at page 1, nothing pre-focused).
   const [initialPage, setInitialPage] = useState<number | null>(null);
-  const [focusQuestionId, setFocusQuestionId] = useState<string | null>(null);
+  const [focusQuestionId, setFocusQuestionId] = useState<string | null>(() => searchParams.get('questionId'));
   const autoRun = searchParams.get('auto') === '1' && documentId === searchParams.get('documentId');
   const publish = usePublishDocument();
   const restore = useRestoreDocument();
+  const document = useDocument(documentId);
+  const reextract = useReextractDocument();
   const [confirm, confirmDialog] = useConfirm();
 
-  // Arriving from a published question's "Edit" (?restore=1): un-hide its source document + session
-  // if they were soft-deleted, so editing "gets the session back". Fires once per target document.
+  // Arriving from a published question's "Open in Verify" (?restore=1): un-hide its source document +
+  // session if they were soft-deleted, so the direct question link can always reach its source. Fires
+  // once per target document.
   const restoreMutate = restore.mutate;
   const restoredFor = useRef<string | null>(null);
   const restoreTarget = searchParams.get('restore') === '1' ? searchParams.get('documentId') : null;
@@ -68,6 +73,20 @@ export function PipelinePage(): JSX.Element {
     }).then((ok) => { if (ok && documentId) publish.mutate(documentId); });
   };
 
+  const onReextract = (): void => {
+    if (!documentId || !document.data) return;
+    const sessionId = document.data.sessionId;
+    void confirm({
+      title: `Re-extract “${document.data.fileName}”?`,
+      body: 'This uses the prompts currently saved in Prompt Studio and replaces this file’s draft questions, Verify edits, image crops, and comprehension groups. You will be taken to the session to follow progress.',
+      tone: 'danger',
+      confirmLabel: 'Re-extract',
+    }).then((ok) => {
+      if (!ok || !documentId) return;
+      reextract.mutate(documentId, { onSuccess: () => { void navigate(`/sessions/${String(sessionId)}`); } });
+    });
+  };
+
   if (!documentId) {
     return (
       <section className="flex flex-col gap-6">
@@ -105,6 +124,16 @@ export function PipelinePage(): JSX.Element {
       <div className="min-w-0 flex-1">
         <DocumentPicker value={documentId} onChange={selectUnit} />
       </div>
+      {document.data?.kind === 'question' && document.data.status !== 'published' ? (
+        <Button
+          variant="default"
+          className="flex-none"
+          disabled={reextract.isPending || document.data.status === 'queued' || document.data.status === 'extracting'}
+          onClick={onReextract}
+        >
+          {reextract.isPending ? <><Spinner /> Re-extracting…</> : 'Re-extract'}
+        </Button>
+      ) : null}
       <Button variant="primary" className="flex-none" disabled={publish.isPending} onClick={onPublish}>
         {publish.isPending ? <><Spinner /> Publishing…</> : 'Publish to bank →'}
       </Button>

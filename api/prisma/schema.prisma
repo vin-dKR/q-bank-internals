@@ -201,8 +201,10 @@ model Question {
   questionImage   String?
   isOptionImage   Boolean          @default(false)
   optionImages    String[]
-  // Figures attached to the worked solution/explanation (Supabase URLs). Ingest-only annotation, not
-  // published to the bank; empty on older rows.
+  // Figures cropped from the sibling answer-key PDF.
+  answerImages    String[]
+  // Figures attached to the worked solution/explanation (Supabase URLs), published into the bank's
+  // `solution_image` field. Empty on older rows.
   explanationImages String[]
   // Persisted crop rectangles (natural image pixels) for the attached figures, as [{ url, type,
   // optionIndex, nx, ny, nw, nh }]. Ingest-only; lets a saved crop reappear as an editable box on any

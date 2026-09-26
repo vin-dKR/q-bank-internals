@@ -60,9 +60,9 @@ const RawCatalogQuestionSchema = z
     is_pyq: ejsonBool.catch(false),
     pyq_exam: z.string().nullable().catch(null),
     pyq_year: z.string().nullable().catch(null),
-    // Provenance stamped at publish (null on legacy rows) — only `document_id` is needed here, to let
-    // the browse card reopen the source in Verify. Tolerant so a malformed ref degrades to null.
-    ingest_ref: z.object({ document_id: z.string() }).nullable().catch(null),
+    // Provenance stamped at publish (null on legacy rows) lets the browse card reopen the exact source
+    // question in Verify. Tolerant so a malformed ref degrades to null rather than dropping the row.
+    ingest_ref: z.object({ document_id: z.string(), question_id: z.string() }).nullable().catch(null),
     options: z.array(z.string()).catch([]),
     isQuestionImage: ejsonBool.catch(false),
     question_image: z.string().nullable().catch(null),
@@ -70,6 +70,8 @@ const RawCatalogQuestionSchema = z
     option_images: z.array(z.string()).catch([]),
     // AI provenance written by the quality screens; a malformed tag is dropped rather than half-trusted.
     ai_filled: AiFilledSchema.catch({}),
+    answer_image: z.string().nullable().catch(null),
+    solution_image: z.string().nullable().catch(null),
   })
   .transform(
     (doc): CatalogQuestion => ({
@@ -94,15 +96,23 @@ const RawCatalogQuestionSchema = z
       pyqExam: doc.pyq_exam,
       pyqYear: doc.pyq_year,
       documentId: doc.ingest_ref?.document_id ?? null,
+      ingestQuestionId: doc.ingest_ref?.question_id ?? null,
       options: doc.options,
       isQuestionImage: doc.isQuestionImage,
       questionImage: doc.question_image,
       isOptionImage: doc.isOptionImage,
       optionImages: doc.option_images,
+      answerImages: splitUrls(doc.answer_image),
+      explanationImages: splitUrls(doc.solution_image),
       match: toMatchData(doc.match_columns, doc.match_key),
       aiFilled: doc.ai_filled,
     }),
   );
+
+/** The main bank packs its multi-image fields into comma-separated strings. */
+function splitUrls(value: string | null): string[] {
+  return value ? value.split(',').map((url) => url.trim()).filter(Boolean) : [];
+}
 
 /** Distinct, non-empty, case-insensitively sorted values out of a raw `$addToSet` array (drops null). */
 function cleanValues(value: unknown): string[] {

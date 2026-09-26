@@ -5,6 +5,7 @@ import { DocumentStatusSchema } from '@ingest/contracts';
 import {
   ExtractionProgress,
   useDeleteSession,
+  useReextractDocument,
   useResetDocumentExtraction,
   useRunDocumentExtraction,
   useRunSessionExtraction,
@@ -35,6 +36,7 @@ export function SessionDetailPage(): JSX.Element {
   const updateDocument = useUpdateDocument();
   const runSession = useRunSessionExtraction();
   const runDoc = useRunDocumentExtraction();
+  const reextractDoc = useReextractDocument();
   const resetDoc = useResetDocumentExtraction();
   const publishDoc = usePublishDocument();
   const [confirm, confirmDialog] = useConfirm();
@@ -119,6 +121,20 @@ export function SessionDetailPage(): JSX.Element {
     }).then((ok) => { if (ok) resetDoc.mutate(doc.id); });
   };
 
+  const reextract = (doc: Document): void => {
+    void confirm({
+      title: `Re-extract “${doc.fileName}”?`,
+      body: 'This reruns the file with the prompts currently saved in Prompt Studio. Its existing draft questions, Verify edits, image crops, and comprehension groups will be replaced. Published question-bank copies are not changed.',
+      tone: 'danger',
+      confirmLabel: 'Re-extract',
+    }).then((ok) => {
+      if (!ok) return;
+      // Show feedback immediately even before the document polling observes its queued status.
+      setShownDocIds((previous) => (previous.includes(doc.id) ? previous : [...previous, doc.id]));
+      reextractDoc.mutate(doc.id, { onError: () => { dismissBar(doc.id); } });
+    });
+  };
+
   /** The per-document action buttons for the unit list — decided here from kind + status. */
   const renderActions = (doc: Document): JSX.Element => (
     <>
@@ -127,6 +143,16 @@ export function SessionDetailPage(): JSX.Element {
         <>
           <Link className="btn btn--xs" to={`/verify?documentId=${doc.id}`}>View</Link>
           <Link className="btn btn--xs" to={`/documents/${doc.id}/data`}>Data</Link>
+          {doc.status !== 'published' ? (
+            <button
+              type="button"
+              className="btn btn--xs"
+              disabled={reextractDoc.isPending}
+              onClick={() => { reextract(doc); }}
+            >
+              Re-extract
+            </button>
+          ) : null}
           {doc.status === 'published' ? (
             <span className="badge badge--success">published</span>
           ) : (

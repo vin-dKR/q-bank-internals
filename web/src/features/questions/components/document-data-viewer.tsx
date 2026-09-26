@@ -50,6 +50,7 @@ function toView(question: Question): QuestionViewModel {
     })),
     match: question.match ? { columns: question.match.columns, key: question.match.key } : null,
     answer: question.answer || null,
+    answerImages: question.answerImages,
     explanation: question.explanation,
     explanationImages: question.explanationImages,
   };

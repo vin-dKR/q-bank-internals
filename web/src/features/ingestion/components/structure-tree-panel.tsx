@@ -425,7 +425,8 @@ function TreeNodeRow({ node, depth, controller, vocabulary, onBindPages, binding
             </span>
             <div className="min-w-0 flex-1">
               {/* Optional for a PYQ segment — its questions are of mixed types, extracted generically.
-                  Options come from the questionType master (label = name, value = behavior slug). */}
+                  Options come from the managed questionType master plus the two explicit supported
+                  profiles that legacy bank taxonomy folds into Subjective. */}
               <Combobox
                 value={node.questionType ?? ''}
                 options={vocabulary.questionTypes}

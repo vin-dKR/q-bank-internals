@@ -1086,17 +1086,15 @@
     font-variant-numeric: tabular-nums;
   }
   .verify__source-scroll {
-    @apply min-h-0 flex-1 overflow-auto p-3;
+    @apply flex min-h-0 flex-1 items-center justify-center overflow-hidden p-3;
   }
   /* The wrapper hugs the fitted image (fit-content, capped to the pane) so the crop overlay can sit
      exactly over it; the image fills the wrapper. */
   .verify__source-cropwrap {
-    @apply relative mx-auto block;
-    width: fit-content;
-    max-width: 100%;
+    @apply relative flex-none;
   }
   .verify__source-img {
-    @apply block h-auto w-full rounded-lg border border-line bg-white;
+    @apply block h-full w-full rounded-lg border border-line bg-white;
   }
   .verify__source-cropoverlay {
     @apply absolute inset-0 z-20 cursor-crosshair;
@@ -1198,6 +1196,21 @@
   .crop-canvas__img {
     @apply block h-full w-full select-none;
     -webkit-user-drag: none;
+  }
+  /* A published-bank link opens Verify at this exact source region. It is intentionally a passive
+     outline — it helps identify the question without becoming an accidental editable crop. */
+  .crop-canvas__focus {
+    @apply pointer-events-none absolute z-[11] border-[3px] border-q;
+    background: color-mix(in srgb, var(--color-q) 12%, transparent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-q) 28%, transparent);
+    animation: source-focus-pulse 1.8s ease-in-out 2;
+  }
+  .crop-canvas__focus-label {
+    @apply absolute -top-6 left-0 whitespace-nowrap rounded-t-md bg-q px-2 py-0.5 text-[11px] font-semibold text-white;
+  }
+  @keyframes source-focus-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
   }
   /* Draw mode: a floating hint names the armed target; a full-frame overlay captures the rubber band. */
   .crop-canvas__hint {
@@ -1759,7 +1772,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .cropbox--busy,
-  .cropbox--flash {
+  .cropbox--flash,
+  .crop-canvas__focus {
     animation: none;
   }
 }

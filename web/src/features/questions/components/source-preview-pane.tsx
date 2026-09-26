@@ -1,18 +1,46 @@
 import { type JSX, type MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from 'react';
-import { IconButton, IconChevronLeft, IconChevronRight, Spinner } from '../../../shared/ui/index.js';
+import { type CanvasSize, IconButton, IconChevronLeft, IconChevronRight, Spinner } from '../../../shared/ui/index.js';
+import { DraggableBox } from '../../../shared/ui/draggable-box.js';
 import { questionsApi } from '../api/questions.api.js';
 import { usePageCount } from '../hooks/use-questions.js';
 
 type Rect = { x: number; y: number; width: number; height: number };
 
+/** One durable sibling-PDF crop. `id` is stable within the pane and lets each boundary save itself. */
+type ExistingCrop = {
+  id: string;
+  /** The attached media URL this boundary currently replaces. */
+  url: string;
+  rect: Rect;
+  page: number;
+  label: string;
+};
+
+/** A sibling-PDF drag projected into the same magnifier used by the main question page. */
+export type SourcePreviewMagnifier = {
+  imageSrc: string;
+  box: Rect;
+  size: CanvasSize;
+  label: string;
+};
+
 /** Optional crop capability: when `armed`, a rubber-band draw on the previewed page reports its crop. */
 type CropCapability = {
   armed: boolean;
   /** A box was drawn: `natural` is its rect in the page image's natural pixels. */
-  onCrop: (imageUrl: string, natural: Rect) => void;
+  onCrop: (imageUrl: string, natural: Rect, page: number) => void;
   /** The operator dismissed the armed crop (Esc). */
   onCancel: () => void;
+  /** Every persisted crop for this sibling document, shown on its original page. */
+  existingCrops?: readonly ExistingCrop[];
+  /**
+   * Saved sibling crops stay visible even when no new crop is armed. Releasing a
+   * dragged/resized boundary replaces that existing crop in the parent record.
+   */
+  onExistingCrop?: (id: string, replacedUrl: string, imageUrl: string, natural: Rect, page: number) => string | null | Promise<string | null>;
 };
+
+type ExistingSaveRun = { done: Promise<void> };
 
 /** Smaller than this (display px) is a stray click, not a drawn region. */
 const MIN_DRAW = 8;
@@ -33,6 +61,7 @@ export function SourcePreviewPane({
   fileName,
   defaultPage,
   crop,
+  onMagnifierChange,
 }: {
   title: string;
   tone: 'answer' | 'solution';
@@ -40,15 +69,31 @@ export function SourcePreviewPane({
   fileName: string;
   defaultPage: number;
   crop?: CropCapability;
+  /** Receives a live sibling crop while it is drawn or adjusted; null clears the shared magnifier. */
+  onMagnifierChange?: (value: SourcePreviewMagnifier | null) => void;
 }): JSX.Element {
   const [page, setPage] = useState(defaultPage);
   useEffect(() => { setPage(defaultPage); }, [defaultPage]);
   const pageCount = usePageCount(documentId);
   const totalPages = pageCount.data ?? 1;
+  // Match the question canvas: a sibling page is contain-fitted to its pane,
+  // never stretched to the pane width or made vertically scrollable.
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport] = useState({ width: 0, height: 0 });
+  const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
+  useEffect(() => {
+    const element = viewportRef.current;
+    if (!element) return undefined;
+    const update = (): void => { setViewport({ width: element.clientWidth, height: element.clientHeight }); };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => { observer.disconnect(); };
+  }, []);
   // Loader for the previewed page image (fetched from Drive via the API proxy). The <img> is reused
   // across page changes, so reset on every page change — `onLoad` fires only for the new load.
   const [loading, setLoading] = useState(true);
-  useEffect(() => { setLoading(true); }, [page, documentId]);
+  useEffect(() => { setLoading(true); setNaturalSize(null); }, [page, documentId]);
 
   // --- Rubber-band crop (only while `crop.armed`) ---
   const imgRef = useRef<HTMLImageElement>(null);
@@ -59,6 +104,47 @@ export function SourcePreviewPane({
   // (the parent passes a fresh `crop` object each render).
   const cropRef = useRef(crop);
   cropRef.current = crop;
+  // Each saved crop owns its own natural-pixel working rect. Keeping the map in a ref as well as
+  // state is important: mouseup can occur before React has committed the last mousemove state update.
+  const [editedNaturals, setEditedNaturals] = useState<ReadonlyMap<string, Rect>>(() => new Map());
+  const editedNaturalsRef = useRef<ReadonlyMap<string, Rect>>(new Map());
+  const [savingExistingIds, setSavingExistingIds] = useState<ReadonlySet<string>>(() => new Set());
+  const savingExistingIdsRef = useRef<ReadonlySet<string>>(new Set());
+  const existingSaveRuns = useRef(new Map<string, ExistingSaveRun>());
+  // A re-crop creates a new media URL. Preserve it locally until the query cache re-renders the new
+  // boundary id, so a second quick drag still replaces the image produced by the first drag.
+  const localUrlsRef = useRef<ReadonlyMap<string, string>>(new Map());
+  const [activeExistingId, setActiveExistingId] = useState<string | null>(null);
+  const existingCrops = crop?.existingCrops ?? [];
+  const existingSignature = existingCrops
+    .map((item) => `${item.id}:${item.url}:${String(item.page)}:${String(item.rect.x)}:${String(item.rect.y)}:${String(item.rect.width)}:${String(item.rect.height)}`)
+    .join('|');
+  useEffect(() => {
+    const previous = editedNaturalsRef.current;
+    const next = new Map<string, Rect>();
+    let changed = previous.size !== existingCrops.length;
+    for (const item of existingCrops) {
+      // Keep a local drag in place until its replacement arrives from the query cache. A successful
+      // re-crop gets a fresh URL/id, so the new persisted rect naturally replaces this entry.
+      const current = previous.get(item.id) ?? item.rect;
+      next.set(item.id, current);
+      if (!previous.has(item.id)) changed = true;
+    }
+    if (!changed) return;
+    editedNaturalsRef.current = next;
+    setEditedNaturals(next);
+  }, [existingSignature]);
+  useEffect(() => {
+    const previous = localUrlsRef.current;
+    const next = new Map<string, string>();
+    for (const item of existingCrops) next.set(item.id, previous.get(item.id) ?? item.url);
+    localUrlsRef.current = next;
+  }, [existingSignature]);
+  const scale = naturalSize && viewport.width > 0 && viewport.height > 0
+    ? Math.min(viewport.width / naturalSize.width, viewport.height / naturalSize.height)
+    : null;
+  const displayWidth = naturalSize && scale ? naturalSize.width * scale : 0;
+  const displayHeight = naturalSize && scale ? naturalSize.height * scale : 0;
 
   const imgPoint = (clientX: number, clientY: number): { x: number; y: number } => {
     const r = imgRef.current?.getBoundingClientRect();
@@ -71,6 +157,7 @@ export function SourcePreviewPane({
   const beginDraw = (event: ReactMouseEvent<HTMLDivElement>): void => {
     if (event.button !== 0) return;
     event.preventDefault();
+    setActiveExistingId(null);
     startRef.current = imgPoint(event.clientX, event.clientY);
     setRubber({ ...startRef.current, width: 0, height: 0 });
   };
@@ -107,7 +194,7 @@ export function SourcePreviewPane({
         y: rect.y * scaleY,
         width: rect.width * scaleX,
         height: rect.height * scaleY,
-      });
+      }, page);
     };
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') cropRef.current?.onCancel();
@@ -121,6 +208,116 @@ export function SourcePreviewPane({
       document.removeEventListener('keydown', onKey);
     };
   }, [armed, documentId, page]);
+
+  const existingOnPage = existingCrops.filter((item) => item.page === page);
+  const displayExisting = (() => {
+    const image = imgRef.current;
+    if (!image || image.naturalWidth === 0 || image.naturalHeight === 0) return [];
+    const bounds = image.getBoundingClientRect();
+    return existingOnPage.map((item) => {
+      const existing = editedNaturals.get(item.id) ?? item.rect;
+      return {
+        item,
+        x: existing.x * bounds.width / image.naturalWidth,
+        y: existing.y * bounds.height / image.naturalHeight,
+        width: existing.width * bounds.width / image.naturalWidth,
+        height: existing.height * bounds.height / image.naturalHeight,
+      };
+    });
+  })();
+  const activeExisting = activeExistingId
+    ? displayExisting.find(({ item }) => item.id === activeExistingId)
+    : undefined;
+  const magnifierRect = rubber ?? (activeExisting
+    ? { x: activeExisting.x, y: activeExisting.y, width: activeExisting.width, height: activeExisting.height }
+    : null);
+  const magnifierSignature = magnifierRect
+    ? `${String(magnifierRect.x)}:${String(magnifierRect.y)}:${String(magnifierRect.width)}:${String(magnifierRect.height)}`
+    : '';
+  useEffect(() => {
+    if (!onMagnifierChange || !magnifierRect || magnifierRect.width < 2 || magnifierRect.height < 2 || !naturalSize || displayWidth <= 0 || displayHeight <= 0) {
+      onMagnifierChange?.(null);
+      return;
+    }
+    onMagnifierChange({
+      imageSrc: questionsApi.pageImageUrl(documentId, page),
+      box: magnifierRect,
+      size: {
+        naturalWidth: naturalSize.width,
+        naturalHeight: naturalSize.height,
+        displayWidth,
+        displayHeight,
+      },
+      label: `${title} crop preview`,
+    });
+  }, [displayHeight, displayWidth, documentId, magnifierSignature, naturalSize?.height, naturalSize?.width, onMagnifierChange, page, title]);
+  useEffect(() => () => { onMagnifierChange?.(null); }, [onMagnifierChange]);
+
+  const setExistingSaving = (id: string, saving: boolean): void => {
+    const next = new Set(savingExistingIdsRef.current);
+    if (saving) next.add(id);
+    else next.delete(id);
+    savingExistingIdsRef.current = next;
+    setSavingExistingIds(next);
+  };
+  const updateExisting = (id: string, patch: Partial<Rect>): void => {
+    const image = imgRef.current;
+    const fallback = existingCrops.find((item) => item.id === id)?.rect;
+    const current = editedNaturalsRef.current.get(id) ?? fallback;
+    if (!image || !current) return;
+    const bounds = image.getBoundingClientRect();
+    const scaleX = image.naturalWidth / bounds.width;
+    const scaleY = image.naturalHeight / bounds.height;
+    const nextRect: Rect = {
+      ...current,
+      ...(patch.x !== undefined ? { x: patch.x * scaleX } : {}),
+      ...(patch.y !== undefined ? { y: patch.y * scaleY } : {}),
+      ...(patch.width !== undefined ? { width: patch.width * scaleX } : {}),
+      ...(patch.height !== undefined ? { height: patch.height * scaleY } : {}),
+    };
+    const next = new Map(editedNaturalsRef.current);
+    next.set(id, nextRect);
+    editedNaturalsRef.current = next;
+    setEditedNaturals(next);
+  };
+  const commitExisting = (id: string): void => {
+    const activeRun = existingSaveRuns.current.get(id);
+    if (activeRun) {
+      // Keep dragging buttery even when an upload is in flight. The local rect has already updated;
+      // queue one more serialized save once the current upload settles.
+      void activeRun.done.finally(() => { commitExisting(id); });
+      return;
+    }
+    const fallback = existingCrops.find((item) => item.id === id);
+    if (!fallback || !cropRef.current?.onExistingCrop) return;
+    const run: ExistingSaveRun = { done: Promise.resolve() };
+    // Register before the worker begins, so a quick second release can mark this run for a
+    // serialized follow-up rather than race the initial upload.
+    existingSaveRuns.current.set(id, run);
+    run.done = Promise.resolve().then(async (): Promise<void> => {
+      setExistingSaving(id, true);
+      try {
+        const natural = editedNaturalsRef.current.get(id) ?? fallback.rect;
+        const replacedUrl = localUrlsRef.current.get(id) ?? fallback.url;
+        const nextUrl = await cropRef.current?.onExistingCrop?.(
+          id,
+          replacedUrl,
+          questionsApi.pageImageUrl(documentId, page),
+          natural,
+          page,
+        );
+        if (typeof nextUrl === 'string' && nextUrl) {
+          const urls = new Map(localUrlsRef.current);
+          urls.set(id, nextUrl);
+          localUrlsRef.current = urls;
+        }
+      } finally {
+        existingSaveRuns.current.delete(id);
+        setExistingSaving(id, false);
+      }
+    });
+  };
+  const drawingNewCrop = armed;
 
   return (
     <div className="verify__source">
@@ -145,7 +342,7 @@ export function SourcePreviewPane({
           />
         </div>
       </div>
-      <div className="verify__source-scroll" style={{ position: 'relative' }}>
+      <div ref={viewportRef} className="verify__source-scroll" style={{ position: 'relative' }}>
         {loading ? (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 text-ink-3" role="status">
             <Spinner className="text-2xl" />
@@ -154,19 +351,25 @@ export function SourcePreviewPane({
         ) : null}
         {armed ? (
           <div className="verify__source-crophint" role="status">
-            Draw a box on the solution — <kbd>Esc</kbd>
+            Draw a box on the {tone} — <kbd>Esc</kbd>
           </div>
         ) : null}
-        <div className="verify__source-cropwrap">
+        <div
+          className="verify__source-cropwrap"
+          style={displayWidth > 0 && displayHeight > 0 ? { width: displayWidth, height: displayHeight } : undefined}
+        >
           <img
             ref={imgRef}
             src={questionsApi.pageImageUrl(documentId, page)}
             alt={`${title} page ${String(page)}`}
             className="verify__source-img"
-            onLoad={() => { setLoading(false); }}
+            onLoad={(event) => {
+              setNaturalSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight });
+              setLoading(false);
+            }}
             onError={() => { setLoading(false); }}
           />
-          {armed ? (
+          {drawingNewCrop ? (
             <div className="verify__source-cropoverlay" onMouseDown={beginDraw}>
               {rubber ? (
                 <div
@@ -176,6 +379,28 @@ export function SourcePreviewPane({
               ) : null}
             </div>
           ) : null}
+          {displayExisting.map(({ item, x, y, width, height }) => (
+            <DraggableBox
+              key={item.id}
+              id={item.id}
+              label={item.label}
+              x={x}
+              y={y}
+              width={width}
+              height={height}
+              variant="saved"
+              busy={savingExistingIds.has(item.id)}
+              onUpdate={updateExisting}
+              // Existing saved figures are removed from their card, not by an
+              // accidental right-click over the preview boundary.
+              onDelete={() => undefined}
+              onGrab={(id) => { setActiveExistingId(id); }}
+              onRelease={(id, moved) => {
+                setActiveExistingId(null);
+                if (moved) commitExisting(id);
+              }}
+            />
+          ))}
         </div>
       </div>
     </div>
