@@ -1,6 +1,6 @@
 import { type JSX, useEffect, useMemo, useRef, useState } from 'react';
-import { InlineMath } from 'react-katex';
 import 'katex/dist/katex.min.css';
+import { renderMathToHtml } from './katex-setup.js'; // one katex instance, mhchem-enabled (`\ce{...}`)
 import { Button, IconButton, IconSearch, IconX } from '../ui/index.js';
 import { CARET, type MathCategory, MATH_CATEGORIES, type MathSymbol, filterMathSymbols } from './math-symbols.js';
 
@@ -8,7 +8,7 @@ import { CARET, type MathCategory, MATH_CATEGORIES, type MathSymbol, filterMathS
 function Preview({ latex }: { latex: string }): JSX.Element {
   if (!latex.trim()) return <span className="text-ink-3">Your equation preview appears here</span>;
   try {
-    return <InlineMath math={latex} />;
+    return <span dangerouslySetInnerHTML={{ __html: renderMathToHtml(latex, false) }} />;
   } catch {
     return <span className="font-mono text-xs text-ink-3">\({latex}\)</span>;
   }
