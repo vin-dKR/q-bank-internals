@@ -8,8 +8,10 @@ import { Spinner } from './spinner.js';
  * source page — the explanation (from the solution PDF) and match-the-column entries (from the question
  * PDF). Clicking it asks the workspace to arm a rubber-band crop (via `onRequestCrop`, which resolves
  * with the uploaded image URL once the operator draws a box, or `null` if they cancel or it's
- * superseded); a returned URL is handed to `onCropped`. Shared (§ feature-slicing: shared/ui) because
- * both the verify card and the match-table editor use it.
+ * superseded); a returned URL is optionally handed to `onCropped`. Verify's answer and solution
+ * crops are local-first, so their workspace can put the temporary thumbnail in the card before this
+ * promise resolves. Shared (§ feature-slicing: shared/ui) because both the verify card and the
+ * match-table editor use it.
  */
 export function CropImageButton({
   label = 'Crop image',
@@ -19,9 +21,10 @@ export function CropImageButton({
 }: {
   label?: string;
   disabled?: boolean;
-  /** Arm a crop and resolve with the uploaded image URL, or `null` when cancelled/superseded. */
+  /** Arm a crop and resolve with a durable or temporary local image URL, or `null` when cancelled/superseded. */
   onRequestCrop: () => Promise<string | null>;
-  onCropped: (url: string) => void;
+  /** Needed by consumers that own the destination field themselves (for example match-table cells). */
+  onCropped?: (url: string) => void;
 }): JSX.Element {
   const [pending, setPending] = useState(false);
 
@@ -29,7 +32,7 @@ export function CropImageButton({
     setPending(true);
     try {
       const url = await onRequestCrop();
-      if (url) onCropped(url);
+      if (url) onCropped?.(url);
     } finally {
       setPending(false);
     }

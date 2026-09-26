@@ -19,12 +19,36 @@ const KIND_TO_SLUG: Record<string, string> = {
   assertion_reason: 'assertion_reason',
 };
 
+/**
+ * The bank deliberately folds these two kinds into its existing `subjective` QuestionType row at
+ * publish time. They are nevertheless distinct extraction / Verify behaviours: one has a boolean
+ * answer and the other has a blank to fill. Keep them visible in every question-type picker without
+ * manufacturing master rows or changing that bank-folding behaviour.
+ */
+const PROFILE_ONLY_OPTIONS: readonly ComboboxOption[] = [
+  { value: 'true_false', label: 'True / false' },
+  { value: 'fill_blank', label: 'Fill in the blank' },
+];
+
 /** The behavior slug for one questionType master row (falls back to its kind, then its key). */
 export function questionTypeSlug(entry: Pick<DictionaryEntry, 'kind' | 'key'>): string {
   return KIND_TO_SLUG[entry.kind ?? ''] ?? entry.kind ?? entry.key;
 }
 
-/** questionType master rows → Combobox options whose label is the display name and value the slug. */
+/**
+ * QuestionType master rows → behaviour options whose labels are the managed display names.
+ *
+ * `true_false` and `fill_blank` are appended as profile-only choices. The extractor already
+ * understands both tokens, but the legacy master taxonomy folds them into `subjective`; appending
+ * them here lets Verify (and the ingest type picker) retain the right editor behaviour while the
+ * API continues to publish them through the existing subjective mapping. If an installation later
+ * adds a real master row for either token, its managed label wins and no duplicate is added.
+ */
 export function toQuestionTypeOptions(entries: readonly DictionaryEntry[]): ComboboxOption[] {
-  return entries.map((entry) => ({ value: questionTypeSlug(entry), label: entry.name }));
+  const managed = entries.map((entry) => ({ value: questionTypeSlug(entry), label: entry.name }));
+  const values = new Set(managed.map((option) => option.value));
+  return [
+    ...managed,
+    ...PROFILE_ONLY_OPTIONS.filter((option) => !values.has(option.value)),
+  ];
 }

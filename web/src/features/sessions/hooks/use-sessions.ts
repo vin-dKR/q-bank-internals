@@ -180,3 +180,20 @@ export function useRunDocumentExtraction(): UseMutationResult<ExtractionJob, Err
     onError: (err) => { error('Could not start extraction', err.message); },
   });
 }
+
+/** Replaces one extracted document's draft questions with a fresh run using the current prompts. */
+export function useReextractDocument(): UseMutationResult<ExtractionJob, Error, string> {
+  const queryClient = useQueryClient();
+  const { success, error } = useToast();
+  return useMutation({
+    mutationFn: (documentId: string) => sessionsApi.reextractDocument(documentId),
+    onSuccess: () => {
+      success('Re-extraction queued', 'The current prompts will be used to rebuild this file’s draft questions.');
+      void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      void queryClient.invalidateQueries({ queryKey: ['session'] });
+      void queryClient.invalidateQueries({ queryKey: ['documents'] });
+      void queryClient.invalidateQueries({ queryKey: ['questions'] });
+    },
+    onError: (err) => { error('Could not re-extract', err.message); },
+  });
+}

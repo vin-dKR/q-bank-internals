@@ -318,12 +318,22 @@ export function QuestionCard({
           <Button size="xs" variant="ghost" title="Edit this question's text here by hand (with the equation editor)" onClick={startEdit}>
             <IconEdit /> Edit
           </Button>
-          {question.documentId ? (
+          {question.documentId && question.ingestQuestionId ? (
             <Button
               size="xs"
               variant="ghost"
-              title="Open this question's source in Verify (crop images, re-read the page, etc.)"
-              onClick={() => { void navigate(`/verify?documentId=${encodeURIComponent(question.documentId as string)}&restore=1`); }}
+              title="Open this exact question on its source page in Verify"
+              onClick={() => {
+                const documentId = question.documentId;
+                const questionId = question.ingestQuestionId;
+                if (!documentId || !questionId) return;
+                const params = new URLSearchParams({
+                  documentId,
+                  questionId,
+                  restore: '1',
+                });
+                void navigate(`/verify?${params.toString()}`);
+              }}
             >
               Open in Verify
             </Button>

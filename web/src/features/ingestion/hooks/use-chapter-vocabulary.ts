@@ -6,14 +6,16 @@ import { toQuestionTypeOptions, useDictionary } from '../../taxonomy/index.js';
 /**
  * The masters-backed suggestion lists that seed every metadata Combobox in the ingestion flow, plus the
  * dependent lookups (`subjectsFor`, `modulesFor`, `chaptersFor`, `sectionsFor`) that scope a child
- * field to the parent already chosen. Every value comes from the all-masters dictionaries only — never
- * the Drive tree, past documents/sessions, or hardcoded constants — so an operator can only file a
- * chapter under managed vocabulary the extractor and publisher already resolve against.
+ * field to the parent already chosen. Values normally come from the all-masters dictionaries; the two
+ * supported behavioral profiles `true_false` and `fill_blank` remain selectable even though the
+ * legacy bank master folds them into Subjective. That keeps an operator's type aligned with the
+ * extractor without changing the publisher's existing bank mapping.
  *
- * `questionTypes` carries a value/label pair: the label is the master's display name (e.g. "Matrix
- * Match"), the value is the behavior SLUG (e.g. `matrix`) the extraction TYPE_RULES key on. Every other
- * list is plain names — publish folds a chosen name to its dictionary FK, and the name is also the Drive
- * folder segment. `sources` is a fixed behavioral enum (it drives the PYQ pipeline), not a dictionary.
+ * `questionTypes` carries a value/label pair: the label is normally the master's display name (e.g.
+ * "Matrix Match"), while those two profile-only choices have explicit labels. The value is the behavior
+ * SLUG (e.g. `matrix`) the extraction TYPE_RULES key on. Every other list is plain names — publish folds
+ * a chosen name to its dictionary FK, and the name is also the Drive folder segment. `sources` is a fixed
+ * behavioral enum (it drives the PYQ pipeline), not a dictionary.
  */
 export type ChapterVocabulary = {
   sources: string[];

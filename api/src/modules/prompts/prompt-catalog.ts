@@ -126,7 +126,8 @@ ANSWER RULES:
 2. answers keys are the question numbers as strings ("1", "2", …).
 3. Format each answer value exactly as the ANSWER TYPE-SPECIFIC RULE below requires.
 4. If no section name is printed, use "General".
-5. Use LaTeX for math; return valid, complete JSON only — no prose, no trailing commas.`;
+5. If an answer is presented as a diagram, graph, table, circuit, or other non-text figure, keep the answer value when readable but do NOT invent a text transcription for the figure. It belongs to that question's answer-key image; preserve the question-number pairing so Verify can crop it into the Answer images field.
+6. Use LaTeX for math; return valid, complete JSON only — no prose, no trailing commas.`;
 
 const SOLUTION_DEFAULT = `You are given an image from an exam SOLUTIONS booklet ({context}).
 Extract the worked solution for EVERY question visible in the image into this exact JSON shape:
@@ -148,7 +149,8 @@ SOLUTION RULES:
 3. explanation: the complete worked solution / reasoning as printed, preserving math as LaTeX (e.g. \\( \\sqrt{3} \\)). Do NOT summarise or omit steps.
 4. answer: the final answer if the solution states one, formatted exactly as the ANSWER TYPE-SPECIFIC RULE below requires; use null if no final answer is given.
 5. If no section name is printed, use "General".
-6. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`;
+6. If a solution contains a diagram, graph, circuit, table, or other non-text figure, do NOT omit it or describe it as if it were text. Keep it paired with that solution's question number so Verify can crop it into the Explanation images field.
+7. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`;
 
 const LATEX_SYSTEM_DEFAULT =
   'You are a LaTeX formatting expert. You wrap math and physical quantities in a passage using ' +

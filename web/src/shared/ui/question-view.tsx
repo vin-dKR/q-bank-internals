@@ -43,6 +43,7 @@ export type QuestionViewModel = {
   options: QuestionViewOption[];
   match: QuestionViewMatch | null;
   answer: string | null;
+  answerImages: string[];
   explanation: string | null;
   explanationImages: string[];
 };
@@ -295,12 +296,16 @@ export function QuestionView({
         </ul>
       ) : null}
 
-      {model.answer && model.answer.trim() ? (
-        <div className="flex items-center gap-1.5">
-          <Badge tone="success">
-            Answer:&nbsp;<RenderLatex text={model.answer} />
-          </Badge>
-          {answerAction}
+      {(model.answer && model.answer.trim()) || model.answerImages.length > 0 ? (
+        <div className="flex flex-col gap-1.5 rounded-lg border border-ok/30 bg-ok-soft p-3">
+          <div className="flex items-center gap-1.5">
+            <span className={FIELD_LABEL}>Answer</span>
+            {model.answer && model.answer.trim() ? (
+              <Badge tone="success"><RenderLatex text={model.answer} /></Badge>
+            ) : null}
+            {answerAction}
+          </div>
+          <FigureGrid urls={model.answerImages} alt="Answer figure" />
         </div>
       ) : null}
 

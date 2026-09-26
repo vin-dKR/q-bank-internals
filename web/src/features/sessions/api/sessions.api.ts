@@ -73,6 +73,14 @@ export const sessionsApi = {
     });
   },
 
+  /** Re-run an already extracted question PDF with the prompts currently configured in Prompt Studio. */
+  reextractDocument: (documentId: string): Promise<ExtractionJob> => {
+    return request(`/extraction/documents/${documentId}/reextract`, {
+      method: 'POST',
+      schema: ExtractionJobSchema,
+    });
+  },
+
   /**
    * The latest extraction job for a document (or null) — drives the shared status bar. Any operator
    * viewing the file polls this, so a run started elsewhere is visible; it is also the only progress

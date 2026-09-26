@@ -12,6 +12,7 @@ export function createExtractionRouter(service: ExtractionService): Router {
   router.get('/documents/:documentId/job', controller.documentJob);
   router.post('/jobs/:id/cancel', controller.cancel);
   router.post('/documents/:documentId/reset', controller.resetDocument);
+  router.post('/documents/:documentId/reextract', controller.reextractDocument);
 
   return router;
 }

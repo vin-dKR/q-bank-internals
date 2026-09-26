@@ -85,12 +85,15 @@ export function parseMatchKey(answer: string): Record<string, string[]> {
  */
 export const ImageCropSchema = z.object({
   url: z.string(),
-  type: z.enum(['question', 'option', 'passage']),
+  type: z.enum(['question', 'option', 'passage', 'answer', 'solution']),
   optionIndex: z.number().int().nonnegative(),
   nx: z.number(),
   ny: z.number(),
   nw: z.number(),
   nh: z.number(),
+  /** Sibling answer/solution document and page for a crop that is not on the question canvas. */
+  sourceDocumentId: z.string().optional(),
+  sourcePage: z.number().int().positive().optional(),
 });
 export type ImageCrop = z.infer<typeof ImageCropSchema>;
 
@@ -129,9 +132,11 @@ export const QuestionSchema = z.object({
   questionImage: z.string().nullable(),
   isOptionImage: z.boolean(),
   optionImages: z.array(z.string()),
-  // Figures attached to the worked solution / explanation (Supabase URLs). Ingest-only annotation for
-  // diagrams that belong to the reasoning; empty by default. Unlike question/option figures these are
-  // not re-materialised as editable canvas boxes on reload — they persist as thumbnails.
+  // Figures printed with the answer key (Supabase URLs). Kept separately from the worked solution:
+  // answer sheets and solution sheets are different source PDFs and often contain different figures.
+  answerImages: z.array(z.string()).default([]),
+  // Figures attached to the worked solution / explanation (Supabase URLs). Published with the question
+  // and shown as solution figures; their source-page crop metadata is kept in `imageCrops`.
   explanationImages: z.array(z.string()).default([]),
   // Persisted crop rectangles (natural image pixels) for the attached figures — ingest-only, empty by
   // default. Lets every saved crop reappear as an editable box on the verify canvas on any device.
@@ -242,6 +247,7 @@ export const UpdateQuestionSchema = QuestionSchema.pick({
   questionImage: true,
   isOptionImage: true,
   optionImages: true,
+  answerImages: true,
   explanationImages: true,
   imageCrops: true,
   questionType: true,

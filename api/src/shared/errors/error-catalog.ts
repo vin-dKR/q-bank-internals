@@ -61,6 +61,13 @@ export const errors = {
   extractionInProgress: (documentId: string): AppError =>
     new AppError('EXTRACTION_IN_PROGRESS', 409, `Document "${documentId}" is already extracting.`),
 
+  documentNotReextractable: (id: string, status: string): AppError =>
+    new AppError(
+      'DOCUMENT_NOT_REEXTRACTABLE',
+      409,
+      `Document "${id}" is "${status}" and cannot be re-extracted. Published documents must be revised through the published-question workflow.`,
+    ),
+
   documentUnitVersionExists: (fileName: string, status: string): AppError =>
     new AppError(
       'DOCUMENT_UNIT_VERSION_EXISTS',

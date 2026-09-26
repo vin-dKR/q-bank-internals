@@ -123,6 +123,106 @@ export function useUpdateQuestion(): UseMutationResult<
   });
 }
 
+type ImageModeKey = 'isQuestionImage' | 'isOptionImage';
+type ImageModeInput = { id: string; documentId: string; key: ImageModeKey; value: boolean };
+type ImageModeContext = { previousValue: boolean | undefined; revision: number };
+
+function imageModeWriteKey(input: Pick<ImageModeInput, 'id' | 'key'>): string {
+  return `${input.id}:${input.key}`;
+}
+
+// A rapid series of checkbox clicks must reach the API in click order. Keeping
+// the queue per question + field lets Question images and Option images save
+// independently without allowing an older request to overwrite a newer intent.
+const imageModeWrites = new Map<string, Promise<void>>();
+const confirmedImageModes = new Map<string, boolean>();
+const imageModeRevisions = new Map<string, number>();
+function queueImageModeWrite(input: ImageModeInput): Promise<Question> {
+  const queueKey = imageModeWriteKey(input);
+  const previous = imageModeWrites.get(queueKey) ?? Promise.resolve();
+  const request = previous
+    .catch(() => undefined)
+    .then(async () => {
+      const question = await questionsApi.update(input.id, { [input.key]: input.value });
+      // This only runs in the serialized request order. A later optimistic intent may already be
+      // visible in the cache, but this remains the authoritative fallback if that later write fails.
+      confirmedImageModes.set(queueKey, question[input.key]);
+      return question;
+    });
+  imageModeWrites.set(queueKey, request.then(() => undefined, () => undefined));
+  return request;
+}
+
+/**
+ * Fast, field-level image-mode toggle. Unlike the general PATCH hook, this
+ * updates only its boolean in the cache and skips a full refetch, so enabling a
+ * figure target mounts its controls instantly while the write completes.
+ */
+export function useSetQuestionImageMode(): UseMutationResult<Question, Error, ImageModeInput, ImageModeContext> {
+  const queryClient = useQueryClient();
+  const { error } = useToast();
+  return useMutation({
+    mutationFn: queueImageModeWrite,
+    onMutate: (input) => {
+      const key = questionsQueryKey(input.documentId);
+      // Start cancelling an in-flight fetch, but never make visual feedback wait for it. The card
+      // also owns a local-first flag, so the toggle mounts/unmounts its figure controls synchronously.
+      void queryClient.cancelQueries({ queryKey: key });
+      let previousValue: boolean | undefined;
+      queryClient.setQueryData<QuestionListResponse>(key, (previous) =>
+        previous
+          ? {
+              ...previous,
+              questions: previous.questions.map((question) => {
+                if (question.id !== input.id) return question;
+                previousValue = question[input.key];
+                return { ...question, [input.key]: input.value };
+              }),
+            }
+          : previous,
+      );
+      const writeKey = imageModeWriteKey(input);
+      if (!confirmedImageModes.has(writeKey)) {
+        confirmedImageModes.set(writeKey, previousValue ?? !input.value);
+      }
+      const revision = (imageModeRevisions.get(writeKey) ?? 0) + 1;
+      imageModeRevisions.set(writeKey, revision);
+      return { previousValue, revision };
+    },
+    onError: (caught, input, context) => {
+      const key = questionsQueryKey(input.documentId);
+      const writeKey = imageModeWriteKey(input);
+      // Never let a failed older click roll back a newer queued intent. If the newest click fails,
+      // restore the last value the serialized API queue actually confirmed — not merely the previous
+      // optimistic value, which may itself have failed.
+      if (context && imageModeRevisions.get(writeKey) === context.revision) {
+        const confirmed = confirmedImageModes.get(writeKey) ?? context.previousValue ?? !input.value;
+        queryClient.setQueryData<QuestionListResponse>(key, (previous) =>
+          previous
+            ? {
+                ...previous,
+                questions: previous.questions.map((question) =>
+                  question.id === input.id ? { ...question, [input.key]: confirmed } : question,
+                ),
+              }
+            : previous,
+        );
+      }
+      error('Could not update image mode', caught.message);
+    },
+    onSettled: (_result, _error, input, context) => {
+      const writeKey = imageModeWriteKey(input);
+      // Once the most recent intent has settled, a later click will seed fresh state from the cache.
+      // This keeps the little per-field queue bounded for long Verify sessions.
+      if (context && imageModeRevisions.get(writeKey) === context.revision) {
+        imageModeWrites.delete(writeKey);
+        confirmedImageModes.delete(writeKey);
+        imageModeRevisions.delete(writeKey);
+      }
+    },
+  });
+}
+
 /**
  * Deletes one question (and its published bank copy), then refreshes the document's questions and the
  * unit/session listings whose stored question counts change.

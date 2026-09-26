@@ -39,7 +39,7 @@ import {
   EditableQuestionCard,
 } from './editable-question-card.js';
 import { ComprehensionGroupPanel } from './comprehension-group.js';
-import { SourcePreviewPane } from './source-preview-pane.js';
+import { SourcePreviewPane, type SourcePreviewMagnifier } from './source-preview-pane.js';
 import { useVerifySources } from '../hooks/use-verify-sources.js';
 
 /** Which source PDFs sit beside the question page: question only, + answer, or + answer & solution. */
@@ -48,8 +48,8 @@ type ViewMode = 'question' | 'answer' | 'solution';
 /** The view-toggle options. `needs` names the sibling document an option requires to be selectable. */
 const VIEW_MODES: readonly { mode: ViewMode; label: string; needs: 'answer' | 'solution' | null }[] = [
   { mode: 'question', label: 'Question', needs: null },
-  { mode: 'answer', label: '+ Answer', needs: 'answer' },
-  { mode: 'solution', label: '+ Solution', needs: 'solution' },
+  { mode: 'answer', label: 'Answer', needs: 'answer' },
+  { mode: 'solution', label: 'Solution', needs: 'solution' },
 ];
 
 /** Draggable split between the source page and the question panel — persisted width, clamped range. */
@@ -99,9 +99,20 @@ type DrawTarget = { questionId: string; type: 'question' | 'option'; optionIndex
  */
 type CropRequest = {
   questionId: string;
-  /** Which page the crop is taken from: the question page (main canvas) or the sibling solution page. */
-  source: 'question' | 'solution';
+  /** Which source page the crop is taken from: main question canvas, answer key, or solution. */
+  source: 'question' | 'answer' | 'solution';
+  sourceDocumentId?: string;
   resolve: (url: string | null) => void;
+};
+
+/** A durable Answer/Solution crop, paired with the question field it must replace on release. */
+type SiblingPreviewCrop = {
+  /** Stable pane-local identity; URLs change after a re-crop, so a replacement receives a new id. */
+  id: string;
+  questionId: string;
+  crop: ImageCrop;
+  page: number;
+  label: string;
 };
 
 /** One in-flight auto-save per box; `again` re-runs it with the latest rect once the current pass ends. */
@@ -188,10 +199,10 @@ function specToCrop(spec: SavedBoxSpec): ImageCrop {
 
 /** Rebuild the session's natural-pixel specs for a question from the crops persisted on it. */
 function cropsToSpecs(question: Question, number: number): SavedBoxSpec[] {
-  // A question's crops only ever target its own question/option destinations; passage crops live on the
-  // Passage entity, so filter them out here (the type predicate also narrows to SavedBoxSpec's union).
+  // Only question/option crops belong on the main canvas. Passage crops live on Passage, while
+  // answer/solution crops are re-opened in their sibling source pane.
   return question.imageCrops
-    .filter((crop): crop is ImageCrop & { type: 'question' | 'option' } => crop.type !== 'passage')
+    .filter((crop): crop is ImageCrop & { type: 'question' | 'option' } => crop.type === 'question' || crop.type === 'option')
     .map((crop, index) => ({
     id: `persist_${question.id}_${crop.type}_${String(crop.optionIndex)}_${String(index)}`,
     questionId: question.id,
@@ -351,10 +362,12 @@ function CropMagnifier({
   imageSrc,
   box,
   size,
+  label = 'Live crop preview',
 }: {
   imageSrc: string;
   box: BoxRect;
   size: CanvasSize;
+  label?: string;
 }): JSX.Element {
   const viewRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
@@ -385,7 +398,7 @@ function CropMagnifier({
   return (
     <div className="verify__magnifier">
       <div className="verify__magnifier-head">
-        <span className="flex items-center gap-1.5"><IconZoomIn /> Live crop preview</span>
+        <span className="flex items-center gap-1.5"><IconZoomIn /> {label}</span>
         <span className="verify__magnifier-dims">{String(Math.round(naturalW))} × {String(Math.round(naturalH))} px</span>
       </div>
       <div ref={viewRef} className="verify__magnifier-view">
@@ -489,7 +502,22 @@ export function VerifyWorkspace({
   // no separate answer/solution PDF to show, so the side-by-side answer/solution views are dropped.
   const inlineAnswers = document.data?.answerLayout === 'inline';
   const viewModes = inlineAnswers ? VIEW_MODES.filter((option) => option.mode === 'question') : VIEW_MODES;
-  const [viewMode, setViewMode] = useState<ViewMode>('question');
+  // The source previews are independently selectable: teachers often need to compare a question to
+  // its answer, its worked solution, or both. The set is deliberately never empty — one source must
+  // remain visible at all times.
+  const [visibleViews, setVisibleViews] = useState<ReadonlySet<ViewMode>>(() => new Set<ViewMode>(['question']));
+  const toggleView = useCallback((mode: ViewMode): void => {
+    setVisibleViews((previous) => {
+      const next = new Set(previous);
+      if (next.has(mode)) {
+        if (next.size === 1) return previous;
+        next.delete(mode);
+      } else {
+        next.add(mode);
+      }
+      return next;
+    });
+  }, []);
   const answerSource: ReExtractSource | undefined = sources.answer
     ? { documentId: sources.answer.document.id, page: sources.answer.defaultPage }
     : undefined;
@@ -501,7 +529,7 @@ export function VerifyWorkspace({
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [drawTarget, setDrawTarget] = useState<DrawTarget | null>(null);
-  // A pending one-shot field crop (explanation / match image); mirrored in a ref so the async draw +
+  // A pending one-shot field crop (answer/explanation/match image); mirrored in a ref so the async draw +
   // upload path reads the live request without stale closures. Only one is armed at a time.
   const [cropRequest, setCropRequest] = useState<CropRequest | null>(null);
   const cropRequestRef = useRef<CropRequest | null>(null);
@@ -513,8 +541,9 @@ export function VerifyWorkspace({
   const [drawPreview, setDrawPreview] = useState<BoxRect | null>(null);
   /** The box currently being dragged/resized — feeds the magnifier while it is adjusted. */
   const [activeBoxId, setActiveBoxId] = useState<string | null>(null);
-  /** A box briefly rung to draw the eye to it after "Edit crop" re-selected an already-drawn crop. */
-  const [flashId, setFlashId] = useState<string | null>(null);
+  /** Live answer/solution drag forwarded by SourcePreviewPane into the same magnifier UI. */
+  const [siblingMagnifier, setSiblingMagnifier] = useState<SourcePreviewMagnifier | null>(null);
+  useEffect(() => { setSiblingMagnifier(null); }, [documentId]);
 
   // The scrolling question panel (scrolled back to the top on every page change) and the draggable
   // split between it and the source page.
@@ -677,6 +706,47 @@ export function VerifyWorkspace({
     (questions.data ?? []).forEach((q) => map.set(q.id, q));
     return map;
   }, [questions.data]);
+  // Unlike a temporary crop request, these are durable sibling-PDF boundaries. Every answer/solution
+  // figure with saved source metadata is projected into its own draggable box — several questions can
+  // legitimately share one answer-key or solution page, so a single "first crop" is not sufficient.
+  const answerPreviewCrops = useMemo<SiblingPreviewCrop[]>(() => {
+    const source = sources.answer;
+    if (!source) return [];
+    return (questions.data ?? []).flatMap((question) =>
+      question.imageCrops
+        .filter((crop) =>
+          crop.type === 'answer' &&
+          question.answerImages.includes(crop.url) &&
+          (!crop.sourceDocumentId || crop.sourceDocumentId === source.document.id),
+        )
+        .map((crop, index) => ({
+          id: `answer:${question.id}:${crop.url}:${String(index)}`,
+          questionId: question.id,
+          crop,
+          page: crop.sourcePage ?? source.defaultPage,
+          label: `Q${String(questionNumberById.get(question.id) ?? '?')} · answer`,
+        })),
+    );
+  }, [questions.data, questionNumberById, sources.answer]);
+  const solutionPreviewCrops = useMemo<SiblingPreviewCrop[]>(() => {
+    const source = sources.solution;
+    if (!source) return [];
+    return (questions.data ?? []).flatMap((question) =>
+      question.imageCrops
+        .filter((crop) =>
+          crop.type === 'solution' &&
+          question.explanationImages.includes(crop.url) &&
+          (!crop.sourceDocumentId || crop.sourceDocumentId === source.document.id),
+        )
+        .map((crop, index) => ({
+          id: `solution:${question.id}:${crop.url}:${String(index)}`,
+          questionId: question.id,
+          crop,
+          page: crop.sourcePage ?? source.defaultPage,
+          label: `Q${String(questionNumberById.get(question.id) ?? '?')} · solution`,
+        })),
+    );
+  }, [questions.data, questionNumberById, sources.solution]);
 
   // Group this page's questions for rendering: consecutive rows sharing a non-null comprehension
   // passageId collapse under ONE passage header (BLA-125); everything else renders as a standalone card.
@@ -774,28 +844,33 @@ export function VerifyWorkspace({
     return missing;
   }, [questions.data]);
 
-  // Scroll to + briefly ring the question card a pending crop was mapped to, so the operator can
-  // confirm by eye which extracted question the picture belongs to.
+  // Scroll to + briefly ring the question card and its original source region, so a bank link (or an
+  // AI crop review row) makes it immediately obvious which extracted question is in focus.
   const cardRefs = useRef(new Map<string, HTMLDivElement>());
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [sourceHighlightId, setSourceHighlightId] = useState<string | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusQuestion = (questionId: string): void => {
     cardRefs.current.get(questionId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     setHighlightId(questionId);
+    setSourceHighlightId(questionId);
     if (highlightTimer.current) clearTimeout(highlightTimer.current);
     highlightTimer.current = setTimeout(() => { setHighlightId(null); }, 1800);
   };
   useEffect(() => () => { if (highlightTimer.current) clearTimeout(highlightTimer.current); }, []);
 
-  // Briefly ring a canvas box so an "Edit crop" click that re-selected an already-present box is
-  // acknowledged (the box was invisible in a wall of similar regions otherwise).
-  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const flashBox = (id: string): void => {
-    setFlashId(id);
-    if (flashTimer.current) clearTimeout(flashTimer.current);
-    flashTimer.current = setTimeout(() => { setFlashId(null); }, 1400);
-  };
-  useEffect(() => () => { if (flashTimer.current) clearTimeout(flashTimer.current); }, []);
+  // Wait for the fitted page dimensions before starting this timer: an image can take a moment to
+  // load after a direct bank link, and the source-region outline should remain visible *after* the
+  // preview is actually ready rather than expiring while its spinner is still on screen.
+  useEffect(() => {
+    if (!sourceHighlightId || !size || size.displayWidth === 0) return undefined;
+    const target = questionById.get(sourceHighlightId);
+    if (!target || target.sourceRegion.page !== page) return undefined;
+    const timer = setTimeout(() => {
+      setSourceHighlightId((current) => (current === sourceHighlightId ? null : current));
+    }, 2400);
+    return () => { clearTimeout(timer); };
+  }, [page, questionById, size, sourceHighlightId]);
 
   /** Snapshot the current page's saved boxes (natural pixels) so navigating back to it redraws them. */
   const cacheCurrentPage = (pageNumber: number): void => {
@@ -810,6 +885,10 @@ export function VerifyWorkspace({
   const goToPage = (next: number): void => {
     cacheCurrentPage(page);
     applyBoxes(() => []);
+    // A source-region focus must wait for the new page image to report fresh fitted dimensions; do not
+    // project a direct-link bbox through the previous page's stale canvas size.
+    sizeRef.current = null;
+    setSize(null);
     past.current = [];
     future.current = [];
     applySavedUrls(() => new Map());
@@ -824,19 +903,20 @@ export function VerifyWorkspace({
     requestAnimationFrame(() => { panelRef.current?.scrollTo({ top: 0 }); });
   };
 
-  // A bank search opens the workspace on the focused question's source page; once its card renders,
-  // scroll to and briefly ring it so the operator sees exactly which question they came to fix. If
-  // its page somehow differs from where we opened, navigate there first. Runs once.
-  const focusedOnce = useRef(false);
+  // A bank search or Questions-browse link opens the workspace on the focused question's source page;
+  // once its card renders, scroll to and briefly ring both the card and the source region. If its page
+  // differs from where we opened, navigate there first. One target can be focused once, while a later
+  // link to a different target in the same mounted workspace still works.
+  const focusedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!focusQuestionId || focusedOnce.current) return;
+    if (!focusQuestionId || focusedFor.current === focusQuestionId) return;
     const target = (questions.data ?? []).find((q) => q.id === focusQuestionId);
     if (!target) return;
     if (target.sourceRegion.page !== pageRef.current) {
       goToPage(target.sourceRegion.page);
       return;
     }
-    focusedOnce.current = true;
+    focusedFor.current = focusQuestionId;
     focusQuestion(focusQuestionId);
   }, [focusQuestionId, questions.data, page]);
 
@@ -1014,53 +1094,8 @@ export function VerifyWorkspace({
     }
   };
 
-  // When set, the next drawn crop REPLACES this already-attached image url in place rather than
-  // appending a new one — the "Edit crop" fallback used when no box/spec survives to reopen.
-  const replaceUrl = useRef<string | null>(null);
-
-  /**
-   * Bring a saved crop back onto the canvas as an adjustable box so the operator can move/resize it
-   * (it re-saves on release). Three cases, best first:
-   *  1. Its box is still on the current page's canvas — just ring it; it is already adjustable.
-   *  2. A natural-pixel spec for it is remembered (this session) — restore the exact rect, navigating
-   *     to its page first if it lives on another one.
-   *  3. Nothing survives (e.g. after a reload) — arm a re-draw that REPLACES this exact image url.
-   */
-  const editCrop = (
-    questionId: string,
-    type: 'question' | 'option',
-    optionIndex: number,
-    url: string,
-  ): void => {
-    const onCanvas = boxesRef.current.find((b) => savedUrlsRef.current.get(b.id) === url);
-    if (onCanvas) {
-      flashBox(onCanvas.id);
-      return;
-    }
-    for (const [pageNumber, specs] of pageCache.current) {
-      const spec = specs.find((s) => s.url === url);
-      if (!spec) continue;
-      if (pageNumber === page) {
-        if (size && size.displayWidth > 0) {
-          const box = specToBox(spec, size);
-          applyBoxes((prev) => [...prev, box]);
-          applySavedUrls((prev) => new Map(prev).set(spec.id, spec.url));
-          flashBox(box.id);
-        }
-      } else {
-        // goToPage restores every cached spec for the target page (this one included) once it fits.
-        goToPage(pageNumber);
-      }
-      return;
-    }
-    // No box, no spec: arm a fresh draw whose crop replaces this url in place.
-    replaceUrl.current = url;
-    setDrawTarget({ questionId, type, optionIndex });
-  };
-
   // --- Draw-to-save (manual flow): arm a target from its card, rubber-band draw, auto-save. ---
   const toggleDrawTarget = (question: Question, type: 'question' | 'option', optionIndex = 0): void => {
-    replaceUrl.current = null;
     cancelCropRequest(); // a box draw and a field crop can't be armed together
     setDrawTarget((prev) =>
       prev && prev.questionId === question.id && prev.type === type && prev.optionIndex === optionIndex
@@ -1086,11 +1121,6 @@ export function VerifyWorkspace({
         ...rect,
       },
     ]);
-    // Seed the box's saved-url so the save REPLACES the edited image in place (attachCrop keys the
-    // replacement off the box's previous url) instead of attaching a second figure.
-    const replacing = replaceUrl.current;
-    replaceUrl.current = null;
-    if (replacing !== null) applySavedUrls((prev) => new Map(prev).set(id, replacing));
     setDrawTarget(null);
     void requestSave(id);
   };
@@ -1111,7 +1141,7 @@ export function VerifyWorkspace({
     return () => { window.document.removeEventListener('keydown', onKey); };
   }, [drawTarget]);
 
-  // --- One-shot field crops (explanation image, match-the-column entry image). ---
+  // --- One-shot field crops (answer/explanation image, match-the-column entry image). ---
   // A card asks for a crop; the workspace arms a rubber-band on the right source page (the question
   // canvas, or the solution preview pane) and resolves with the uploaded image URL once the operator
   // draws — reusing the crop + upload primitives without touching the editable-box pipeline, since
@@ -1125,26 +1155,103 @@ export function VerifyWorkspace({
     clearCropRequest();
   };
   const requestCrop = useCallback(
-    (questionId: string, source: 'question' | 'solution'): Promise<string | null> =>
+    (questionId: string, source: 'question' | 'answer' | 'solution'): Promise<string | null> =>
       new Promise<string | null>((resolve) => {
         cropRequestRef.current?.resolve(null); // supersede any prior pending request
         setDrawTarget(null); // the editable-box draw and a field crop can't be armed at once
-        replaceUrl.current = null;
-        if (source === 'solution') setViewMode('solution'); // reveal the solution pane to crop from
-        const req: CropRequest = { questionId, source, resolve };
+        setVisibleViews((previous) => new Set([...previous, source]));
+        const sibling = source === 'answer' ? sources.answer : source === 'solution' ? sources.solution : undefined;
+        const req: CropRequest = {
+          questionId,
+          source,
+          ...(sibling ? { sourceDocumentId: sibling.document.id } : {}),
+          resolve,
+        };
         cropRequestRef.current = req;
         setCropRequest(req);
       }),
-    [],
+    [sources.answer, sources.solution],
   );
+  /** Put a just-drawn sibling figure in the card immediately, before upload latency is visible. */
+  const addOptimisticSiblingImage = (questionId: string, source: 'answer' | 'solution', previewUrl: string): void => {
+    const field = source === 'answer' ? 'answerImages' : 'explanationImages';
+    queryClient.setQueryData<QuestionListResponse>(questionsQueryKey(documentId), (previous) =>
+      previous
+        ? {
+            ...previous,
+            questions: previous.questions.map((question) =>
+              question.id === questionId && !question[field].includes(previewUrl)
+                ? { ...question, [field]: [...question[field], previewUrl] }
+                : question,
+            ),
+          }
+        : previous,
+    );
+  };
+  /** Roll back only the temporary browser URL if its background upload fails or the user removes it. */
+  const removeOptimisticSiblingImage = (questionId: string, source: 'answer' | 'solution', previewUrl: string): void => {
+    const field = source === 'answer' ? 'answerImages' : 'explanationImages';
+    queryClient.setQueryData<QuestionListResponse>(questionsQueryKey(documentId), (previous) =>
+      previous
+        ? {
+            ...previous,
+            questions: previous.questions.map((question) =>
+              question.id === questionId
+                ? { ...question, [field]: question[field].filter((url) => url !== previewUrl) }
+                : question,
+            ),
+          }
+        : previous,
+    );
+  };
   // Crop `imageUrl` at `natural` (natural px), upload it against the pending request's question, and
   // resolve the request with the new URL. Any failure resolves null so the caller's button just resets.
-  const fulfilCrop = async (imageUrl: string, natural: BoxRect): Promise<void> => {
+  const fulfilCrop = async (imageUrl: string, natural: BoxRect, sourcePage?: number): Promise<void> => {
     const req = cropRequestRef.current;
     if (!req) return;
     clearCropRequest();
     try {
       const blob = await getCroppedBlob(imageUrl, natural);
+      if (req.source === 'answer' || req.source === 'solution') {
+        const siblingSource = req.source;
+        // The UI gets a browser-local image as soon as the crop encoder finishes (usually far sooner
+        // than an upload + database round trip). The background job replaces it with the durable URL.
+        const previewUrl = URL.createObjectURL(blob);
+        addOptimisticSiblingImage(req.questionId, siblingSource, previewUrl);
+        req.resolve(previewUrl);
+        void (async (): Promise<void> => {
+          try {
+            const { url } = await questionsApi.uploadImage(req.questionId, `crop_${String(Date.now())}`, blob);
+            await enqueueQuestionWrite(req.questionId, async () => {
+              const latest = readQuestion(req.questionId);
+              if (!latest) return;
+              const field = siblingSource === 'answer' ? 'answerImages' : 'explanationImages';
+              // The user may have removed the temporary thumbnail while its upload ran. In that case
+              // do not revive it server-side.
+              if (!latest[field].includes(previewUrl)) return;
+              const media = latest[field].map((item) => (item === previewUrl ? url : item));
+              const imageCrops = upsertCrop(latest.imageCrops, {
+                url,
+                type: siblingSource,
+                optionIndex: 0,
+                nx: natural.x,
+                ny: natural.y,
+                nw: natural.width,
+                nh: natural.height,
+                ...(req.sourceDocumentId ? { sourceDocumentId: req.sourceDocumentId } : {}),
+                ...(sourcePage ? { sourcePage } : {}),
+              }, undefined);
+              await patchQuestion({ id: latest.id, patch: { [field]: media, imageCrops } });
+            });
+          } catch (caught) {
+            removeOptimisticSiblingImage(req.questionId, siblingSource, previewUrl);
+            setError(caught instanceof Error ? caught.message : String(caught));
+          } finally {
+            URL.revokeObjectURL(previewUrl);
+          }
+        })();
+        return;
+      }
       const { url } = await questionsApi.uploadImage(req.questionId, `crop_${String(Date.now())}`, blob);
       req.resolve(url);
     } catch (caught) {
@@ -1152,6 +1259,58 @@ export function VerifyWorkspace({
       req.resolve(null);
     }
   };
+
+  /** Persist a drag on an already-visible Answer/Solution crop boundary. */
+  const replacePreviewCrop = (
+    questionId: string,
+    source: 'answer' | 'solution',
+    replacedUrl: string,
+    sourceDocumentId: string,
+    imageUrl: string,
+    natural: BoxRect,
+    sourcePage: number,
+  ): Promise<string | null> => {
+    // A direct boundary drag is an explicit new action. If a card happened to have a different
+    // one-shot crop armed, settle that promise first so its button never remains in "Draw…" state.
+    cropRequestRef.current?.resolve(null);
+    clearCropRequest();
+    return (async (): Promise<string | null> => {
+      try {
+        const blob = await getCroppedBlob(imageUrl, natural);
+        const { url } = await questionsApi.uploadImage(questionId, `crop_${String(Date.now())}`, blob);
+        // Persist the refreshed sibling crop AND replace precisely its paired media URL in ONE queued
+        // write. That avoids a brief metadata/media mismatch and prevents two different boundaries on
+        // the same question from clobbering one another.
+        await enqueueQuestionWrite(questionId, async () => {
+          const latest = readQuestion(questionId);
+          if (!latest) return;
+          const field = source === 'answer' ? 'answerImages' : 'explanationImages';
+          const mediaIndex = latest[field].indexOf(replacedUrl);
+          // A card may have removed the figure while its crop upload was in progress. Do not revive it.
+          if (mediaIndex < 0) return;
+          const media = [...latest[field]];
+          media[mediaIndex] = url;
+          const imageCrops = upsertCrop(latest.imageCrops, {
+            url,
+            type: source,
+            optionIndex: 0,
+            nx: natural.x,
+            ny: natural.y,
+            nw: natural.width,
+            nh: natural.height,
+            sourceDocumentId,
+            sourcePage,
+          }, replacedUrl);
+          await patchQuestion({ id: latest.id, patch: { [field]: media, imageCrops } });
+        });
+        return url;
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught));
+        return null;
+      }
+    })();
+  };
+
   // The main canvas' draw handler serves a pending question-source crop first, else the box pipeline.
   // (A solution-source request is fulfilled from the preview pane, so it falls through to handleDraw
   // here — but handleDraw no-ops without a drawTarget, and none is armed while a crop request is.)
@@ -1167,7 +1326,7 @@ export function VerifyWorkspace({
         y: rect.y * scaleY,
         width: rect.width * scaleX,
         height: rect.height * scaleY,
-      });
+      }, page);
       return;
     }
     handleDraw(rect);
@@ -1568,11 +1727,32 @@ export function VerifyWorkspace({
     height: b.height,
     variant: savedUrls.has(b.id) ? 'saved' : b.source,
     busy: busy.has(b.id),
-    flash: flashId === b.id,
   }));
+  // Published-bank navigation carries a question id, not display pixels. Project its persisted natural
+  // source bbox into this page's fitted canvas only while the transient focus is active.
+  const sourceFocus = (() => {
+    if (!sourceHighlightId || !size || size.displayWidth === 0 || size.naturalWidth === 0) return null;
+    const target = questionById.get(sourceHighlightId);
+    if (!target || target.sourceRegion.page !== page) return null;
+    const [x, y, width, height] = target.sourceRegion.bbox;
+    return {
+      rect: {
+        x: x * (size.displayWidth / size.naturalWidth),
+        y: y * (size.displayHeight / size.naturalHeight),
+        width: width * (size.displayWidth / size.naturalWidth),
+        height: height * (size.displayHeight / size.naturalHeight),
+      },
+      label: `Q${String(questionNumberById.get(target.id) ?? '?')}`,
+    };
+  })();
   // What the magnifier zooms into: a crop being drawn takes priority, else the box being adjusted.
   const magnifierBox: BoxRect | null =
     drawPreview ?? (activeBoxId ? boxes.find((b) => b.id === activeBoxId) ?? null : null);
+  // Main-page crops take precedence while they are active; sibling previews publish the same shape
+  // so Answer and Solution drawing/resizing uses this exact magnifier too.
+  const activeMagnifier: SourcePreviewMagnifier | null = magnifierBox && size && size.displayWidth > 0
+    ? { imageSrc, box: magnifierBox, size, label: 'Live crop preview' }
+    : siblingMagnifier;
   // The main canvas is armed either for a box draw (drawLabel) or for a question-source field crop.
   const cropDrawLabel =
     cropRequest && cropRequest.source === 'question'
@@ -1633,6 +1813,7 @@ export function VerifyWorkspace({
         drawTarget={cardDrawTargetFor(question.id)}
         cropDisabled={runActive}
         nested={nested}
+        {...(!nested ? { selection: { checked: selectedIds.has(question.id), onChange: () => { toggleSelect(question.id); } } } : {})}
         answerSource={answerSource}
         solutionSource={solutionSource}
         onDraftUpdate={(updater) => { drafts.updateDraft(question.id, updater); }}
@@ -1642,7 +1823,6 @@ export function VerifyWorkspace({
         onDrawRegion={toggleDrawTarget}
         onSaveBox={(boxId) => { void requestSave(boxId); }}
         onDeleteBox={deleteBox}
-        onEditCrop={(type, optionIndex, url) => { editCrop(question.id, type, optionIndex, url); }}
       />
     </div>
   );
@@ -1676,7 +1856,8 @@ export function VerifyWorkspace({
   return (
     <div className="verify" style={{ '--verify-panel-w': `${String(panelWidth)}px` } as CSSProperties}>
       <div className="verify__canvas">
-        <div className="verify__rail" role="toolbar" aria-label="Source page tools">
+          {visibleViews.has('question') ? (
+          <div className="verify__rail" role="toolbar" aria-label="Source page tools">
           <div className="verify__rail-group">
             <IconButton
               icon={<IconChevronLeft />}
@@ -1736,9 +1917,11 @@ export function VerifyWorkspace({
             <b> Detect all pages</b> detects and attaches figures across the whole document in one
             run, skipping targets that already have an image — review the cards afterwards.
           </ToolbarHelp>
-        </div>
+          </div>
+          ) : null}
 
-        <div className="verify__stage">
+        {visibleViews.has('question') ? (
+          <div className="verify__stage">
           <CropCanvas
             imageSrc={imageSrc}
             boxes={canvasBoxes}
@@ -1751,19 +1934,48 @@ export function VerifyWorkspace({
             onDrawCancel={() => { setDrawTarget(null); cancelCropRequest(); }}
             onBoxGrab={handleBoxGrab}
             onBoxRelease={handleBoxRelease}
+            focus={sourceFocus}
           />
-        </div>
+          </div>
+        ) : null}
 
-        {viewMode !== 'question' && sources.answer ? (
+        {visibleViews.has('answer') && sources.answer ? (
           <SourcePreviewPane
             title="Answer"
             tone="answer"
             documentId={sources.answer.document.id}
             fileName={sources.answer.document.fileName}
             defaultPage={sources.answer.defaultPage}
+            crop={{
+              armed: cropRequest?.source === 'answer',
+              onCrop: (imageUrl, natural, sourcePage) => { void fulfilCrop(imageUrl, natural, sourcePage); },
+              onCancel: cancelCropRequest,
+              existingCrops: answerPreviewCrops.map((item) => ({
+                id: item.id,
+                url: item.crop.url,
+                rect: { x: item.crop.nx, y: item.crop.ny, width: item.crop.nw, height: item.crop.nh },
+                page: item.page,
+                label: item.label,
+              })),
+              onExistingCrop: (id, replacedUrl, imageUrl, natural, sourcePage) => {
+                const target = answerPreviewCrops.find((item) => item.id === id);
+                const sourceDocumentId = sources.answer?.document.id;
+                if (!target || !sourceDocumentId) return null;
+                return replacePreviewCrop(
+                  target.questionId,
+                  'answer',
+                  replacedUrl,
+                  sourceDocumentId,
+                  imageUrl,
+                  natural,
+                  sourcePage,
+                );
+              },
+            }}
+            onMagnifierChange={setSiblingMagnifier}
           />
         ) : null}
-        {viewMode === 'solution' && sources.solution ? (
+        {visibleViews.has('solution') && sources.solution ? (
           <SourcePreviewPane
             title="Solution"
             tone="solution"
@@ -1772,9 +1984,31 @@ export function VerifyWorkspace({
             defaultPage={sources.solution.defaultPage}
             crop={{
               armed: cropRequest?.source === 'solution',
-              onCrop: (imageUrl, natural) => { void fulfilCrop(imageUrl, natural); },
+              onCrop: (imageUrl, natural, sourcePage) => { void fulfilCrop(imageUrl, natural, sourcePage); },
               onCancel: cancelCropRequest,
+              existingCrops: solutionPreviewCrops.map((item) => ({
+                id: item.id,
+                url: item.crop.url,
+                rect: { x: item.crop.nx, y: item.crop.ny, width: item.crop.nw, height: item.crop.nh },
+                page: item.page,
+                label: item.label,
+              })),
+              onExistingCrop: (id, replacedUrl, imageUrl, natural, sourcePage) => {
+                const target = solutionPreviewCrops.find((item) => item.id === id);
+                const sourceDocumentId = sources.solution?.document.id;
+                if (!target || !sourceDocumentId) return null;
+                return replacePreviewCrop(
+                  target.questionId,
+                  'solution',
+                  replacedUrl,
+                  sourceDocumentId,
+                  imageUrl,
+                  natural,
+                  sourcePage,
+                );
+              },
             }}
+            onMagnifierChange={setSiblingMagnifier}
           />
         ) : null}
       </div>
@@ -1797,24 +2031,25 @@ export function VerifyWorkspace({
             {sessionBar ? <div className="verify__session-row">{sessionBar}</div> : null}
             <div className="verify__session-row" hidden={viewModes.length <= 1}>
               <span className="text-sm text-ink-2">View</span>
-              <div className="segmented ml-auto" role="tablist" aria-label="Source view">
+              <div className="ml-auto flex flex-wrap justify-end gap-x-3 gap-y-1.5" role="group" aria-label="Visible source previews">
                 {viewModes.map((option) => {
                   const missing =
                     (option.needs === 'answer' && !sources.answer) ||
                     (option.needs === 'solution' && !sources.solution);
                   return (
-                    <button
+                    <label
                       key={option.mode}
-                      type="button"
-                      role="tab"
-                      aria-selected={viewMode === option.mode}
-                      className={`segmented__item ${viewMode === option.mode ? 'is-active' : ''}`}
+                      className={`inline-flex items-center gap-1.5 text-sm ${missing ? 'cursor-not-allowed text-ink-3' : 'cursor-pointer text-ink'}`}
                       title={missing ? `No ${option.needs ?? ''} PDF attached to this unit` : undefined}
-                      disabled={missing}
-                      onClick={() => { setViewMode(option.mode); }}
                     >
+                      <input
+                        type="checkbox"
+                        checked={visibleViews.has(option.mode)}
+                        disabled={missing || (visibleViews.has(option.mode) && visibleViews.size === 1)}
+                        onChange={() => { toggleView(option.mode); }}
+                      />
                       {option.label}
-                    </button>
+                    </label>
                   );
                 })}
               </div>
@@ -1859,8 +2094,13 @@ export function VerifyWorkspace({
               </div>
             ) : null}
           </div>
-          {magnifierBox && size && size.displayWidth > 0 ? (
-            <CropMagnifier imageSrc={imageSrc} box={magnifierBox} size={size} />
+          {activeMagnifier ? (
+            <CropMagnifier
+              imageSrc={activeMagnifier.imageSrc}
+              box={activeMagnifier.box}
+              size={activeMagnifier.size}
+              label={activeMagnifier.label}
+            />
           ) : null}
           {/* AI crops auto-save; this panel only appears for ones whose save FAILED, pinned to the top
               so each can be retried or dismissed without hunting for it on the page. */}
@@ -1951,17 +2191,7 @@ export function VerifyWorkspace({
         ) : (
           renderItems.map((item) =>
             item.kind === 'single' ? (
-              <div key={item.question.id} className="flex items-start gap-2.5">
-                <input
-                  type="checkbox"
-                  className="mt-4 w-auto"
-                  checked={selectedIds.has(item.question.id)}
-                  onChange={() => { toggleSelect(item.question.id); }}
-                  title="Select to group into a comprehension"
-                  aria-label="Select question to group into a comprehension"
-                />
-                <div className="min-w-0 flex-1">{renderCard(item.question)}</div>
-              </div>
+              <div key={item.question.id} className="min-w-0">{renderCard(item.question)}</div>
             ) : (
               // ONE card for the whole comprehension: the passage on top, then its sub-questions
               // nested inside (flattened cards, divider-separated).
