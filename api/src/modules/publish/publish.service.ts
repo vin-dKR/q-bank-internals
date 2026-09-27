@@ -36,7 +36,7 @@ export class PublishService {
 
     // Re-publishing an ALREADY-published document is allowed — it is how a verify edit made AFTER the
     // first publish reaches the bank. The row-level write below is an idempotent upsert keyed on
-    // ingest_ref.question_id, so a re-publish overwrites this document's existing bank rows in place
+    // ingest_ref.question_id, so a later save patches this document's changed bank rows in place
     // (a double-click / overlapping publish can neither duplicate rows nor flip status twice). Only
     // in-flight / pre-extraction states have nothing verified to publish.
     if (document.status !== 'published' && !PUBLISHABLE_STATUSES.has(document.status)) {
@@ -64,7 +64,7 @@ export class PublishService {
     // Ordered: the bank write must be confirmed complete (upsertQuestions throws on any partial or
     // failed write) BEFORE status flips to `published`, so a failed write never marks a document done.
     const published = await this.bank.upsertQuestions(rows);
-    await this.documents.updateStatus(documentId, 'published');
+    if (document.status !== 'published') await this.documents.updateStatus(documentId, 'published');
     return { published };
   }
 

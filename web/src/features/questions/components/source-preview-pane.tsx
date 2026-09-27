@@ -1,5 +1,5 @@
-import { type JSX, type MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from 'react';
-import { type CanvasSize, IconButton, IconChevronLeft, IconChevronRight, Spinner } from '../../../shared/ui/index.js';
+import { type JSX, type MouseEvent as ReactMouseEvent, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type CanvasSize, IconButton, IconChevronLeft, IconChevronRight, Spinner, ZoomControls } from '../../../shared/ui/index.js';
 import { DraggableBox } from '../../../shared/ui/draggable-box.js';
 import { questionsApi } from '../api/questions.api.js';
 import { usePageCount } from '../hooks/use-questions.js';
@@ -44,6 +44,10 @@ type ExistingSaveRun = { done: Promise<void> };
 
 /** Smaller than this (display px) is a stray click, not a drawn region. */
 const MIN_DRAW = 8;
+const OVERZOOM = 2;
+const ZOOM_FILL = 0.92;
+const ZOOM_STEP = 1.6;
+type Point = { x: number; y: number };
 
 /**
  * A read-only preview of one sibling source PDF — the unit's answer or solution — shown beside the
@@ -53,6 +57,7 @@ const MIN_DRAW = 8;
  *
  * With `crop.armed` set (the solution pane, while an explanation-image crop is armed) a rubber-band
  * overlay captures a drag on the page and reports the drawn region — the crop's entry point.
+ * Otherwise a drag enlarges the selected region inside the pane until Fit page, Esc, or a double-click.
  */
 export function SourcePreviewPane({
   title,
@@ -76,15 +81,16 @@ export function SourcePreviewPane({
   useEffect(() => { setPage(defaultPage); }, [defaultPage]);
   const pageCount = usePageCount(documentId);
   const totalPages = pageCount.data ?? 1;
-  // Match the question canvas: a sibling page is contain-fitted to its pane,
-  // never stretched to the pane width or made vertically scrollable.
+  // Measure the fixed outer pane so zoom scrollbars never change the fitted size.
   const viewportRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
   useEffect(() => {
     const element = viewportRef.current;
     if (!element) return undefined;
-    const update = (): void => { setViewport({ width: element.clientWidth, height: element.clientHeight }); };
+    const update = (): void => {
+      setViewport({ width: Math.max(0, element.clientWidth - 24), height: Math.max(0, element.clientHeight - 24) });
+    };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(element);
@@ -94,6 +100,18 @@ export function SourcePreviewPane({
   // across page changes, so reset on every page change — `onLoad` fires only for the new load.
   const [loading, setLoading] = useState(true);
   useEffect(() => { setLoading(true); setNaturalSize(null); }, [page, documentId]);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [zoom, setZoom] = useState(1);
+  const [lens, setLens] = useState<Rect | null>(null);
+  const lensStart = useRef<Point | null>(null);
+  const pendingCentre = useRef<Point | null>(null);
+  useEffect(() => {
+    setZoom(1);
+    setLens(null);
+    lensStart.current = null;
+    pendingCentre.current = null;
+  }, [page, documentId]);
 
   // --- Rubber-band crop (only while `crop.armed`) ---
   const imgRef = useRef<HTMLImageElement>(null);
@@ -143,8 +161,39 @@ export function SourcePreviewPane({
   const scale = naturalSize && viewport.width > 0 && viewport.height > 0
     ? Math.min(viewport.width / naturalSize.width, viewport.height / naturalSize.height)
     : null;
-  const displayWidth = naturalSize && scale ? naturalSize.width * scale : 0;
-  const displayHeight = naturalSize && scale ? naturalSize.height * scale : 0;
+  const maxZoom = scale ? Math.max(1, OVERZOOM / scale) : 1;
+  const effectiveZoom = Math.min(zoom, maxZoom);
+  const zoomed = effectiveZoom > 1.001;
+  const displayWidth = naturalSize && scale ? naturalSize.width * scale * effectiveZoom : 0;
+  const displayHeight = naturalSize && scale ? naturalSize.height * scale * effectiveZoom : 0;
+
+  const zoomTo = (next: number, focus: Point): void => {
+    const target = Math.min(Math.max(next, 1), maxZoom);
+    const ratio = target / effectiveZoom;
+    pendingCentre.current = { x: focus.x * ratio, y: focus.y * ratio };
+    setZoom(target);
+  };
+  const viewCentre = (): Point => {
+    const scroller = scrollRef.current?.getBoundingClientRect();
+    const image = imgRef.current?.getBoundingClientRect();
+    if (!scroller || !image) return { x: 0, y: 0 };
+    return { x: scroller.left + scroller.width / 2 - image.left, y: scroller.top + scroller.height / 2 - image.top };
+  };
+  const fitPage = (): void => {
+    pendingCentre.current = null;
+    setZoom(1);
+  };
+  useLayoutEffect(() => {
+    const centre = pendingCentre.current;
+    const scroller = scrollRef.current;
+    const image = imgRef.current;
+    if (!centre || !scroller || !image) return;
+    pendingCentre.current = null;
+    const s = scroller.getBoundingClientRect();
+    const i = image.getBoundingClientRect();
+    scroller.scrollLeft += i.left + centre.x - (s.left + s.width / 2);
+    scroller.scrollTop += i.top + centre.y - (s.top + s.height / 2);
+  }, [displayWidth, displayHeight]);
 
   const imgPoint = (clientX: number, clientY: number): { x: number; y: number } => {
     const r = imgRef.current?.getBoundingClientRect();
@@ -161,6 +210,58 @@ export function SourcePreviewPane({
     startRef.current = imgPoint(event.clientX, event.clientY);
     setRubber({ ...startRef.current, width: 0, height: 0 });
   };
+
+  const beginLens = (event: ReactMouseEvent<HTMLDivElement>): void => {
+    if (event.button !== 0 || armed || loading) return;
+    event.preventDefault();
+    lensStart.current = imgPoint(event.clientX, event.clientY);
+    setLens({ ...lensStart.current, width: 0, height: 0 });
+  };
+  const zoomToRef = useRef(zoomTo);
+  zoomToRef.current = zoomTo;
+  const zoomRef = useRef(effectiveZoom);
+  zoomRef.current = effectiveZoom;
+  useEffect(() => {
+    if (armed) {
+      lensStart.current = null;
+      setLens(null);
+      return undefined;
+    }
+    const toRect = (a: Point, b: Point): Rect => ({
+      x: Math.min(a.x, b.x), y: Math.min(a.y, b.y),
+      width: Math.abs(b.x - a.x), height: Math.abs(b.y - a.y),
+    });
+    const onMove = (event: globalThis.MouseEvent): void => {
+      if (lensStart.current) setLens(toRect(lensStart.current, imgPoint(event.clientX, event.clientY)));
+    };
+    const onUp = (event: globalThis.MouseEvent): void => {
+      const start = lensStart.current;
+      if (!start) return;
+      lensStart.current = null;
+      setLens(null);
+      const sel = toRect(start, imgPoint(event.clientX, event.clientY));
+      const scroller = scrollRef.current;
+      if (!scroller || sel.width < MIN_DRAW || sel.height < MIN_DRAW) return;
+      const fill = Math.min(scroller.clientWidth / sel.width, scroller.clientHeight / sel.height) * ZOOM_FILL;
+      zoomToRef.current(zoomRef.current * fill, { x: sel.x + sel.width / 2, y: sel.y + sel.height / 2 });
+    };
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        lensStart.current = null;
+        setLens(null);
+        pendingCentre.current = null;
+        setZoom(1);
+      }
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [armed]);
 
   useEffect(() => {
     if (!armed) {
@@ -211,17 +312,15 @@ export function SourcePreviewPane({
 
   const existingOnPage = existingCrops.filter((item) => item.page === page);
   const displayExisting = (() => {
-    const image = imgRef.current;
-    if (!image || image.naturalWidth === 0 || image.naturalHeight === 0) return [];
-    const bounds = image.getBoundingClientRect();
+    if (!naturalSize || displayWidth <= 0 || displayHeight <= 0) return [];
     return existingOnPage.map((item) => {
       const existing = editedNaturals.get(item.id) ?? item.rect;
       return {
         item,
-        x: existing.x * bounds.width / image.naturalWidth,
-        y: existing.y * bounds.height / image.naturalHeight,
-        width: existing.width * bounds.width / image.naturalWidth,
-        height: existing.height * bounds.height / image.naturalHeight,
+        x: existing.x * displayWidth / naturalSize.width,
+        y: existing.y * displayHeight / naturalSize.height,
+        width: existing.width * displayWidth / naturalSize.width,
+        height: existing.height * displayHeight / naturalSize.height,
       };
     });
   })();
@@ -341,6 +440,14 @@ export function SourcePreviewPane({
             onClick={() => { setPage((current) => Math.min(totalPages, current + 1)); }}
           />
         </div>
+        <ZoomControls
+          placement="inline"
+          zoom={effectiveZoom}
+          canZoomIn={!loading && effectiveZoom < maxZoom - 0.001}
+          onZoomIn={() => { zoomTo(effectiveZoom * ZOOM_STEP, viewCentre()); }}
+          onZoomOut={() => { zoomTo(effectiveZoom / ZOOM_STEP, viewCentre()); }}
+          onFit={fitPage}
+        />
       </div>
       <div ref={viewportRef} className="verify__source-scroll" style={{ position: 'relative' }}>
         {loading ? (
@@ -354,53 +461,63 @@ export function SourcePreviewPane({
             Draw a box on the {tone} — <kbd>Esc</kbd>
           </div>
         ) : null}
-        <div
-          className="verify__source-cropwrap"
-          style={displayWidth > 0 && displayHeight > 0 ? { width: displayWidth, height: displayHeight } : undefined}
-        >
-          <img
-            ref={imgRef}
-            src={questionsApi.pageImageUrl(documentId, page)}
-            alt={`${title} page ${String(page)}`}
-            className="verify__source-img"
-            onLoad={(event) => {
-              setNaturalSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight });
-              setLoading(false);
+        <div ref={scrollRef} className={`crop-canvas__viewport${zoomed ? ' crop-canvas__viewport--zoomed' : ''}`} style={{ inset: 12 }}>
+          <div
+            className={`verify__source-cropwrap${!armed && !loading ? ' verify__source-cropwrap--zoomable' : ''}`}
+            style={displayWidth > 0 && displayHeight > 0 ? { width: displayWidth, height: displayHeight } : undefined}
+            onMouseDown={beginLens}
+            onDoubleClick={(event) => {
+              if (zoomed && !armed && event.target === imgRef.current) fitPage();
             }}
-            onError={() => { setLoading(false); }}
-          />
-          {drawingNewCrop ? (
-            <div className="verify__source-cropoverlay" onMouseDown={beginDraw}>
-              {rubber ? (
-                <div
-                  className="verify__source-rubber"
-                  style={{ left: rubber.x, top: rubber.y, width: rubber.width, height: rubber.height }}
-                />
-              ) : null}
-            </div>
-          ) : null}
-          {displayExisting.map(({ item, x, y, width, height }) => (
-            <DraggableBox
-              key={item.id}
-              id={item.id}
-              label={item.label}
-              x={x}
-              y={y}
-              width={width}
-              height={height}
-              variant="saved"
-              busy={savingExistingIds.has(item.id)}
-              onUpdate={updateExisting}
-              // Existing saved figures are removed from their card, not by an
-              // accidental right-click over the preview boundary.
-              onDelete={() => undefined}
-              onGrab={(id) => { setActiveExistingId(id); }}
-              onRelease={(id, moved) => {
-                setActiveExistingId(null);
-                if (moved) commitExisting(id);
+          >
+            <img
+              ref={imgRef}
+              src={questionsApi.pageImageUrl(documentId, page)}
+              alt={`${title} page ${String(page)}`}
+              className="verify__source-img"
+              draggable={false}
+              onLoad={(event) => {
+                setNaturalSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight });
+                setLoading(false);
               }}
+              onError={() => { setLoading(false); }}
             />
-          ))}
+            {lens && lens.width >= MIN_DRAW && lens.height >= MIN_DRAW ? (
+              <div className="crop-canvas__lens-area" style={{ left: lens.x, top: lens.y, width: lens.width, height: lens.height }} />
+            ) : null}
+            {drawingNewCrop ? (
+              <div className="verify__source-cropoverlay" onMouseDown={beginDraw}>
+                {rubber ? (
+                  <div
+                    className="verify__source-rubber"
+                    style={{ left: rubber.x, top: rubber.y, width: rubber.width, height: rubber.height }}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+            {displayExisting.map(({ item, x, y, width, height }) => (
+              <DraggableBox
+                key={item.id}
+                id={item.id}
+                label={item.label}
+                x={x}
+                y={y}
+                width={width}
+                height={height}
+                variant="saved"
+                busy={savingExistingIds.has(item.id)}
+                onUpdate={updateExisting}
+                // Existing saved figures are removed from their card, not by an
+                // accidental right-click over the preview boundary.
+                onDelete={() => undefined}
+                onGrab={(id) => { setActiveExistingId(id); }}
+                onRelease={(id, moved) => {
+                  setActiveExistingId(null);
+                  if (moved) commitExisting(id);
+                }}
+              />
+            ))}
+          </div>
         </div>
       </div>
     </div>

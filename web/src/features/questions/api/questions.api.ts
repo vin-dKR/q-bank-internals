@@ -159,7 +159,7 @@ export const questionsApi = {
   uploadImage: (questionId: string, name: string, blob: Blob): Promise<{ url: string }> =>
     uploadCrop(questionId, name, blob),
 
-  /** Publish this document's questions into the main bank; returns how many rows were inserted. */
+  /** Sync saved questions into the bank; returns how many rows were inserted or changed. */
   publishDocument: (documentId: string): Promise<{ published: number }> => {
     return request(`/publish/documents/${documentId}`, {
       method: 'POST',
