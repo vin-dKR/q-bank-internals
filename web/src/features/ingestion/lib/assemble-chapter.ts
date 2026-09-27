@@ -18,16 +18,18 @@ type Base = Omit<ChapterUploadMetadata, 'kind' | 'sessionId' | 'topics' | 'uploa
 
 /**
  * The whole chapter assembled into a single upload unit: one question PDF (all leaves' question
- * slices concatenated in tree order), one answer PDF, one solution PDF. `question.topics` carries,
- * per leaf, its section path + question type over the page range it occupies in the assembled
- * question PDF — so every question keeps its correct section/type/page without splitting the chapter
- * into many documents.
+ * slices concatenated in tree order), plus its layout-specific supporting PDF(s): separate Answer and
+ * Solution PDFs, or one grouped Answer + Solution companion PDF. `question.topics` carries, per leaf,
+ * its section path + question type over the page range it occupies in the assembled question PDF — so
+ * every question keeps its correct section/type/page without splitting the chapter into many documents.
  */
 export type AssembledUpload = {
   base: Base;
   question: { bytes: Uint8Array; topics: ChapterTopic[] } | null;
   answer: Uint8Array | null;
   solution: Uint8Array | null;
+  /** A single grouped Answer + Solution source for `answerLayout: combined`. */
+  companion: Uint8Array | null;
   /** Human reasons a leaf was left out (missing question type, etc.). */
   problems: string[];
 };
@@ -82,7 +84,14 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
     if (!m.chapter.trim()) missing.push('chapter');
   }
   if (missing.length > 0) {
-    return { base: emptyBase(m), question: null, answer: null, solution: null, problems: [`Missing chapter ${missing.join(', ')}.`] };
+    return {
+      base: emptyBase(m),
+      question: null,
+      answer: null,
+      solution: null,
+      companion: null,
+      problems: [`Missing chapter ${missing.join(', ')}.`],
+    };
   }
 
   // Only leaves with a bound question AND a resolved question type can be assembled into questions.
@@ -100,23 +109,48 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
   }
   const firstLeaf = questionLeaves[0];
   if (!firstLeaf) {
-    problems.push(pyq ? 'No leaf has a bound question slice.' : 'No leaf has a question slice with a question type.');
-    return { base: emptyBase(m), question: null, answer: null, solution: null, problems };
+    problems.push(
+      pyq
+        ? 'No leaf has a bound question slice.'
+        : 'No leaf has a question slice with a question type.',
+    );
+    return {
+      base: emptyBase(m),
+      question: null,
+      answer: null,
+      solution: null,
+      companion: null,
+      problems,
+    };
   }
 
   const questionAsm = await assembleKind(questionLeaves, 'question');
-  const answerAsm = await assembleKind(questionLeaves, 'answer');
-  const solutionAsm = await assembleKind(questionLeaves, 'solution');
+  // Bind and upload only the supporting source(s) selected by the layout. This intentionally ignores
+  // stale hidden bindings left behind after an operator switches layouts.
+  const answerAsm =
+    m.answerLayout === 'separate' ? await assembleKind(questionLeaves, 'answer') : null;
+  const solutionAsm =
+    m.answerLayout === 'separate' ? await assembleKind(questionLeaves, 'solution') : null;
+  const companionAsm =
+    m.answerLayout === 'combined' ? await assembleKind(questionLeaves, 'companion') : null;
 
-  // Each leaf's span in the answer / solution PDF, so extraction reads its answers from exactly its
-  // own pages and binds them to its questions (no section-name-and-number guessing).
-  const answerByLeaf = new Map<string, Span>(answerAsm?.spans.map((s) => [s.leaf.node.id, s]) ?? []);
-  const solutionByLeaf = new Map<string, Span>(solutionAsm?.spans.map((s) => [s.leaf.node.id, s]) ?? []);
+  // Each leaf's span in the matching supporting PDF, so extraction reads its answers/explanations
+  // from exactly its own pages and binds them to its questions (no section-name-and-number guessing).
+  const answerByLeaf = new Map<string, Span>(
+    answerAsm?.spans.map((s) => [s.leaf.node.id, s]) ?? [],
+  );
+  const solutionByLeaf = new Map<string, Span>(
+    solutionAsm?.spans.map((s) => [s.leaf.node.id, s]) ?? [],
+  );
+  const companionByLeaf = new Map<string, Span>(
+    companionAsm?.spans.map((s) => [s.leaf.node.id, s]) ?? [],
+  );
 
   const topics: ChapterTopic[] = questionAsm
     ? questionAsm.spans.map(({ leaf, from, to }) => {
         const a = answerByLeaf.get(leaf.node.id);
         const s = solutionByLeaf.get(leaf.node.id);
+        const c = companionByLeaf.get(leaf.node.id);
         // The split display identity: the Section (top) label → bank section_name, the Topic (leaf)
         // label → bank topic. Part contributes only the question type and is never published.
         const sectionName = labelAtLevel(leaf, 'section');
@@ -131,6 +165,7 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
               pageRange: { from, to },
               ...(a ? { answerPageRange: { from: a.from, to: a.to } } : {}),
               ...(s ? { solutionPageRange: { from: s.from, to: s.to } } : {}),
+              ...(c ? { companionPageRange: { from: c.from, to: c.to } } : {}),
               // A PYQ-source chapter defaults every leaf to PYQ; an explicit per-leaf toggle wins.
               ...((leaf.node.pyq ?? isPyqSource(m)) ? { pyq: true } : {}),
             },
@@ -162,6 +197,7 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
     question: questionAsm ? { bytes: questionAsm.bytes, topics } : null,
     answer: answerAsm?.bytes ?? null,
     solution: solutionAsm?.bytes ?? null,
+    companion: companionAsm?.bytes ?? null,
     problems,
   };
 }
@@ -190,7 +226,9 @@ function isPyqSource(m: StructureTree['metadata']): boolean {
  * its source being `pyq`, so a PYQ paper is stamped `pyq: true` on the document even when the operator
  * never touched a per-leaf toggle.
  */
-function pyqFields(m: StructureTree['metadata']): Partial<Pick<Base, 'pyq' | 'pyqExam' | 'pyqYear'>> {
+function pyqFields(
+  m: StructureTree['metadata'],
+): Partial<Pick<Base, 'pyq' | 'pyqExam' | 'pyqYear'>> {
   if (!m.pyq && !isPyqSource(m)) return {};
   return {
     pyq: true,

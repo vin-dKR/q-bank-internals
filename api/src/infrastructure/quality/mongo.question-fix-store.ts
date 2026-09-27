@@ -2,7 +2,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { aiFilledFields, type AiFilled, type QuestionFix } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
-import { answerLabels, optionBody, optionLabel } from '../../modules/quality/index.js';
+import { answerOptionLabels, optionBody, optionLabel, optionLabelKey } from '../../modules/quality/option-labels.js';
 import type { QuestionFixStore, QuestionFixWrite } from '../../modules/quality/index.js';
 import { firstBatch } from '../database/mongo-ejson.js';
 
@@ -90,10 +90,11 @@ function updateDoc(set: Record<string, unknown>, aiFilled: AiFilled | undefined,
  * fix), because the two must agree — staging's verify screen reads the flag, the bank reads the string.
  */
 function stagingOptions(options: string[], answer: string | null | undefined): unknown[] {
-  const correct = new Set(answer ? answerLabels(answer) : []);
+  const correct = new Set(answer ? answerOptionLabels(answer, options) : []);
   return options.map((option, index) => {
-    const label = optionLabel(option) ?? String.fromCharCode('A'.charCodeAt(0) + index);
-    return { label: label.toUpperCase(), body: optionBody(option), isCorrect: correct.has(label.toLowerCase()) };
+    // A missing label is malformed source data, but even the compatibility fallback must not invent A–D.
+    const label = optionLabel(option) ?? String(index + 1);
+    return { label, body: optionBody(option), isCorrect: correct.has(optionLabelKey(label)) };
   });
 }
 
@@ -117,8 +118,8 @@ function stagingSet(fix: QuestionFix, staged: StagedOptions | undefined): Record
     if (fix.answer !== undefined) set.options = stagingOptions(fix.options, fix.answer);
     else if (staged && staged.count === fix.options.length) {
       fix.options.forEach((option, index) => {
-        const label = optionLabel(option) ?? String.fromCharCode('A'.charCodeAt(0) + index);
-        set[`options.${String(index)}.label`] = label.toUpperCase();
+        const label = optionLabel(option) ?? String(index + 1);
+        set[`options.${String(index)}.label`] = label;
         set[`options.${String(index)}.body`] = optionBody(option);
       });
     } else set.options = stagingOptions(fix.options, staged?.answer ?? null);

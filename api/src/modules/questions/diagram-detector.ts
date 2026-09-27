@@ -1,7 +1,17 @@
 import type { AiTokenUsage } from '../usage/index.js';
 
 /** One rendered page handed to the detector, with the pixel dimensions the model reasons about. */
-export type DetectorPage = { png: Buffer; width: number; height: number };
+export type DetectorPage = {
+  png: Buffer;
+  width: number;
+  height: number;
+  /**
+   * This QUESTION PDF prints its answer and/or worked solution inline with the numbered question.
+   * The detector may return explicit `answer` / `solution` targets only in this mode; all other
+   * sources keep the conservative stem-or-option vocabulary.
+   */
+  inlineAnswerFields?: boolean;
+};
 
 /**
  * One diagram the model located on the page: the printed question number, a short verbatim snippet of
@@ -12,8 +22,11 @@ export type DetectorPage = { png: Buffer; width: number; height: number };
 export type DiagramDetection = {
   qNo: number;
   questionText: string;
-  /** Whether this graphic belongs to the stem or to one of its answer options. */
-  target: 'question' | 'option';
+  /**
+   * Where this graphic belongs. `answer` / `solution` are allowed only for an inline-answer
+   * question PDF and only after the vision model has found an explicit printed field heading.
+   */
+  target: 'question' | 'option' | 'answer' | 'solution';
   /** Printed option label (A, B, …) when `target` is `option`. */
   optionLabel: string | null;
   bbox: [number, number, number, number];

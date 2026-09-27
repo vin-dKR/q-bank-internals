@@ -1,4 +1,4 @@
-import type { Document, MatchData } from '@ingest/contracts';
+import type { Document, MatchData, PageRange } from '@ingest/contracts';
 import type { AiTokenUsage } from '../usage/index.js';
 
 /** One rasterized PDF page handed to the vision model. */
@@ -65,15 +65,88 @@ export type ExtractedQuestion = {
   groupOrder: number | null;
 };
 
+/** Where an answer value came from, used to preserve an explicit answer key over a solution restatement. */
+export type AnswerSource = 'answer_key' | 'solution' | 'unknown';
+
 /**
  * One question's key material as read from an answer/solution sheet: the answer letter/text and/or
  * the worked-solution explanation. Either may be absent — an answer PDF supplies only `answer`, a
- * solution PDF supplies `explanation` (and often the final `answer` too).
+ * solution PDF supplies `explanation` (and often the final `answer` too). `answerSource` is internal
+ * merge provenance: an explicit answer key is canonical when it disagrees with a final answer repeated
+ * by a worked solution.
  */
-export type AnswerEntry = { answer: string | null; explanation: string | null };
+export type AnswerEntry = {
+  answer: string | null;
+  explanation: string | null;
+  answerSource?: AnswerSource;
+};
+
+function hasAnswer(entry: AnswerEntry): boolean {
+  return entry.answer !== null && entry.answer.trim() !== '';
+}
+
+function answerSourceRank(source: AnswerSource | undefined): number {
+  switch (source) {
+    case 'answer_key': return 2;
+    case 'solution': return 1;
+    default: return 0;
+  }
+}
+
+/**
+ * Combine repeated page fragments for one question. An answer key is authoritative over a worked
+ * solution's final-answer restatement, while a solution always contributes any non-duplicate working.
+ * Equal-priority sources retain their first value in PDF order rather than letting a later OCR pass
+ * silently flip it.
+ */
+export function mergeAnswerEntries(
+  existing: AnswerEntry | undefined,
+  incoming: AnswerEntry,
+): AnswerEntry {
+  if (!existing) return incoming;
+  const chosen = !hasAnswer(existing)
+    ? incoming
+    : !hasAnswer(incoming)
+      ? existing
+      : answerSourceRank(incoming.answerSource) > answerSourceRank(existing.answerSource)
+        ? incoming
+        : existing;
+  const prior = existing.explanation?.trim() ?? '';
+  const next = incoming.explanation?.trim() ?? '';
+  const explanation = !prior
+    ? (next || null)
+    : !next || prior === next || prior.includes(next)
+      ? prior
+      : next.includes(prior)
+        ? next
+        : `${prior}\n\n${next}`;
+  return {
+    answer: hasAnswer(chosen) ? chosen.answer : null,
+    explanation,
+    ...(chosen.answerSource ? { answerSource: chosen.answerSource } : {}),
+  };
+}
 
 /** An answer/solution key for one section: question-number (as string) → its {@link AnswerEntry}. */
 export type AnswerSheet = { sectionName: string | null; entries: Record<string, AnswerEntry> };
+
+/**
+ * The question-PDF leaf an answer/solution page range belongs to. Sibling answer and solution
+ * documents deliberately do not carry the question document's topic map, so their own document-level
+ * type is not a safe prompt hint for an assembled, mixed-type upload. The worker supplies this scope
+ * for each bound range and the AI adapter uses it for both prompt routing and an unambiguous fallback
+ * section name.
+ */
+export type AnswerExtractionScope = {
+  /** Stable topic/leaf key used by {@link mergeAnswers}; not merely a display heading. */
+  sectionName: string;
+  /** The exact type fixed on the corresponding question leaf; null means mixed/unknown. */
+  questionType: string | null;
+  /** The leaf's inclusive page span in the question PDF. */
+  questionPageRange: PageRange;
+  /** The inclusive page span selected from this answer or solution PDF. */
+  sourcePageRange: PageRange;
+};
 
 /** Extraction results paired with the token spend the model reported producing them. */
 export type QuestionExtraction = { questions: ExtractedQuestion[]; usage: AiTokenUsage };
@@ -105,12 +178,24 @@ export interface VisionExtractor {
   extractAnswers(input: {
     pages: PageImage[];
     document: Document;
+    /** Present for v2 bound ranges; absent for legacy whole-answer-PDF extraction. */
+    scope?: AnswerExtractionScope;
     signal?: AbortSignal;
   }): Promise<AnswerExtraction>;
   /** Extract worked-solution explanations (and any final answer) from a solution PDF's pages. */
   extractSolutions(input: {
     pages: PageImage[];
     document: Document;
+    /** Present for v2 bound ranges; absent for legacy whole-solution-PDF extraction. */
+    scope?: AnswerExtractionScope;
+    signal?: AbortSignal;
+  }): Promise<AnswerExtraction>;
+  /** Extract a single grouped Answer + Solution companion PDF into answer + explanation entries. */
+  extractCompanion(input: {
+    pages: PageImage[];
+    document: Document;
+    /** Present for v2 combined-layout topic ranges. */
+    scope?: AnswerExtractionScope;
     signal?: AbortSignal;
   }): Promise<AnswerExtraction>;
 }

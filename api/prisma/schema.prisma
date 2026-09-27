@@ -53,6 +53,9 @@ type TopicTypeConfig {
   // extractor reads this topic's key from exactly its own pages instead of guessing by name/number.
   answerPageRange   PageRange?
   solutionPageRange PageRange?
+  // One grouped Answer + Solution companion PDF uses this one source span for the same topic.
+  // The Verify API still asks the caller whether a crop/re-read is for Answer or Solution.
+  companionPageRange PageRange?
   // Operator's per-node PYQ toggle for this segment: when set, extraction reads each question's source
   // exam + year off the page. Absent/false on ordinary segments and legacy uploads.
   pyq               Boolean?
@@ -136,8 +139,8 @@ model Document {
   pyqYear       String?
   // Paper-level PYQ provenance (exam name/year/session/shift/paper code …); absent when not a PYQ upload.
   paper         PaperMetadata?
-  // How answers are laid out in the source PDF: "separate" (grouped / sibling answer PDF) or "inline"
-  // (each question followed by its own answer). Drives the inline extraction prompt + Verify panes.
+  // How answers are laid out: separate sibling PDFs, one grouped "combined" companion, or inline
+  // (each question followed by its own answer). Drives extraction and Verify source routing.
   answerLayout  String          @default("separate")
   // Question provenance chosen at cut time: pyq / module / textbook (open string). Null on legacy docs.
   source        String?
@@ -164,6 +167,10 @@ type QuestionOption {
   label     String
   body      String
   isCorrect Boolean
+  // True only for matrix choices generated deterministically from the structured matching key.
+  // Optional so every legacy/printed option remains source-authored by default; false marks a
+  // teacher-authored replacement while true remains safe for automatic regeneration.
+  generated Boolean?
 }
 
 type QuestionImage {

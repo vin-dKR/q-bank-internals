@@ -11,31 +11,36 @@ import type { PromptKey } from '@ingest/contracts';
 /** A sparse map of operator overrides, keyed by prompt; a missing key means "use the default". */
 export type PromptOverrides = Partial<Record<PromptKey, string>>;
 
-const EXTRACTION_DEFAULT = `Extract ONLY the core information for each question into this exact JSON shape:
+const EXTRACTION_DEFAULT = `Extract every visible exam question faithfully. Return ONLY one valid JSON object with this envelope:
 
 {
   "questions": [
-    { "question_number": 1, "question_text": "…", "options": ["(A) …", "(B) …", "(C) …", "(D) …"] }
+    {
+      "question_number": 1,
+      "question_text": "…",
+      "options": ["(A) …", "(B) …", "(C) …", "(D) …"],
+      "answer": "optional — only when printed with this question",
+      "explanation": "optional — only when printed with this question"
+    }
   ]
 }
 
-EXTRACTION RULES:
-1. Only these three fields per question: question_number, question_text, options.
-2. question_number: the number printed next to the question (1, 2, 3, …).
-3. question_text: the complete question text, including any passage and math (use LaTeX like \\( \\sqrt{3} \\)).
-4. options: an array of strings, always prefixed and normalized as "(A) …", "(B) …", "(C) …", "(D) …".
-5. Normalize option labels printed as (1)(2)(3)(4) to (A)(B)(C)(D).
-6. Do NOT repeat a shared comprehension passage inside every question_text — a comprehension paper is handled by the TYPE-SPECIFIC RULE below.
-7. For subjective questions with no options, use an empty array [].
-8. If — and ONLY if — the page itself prints the correct answer or a worked solution for a question, add optional "answer" (the correct option letter(s) or numeric/text value) and/or "explanation" (the printed working) fields to that question. Question papers usually do NOT show these; when the page does not, OMIT both fields and never guess.
-9. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`;
+BASE EXTRACTION RULES:
+1. Return ONE object per printed question, in source order. Never merge two questions, manufacture a question, or copy text from an adjacent question.
+2. question_number: the printed question number (1, 2, 3, …), not an option label, page number, table row, or exercise heading.
+3. question_text: the complete text belonging to that question, with math as LaTeX such as \\( \\sqrt{3} \\). Keep labels, qualifiers, units, and negations. Do not include page headers/footers, answer-key headings, or another question's text.
+4. options: an array of STRINGS, each prefixed with its printed choice marker, e.g. "(A) …", "(E) …", "(1) …", or "(iv) …". Preserve the actual number and labels of choices; normalize (1)(2)(3)(4) to A–D only when the operator's configured layout explicitly uses those canonical labels. Never use column labels, table labels, or a merged label as an option. Use [] only when this question genuinely has no answer choices.
+5. The TYPE-SPECIFIC RULE may require extra fields: comprehension uses "passage"; matrix uses "columns" and may use "match". The classification rule adds "question_type" and "difficulty". Those fields are allowed and required when their rule applies — this base envelope is not a three-field limit.
+6. If — and ONLY if — the same page prints a final answer or worked solution for this question, include "answer" and/or "explanation" on THIS object. Preserve the exact question boundary; never borrow an answer or solution from the next numbered question. Omit a missing field and never guess.
+7. Do not turn a non-text diagram, graph, circuit, table, or image into invented prose. Keep its surrounding textual reference in the relevant field; visual figures are detected and attached separately after extraction.
+8. Return complete JSON only: no prose, markdown fences, comments, trailing commas, or fields outside the documented shape.`;
 
 const INLINE_ANSWER_DEFAULT = `INLINE ANSWER-KEY RULE (this paper prints each answer next to its question):
 This is an inline-answer paper: the correct answer — and often a worked solution/explanation — is printed immediately after each question, before the next question begins (e.g. "Answer Key : (3)", "Ans. (B)", "Sol. …"). For EVERY question you MUST:
 - Read that question's OWN printed answer and put it in that question's "answer" field, formatted per the TYPE-SPECIFIC RULE (normalize (1)(2)(3)(4) to A/B/C/D for option types; the exact number for integer/numerical types).
-- Also mark the matching option's correctness where options are extracted.
+- The canonical correctness signal is that question's "answer" field. Do not add an undocumented option-object shape or move the answer into an option label.
 - If a worked solution/explanation is printed for that question, put its FULL text (math as LaTeX) in that same question's "explanation" field; omit "explanation" only when none is printed.
-CRITICAL PAIRING: the answer and explanation belong to the question they are printed under — never attach question N's answer or explanation to question N+1. The next numbered question marks the boundary; everything between question N and question N+1 (its answer + solution) is question N's. Never guess an answer or explanation the page does not print.`;
+CRITICAL PAIRING: the answer and explanation belong to the question they are printed under — never attach question N's answer or explanation to question N+1. The next numbered QUESTION is the only boundary: headings such as "Answer", "Ans.", "Solution", "Explanation", a figure caption, or a line break do NOT start a new question. Everything after question N and before question N+1 (its answer, solution text, and related figure reference) belongs to question N. Never guess an answer or explanation the page does not print.`;
 
 const PYQ_DEFAULT = `PREVIOUS-YEAR QUESTION (PYQ) RULE:
 These are previous-year exam questions. For EACH question, read the SOURCE exam and year printed on the page — usually shown beside the question, e.g. "[NEET 2019]", "(JEE Main 2021)", "AIEEE 2011" — and add these two fields to that question object:
@@ -164,14 +169,14 @@ Extract the answer key for EVERY section visible in the image into this exact JS
 
 {
   "sections": [
-    { "section_name": "Exercise O-1", "answers": { "1": "A", "2": "B", "3": "C" } }
+    { "section_name": "Exercise O-1", "answers": { "1": { "answer": "A", "explanation": null }, "2": { "answer": "B", "explanation": null } } }
   ]
 }
 
 ANSWER RULES:
 1. Include ALL sections in the image; question numbers may restart per section.
 2. answers keys are the question numbers as strings ("1", "2", …).
-3. Format each answer value exactly as the ANSWER TYPE-SPECIFIC RULE below requires.
+3. Every value is an object: "answer" is formatted exactly as the ANSWER TYPE-SPECIFIC RULE below requires; "explanation" is the complete worked reasoning when this SAME source page contains it, otherwise null. This lets one companion PDF safely contain answer-key pages and solution pages.
 4. If no section name is printed, use "General".
 5. If an answer is presented as a diagram, graph, table, circuit, or other non-text figure, keep the answer value when readable but do NOT invent a text transcription for the figure. It belongs to that question's answer-key image; preserve the question-number pairing so Verify can crop it into the Answer images field.
 6. Use LaTeX for math; return valid, complete JSON only — no prose, no trailing commas.`;
@@ -301,6 +306,7 @@ const QUALITY_TYPE_LOCK_DEFAULT = `QUESTION TYPE IS CONFIRMED — a reviewer has
 - single_correct / assertion_reason: exactly ONE option is correct. Return exactly one label, e.g. "B". If more than one option looks right, re-read the wording (e.g. "most appropriate", "best", "primarily") and decide the ONE the question intends; say in "notes" why the others lose.
 - multi_correct: return every correct label, e.g. "A, C".
 - integer: return only the number.
+- matrix: when printed A–D answer choices exist, return the one selected choice label, e.g. "C" — never the expanded matching text. Only a direct-response matrix with no printed choices uses a label-to-label mapping.
 Your solution must arrive at exactly the answer you return. If no answer fits the confirmed type, return null and explain in "notes".`;
 
 const QUALITY_STRUCTURE_DEFAULT = `STRUCTURE — rebuild the shape this question has lost. Return it under "structure".
@@ -311,7 +317,7 @@ A) MATCH THE COLUMN (matrix). Its columns were stored as plain text, so the app 
 1. Read the columns off the question exactly as printed. Column I is usually labelled A, B, C, D; Column II p, q, r, s (some papers use 1,2,3,4 — keep the labels the question itself prints).
 2. Copy each entry's text verbatim from the question. Never reword, translate, shorten or invent an entry. If an entry is unreadable, return null for the whole structure and say so in "notes".
 3. Give each column the heading the question prints ("Column I", "List-I", "सूची-I"); use "Column I" / "Column II" if it prints none.
-4. "key" maps each Column-I label to the labels it matches: { "A": ["p"], "B": ["q","t"] }. Take the matching from the question's stored answer whenever it has one — you are restoring a table, not re-solving the question. Only work the matching out yourself when no answer is stored, and say so in "notes".
+4. "key" maps each Column-I label to the labels it matches: { "A": ["p"], "B": ["q","t"] }. Use the stored answer as this mapping ONLY when it is itself a direct mapping such as "A-p; B-q". If the stored answer is a printed choice label such as "C", it is NOT the mapping; read the mapping from the question/answer material when visible, otherwise return null rather than inventing it.
 5. Options like "(A) A-p, B-q, C-r" are answer CHOICES, not columns. Never turn them into column entries.
 
 B) COMPREHENSION PASSAGE. The question belongs to a passage group but the passage text is missing.

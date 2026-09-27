@@ -1,5 +1,5 @@
 import { type JSX, type MouseEvent as ReactMouseEvent, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { type CanvasSize, IconButton, IconChevronLeft, IconChevronRight, Spinner, ZoomControls } from '../../../shared/ui/index.js';
+import { type CanvasSize, IconButton, IconChevronLeft, IconChevronRight, IconSparkle, Spinner, ZoomControls } from '../../../shared/ui/index.js';
 import { DraggableBox } from '../../../shared/ui/draggable-box.js';
 import { questionsApi } from '../api/questions.api.js';
 import { usePageCount } from '../hooks/use-questions.js';
@@ -40,6 +40,20 @@ type CropCapability = {
   onExistingCrop?: (id: string, replacedUrl: string, imageUrl: string, natural: Rect, page: number) => string | null | Promise<string | null>;
 };
 
+/** One-page AI figure scan for this sibling source. The parent owns mapping + persistence. */
+type DetectionCapability = {
+  busy: boolean;
+  onDetect: (page: number) => void;
+  /** Overrides the compact icon's accessible label for a combined Answer + Solution source. */
+  label?: string;
+};
+
+/** A combined companion is one PDF, but a crop/scan still has to land in the requested field. */
+type DestinationCapability = {
+  target: 'answer' | 'solution';
+  onTargetChange: (target: 'answer' | 'solution') => void;
+};
+
 type ExistingSaveRun = { done: Promise<void> };
 
 /** Smaller than this (display px) is a stray click, not a drawn region. */
@@ -66,6 +80,9 @@ export function SourcePreviewPane({
   fileName,
   defaultPage,
   crop,
+  detection,
+  destination,
+  onPageChange,
   onMagnifierChange,
 }: {
   title: string;
@@ -74,11 +91,23 @@ export function SourcePreviewPane({
   fileName: string;
   defaultPage: number;
   crop?: CropCapability;
+  /** Optional Answer/Solution figure scan for the page currently displayed in this pane. */
+  detection?: DetectionCapability;
+  /** Compact field destination picker for a single grouped Answer + Solution companion source. */
+  destination?: DestinationCapability;
+  /** Reports the page currently displayed, so field re-extracts read what the operator is viewing. */
+  onPageChange?: (page: number) => void;
   /** Receives a live sibling crop while it is drawn or adjusted; null clears the shared magnifier. */
   onMagnifierChange?: (value: SourcePreviewMagnifier | null) => void;
 }): JSX.Element {
   const [page, setPage] = useState(defaultPage);
   useEffect(() => { setPage(defaultPage); }, [defaultPage]);
+  // Keep the parent informed without putting a fresh callback identity in this effect's dependency
+  // list. That lets Verify remember a manually navigated page for field re-extracts without a
+  // report → render → report loop.
+  const onPageChangeRef = useRef(onPageChange);
+  onPageChangeRef.current = onPageChange;
+  useEffect(() => { onPageChangeRef.current?.(page); }, [page]);
   const pageCount = usePageCount(documentId);
   const totalPages = pageCount.data ?? 1;
   // Measure the fixed outer pane so zoom scrollbars never change the fitted size.
@@ -440,6 +469,37 @@ export function SourcePreviewPane({
             onClick={() => { setPage((current) => Math.min(totalPages, current + 1)); }}
           />
         </div>
+        {destination ? (
+          <div className="inline-flex overflow-hidden rounded-md border border-line bg-white text-xs" role="group" aria-label="Companion figure destination">
+            <button
+              type="button"
+              className={`px-2 py-1 transition-colors ${destination.target === 'answer' ? 'bg-indigo-600 text-white' : 'text-ink-2 hover:bg-surface'}`}
+              aria-pressed={destination.target === 'answer'}
+              disabled={armed}
+              onClick={() => { destination.onTargetChange('answer'); }}
+            >
+              Answer
+            </button>
+            <button
+              type="button"
+              className={`border-l border-line px-2 py-1 transition-colors ${destination.target === 'solution' ? 'bg-indigo-600 text-white' : 'text-ink-2 hover:bg-surface'}`}
+              aria-pressed={destination.target === 'solution'}
+              disabled={armed}
+              onClick={() => { destination.onTargetChange('solution'); }}
+            >
+              Explanation
+            </button>
+          </div>
+        ) : null}
+        {detection ? (
+          <IconButton
+            icon={detection.busy ? <Spinner /> : <IconSparkle />}
+            label={detection.label ?? `Auto-detect ${tone} figures on this page`}
+            size="sm"
+            disabled={detection.busy || loading || armed}
+            onClick={() => { detection.onDetect(page); }}
+          />
+        ) : null}
         <ZoomControls
           placement="inline"
           zoom={effectiveZoom}

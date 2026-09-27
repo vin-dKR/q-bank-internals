@@ -9,6 +9,7 @@ export type { PdfRasterizer } from './pdf-rasterizer.js';
 export type {
   AnswerEntry,
   AnswerExtraction,
+  AnswerExtractionScope,
   AnswerSheet,
   ExtractedQuestion,
   ExtractionProgress,

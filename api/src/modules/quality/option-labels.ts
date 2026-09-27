@@ -1,29 +1,42 @@
 /**
- * The bank's answer-labelling convention: a question that offers CHOICES labels them `(A) (B) (C) (D)`,
- * and its answer names those letters. Numbers stay where they belong — an integer question's answer, a
- * numeric value inside an option's text — but they are never used to identify an option.
- *
- * Legacy rows break this both ways (options numbered `(1)–(4)`, or an answer naming a label its options do
- * not use), because each source PDF printed it its own way. This module is the one place that knows the
- * convention, so the checker and the fix agree on it.
+ * Choice labels are source data, not a presentation convention. A paper can use A–E, 1–5, I–IV,
+ * p/q/r, or another short marker, and an answer has to be checked against the labels that paper
+ * actually printed. Keeping this logic here prevents the quality scanner, bulk fixes, and staging
+ * writer from each inventing their own A–D fallback.
  */
 
-/** Types whose ANSWER must name one of the question's option labels. */
-export const CHOICE_TYPES: ReadonlySet<string> = new Set(['single_correct', 'multi_correct', 'assertion_reason']);
+/** Types whose answer is a choice label whenever the question has options. */
+export const CHOICE_TYPES: ReadonlySet<string> = new Set([
+  'single_correct',
+  'multi_correct',
+  'assertion_reason',
+  'true_false',
+  // A matrix with a printed answer-choice panel stores the selected panel label. A direct-response
+  // matrix has no options, so callers naturally skip this validation for it.
+  'matrix',
+]);
 
 /**
- * Types whose options are choices to pick from, so they carry letter labels. A comprehension row offers
- * choices like any MCQ (its passage is shared, its options are its own), but its ANSWER is not always a
- * label, which is why it is not in {@link CHOICE_TYPES}.
+ * A leading printed option marker: "(A) body", "A) body", "(1) body", "III. body", or
+ * "R1: body". The marker must be followed by punctuation, so ordinary option prose is not mistaken
+ * for a label. Extraction limits labels to short alphanumeric tokens too; this wider limit keeps
+ * legacy rows readable without turning a paragraph into a label.
  */
-export const LETTER_LABEL_TYPES: ReadonlySet<string> = new Set([...CHOICE_TYPES, 'comprehension']);
+const LABEL_PREFIX = /^\s*(?:[([{]\s*)?([A-Za-z0-9][A-Za-z0-9_-]{0,31})\s*(?:[)\]}.:])\s*/;
 
-/** The leading label of a bank option string: "(A) body", "A) body", "(1) body", "iii. body". */
-const LABEL_PREFIX = /^\s*\(?\s*([A-Za-z]|[ivx]{1,4}|\d{1,2})\s*[).]\s*/;
+/** A case-insensitive comparison key for a printed choice label. */
+export function optionLabelKey(label: string): string {
+  return label
+    .trim()
+    .replace(/^[\s([{"']+/, '')
+    .replace(/[\s)\]}.:,;"']+$/, '')
+    .toLocaleLowerCase();
+}
 
-/** The lowercase label an option string starts with ("(A) body" → "a"), or null when it has none. */
+/** The printed label an option starts with, preserving its source casing, or null when it has none. */
 export function optionLabel(option: string): string | null {
-  return LABEL_PREFIX.exec(option)?.[1]?.toLowerCase() ?? null;
+  const label = LABEL_PREFIX.exec(option)?.[1];
+  return label ? label.trim() : null;
 }
 
 /** The option text with its label stripped, trimmed — what staging stores as the option's `body`. */
@@ -31,57 +44,108 @@ export function optionBody(option: string): string {
   return option.replace(LABEL_PREFIX, '').trim();
 }
 
-/** Split an answer into lowercase option labels: "A", "(A)", "A, C", "AC", "a and c" → ['a','c']. */
-export function answerLabels(answer: string): string[] {
-  const parts = answer
-    .trim()
-    .toLowerCase()
-    .replace(/option|and|[().]/g, ' ')
-    .split(/[\s,;/&]+/)
-    .filter(Boolean);
-  const [only] = parts;
-  if (parts.length === 1 && only !== undefined && /^[a-e]{2,5}$/.test(only)) return only.match(/[a-e]/g) ?? [];
-  return parts;
-}
-
-/** The letter for a position: 0 → "A". */
-export function letterAt(index: number): string {
-  return String.fromCharCode('A'.charCodeAt(0) + index);
-}
-
-/** Every option's label, or null when any of them is unlabelled (nothing to convert or check). */
+/** Every option's printed label, or null when any one is unlabelled. */
 export function labelsOf(options: readonly string[]): string[] | null {
   const labels = options.map(optionLabel);
   return labels.every((label): label is string => label !== null) ? labels : null;
 }
 
-/** True when every option is labelled with a number — the shape this convention replaces. */
-export function hasNumberedLabels(options: readonly string[]): boolean {
-  const labels = labelsOf(options);
-  return labels !== null && labels.length > 0 && labels.every((label) => /^\d+$/.test(label));
-}
-
-/** Rewrite each option to `(A) body`, keeping its text and order. */
-export function relabelToLetters(options: readonly string[]): string[] {
-  return options.map((option, index) => `(${letterAt(index)}) ${optionBody(option)}`);
+/** Remove answer-key decorations while retaining labels such as `R1`, `III`, and `10`. */
+function answerTerms(answer: string): string[] {
+  return answer
+    .trim()
+    .replace(/^\s*(?:correct\s+)?answer\s*[:=-]?\s*/i, '')
+    .replace(/\b(?:options?|and)\b/gi, ' ')
+    .replace(/[()[\]{}]/g, ' ')
+    .split(/[\s,;/&+]+/)
+    .map(optionLabelKey)
+    .filter(Boolean);
 }
 
 /**
- * The answer rewritten in letters, given how many options there are: "3" → "C", "2, 3" → "B, C". Null when
- * it is not a list of positions (free text, a matrix key, or a number past the last option), which is left
- * for a person — this never guesses which option was meant.
+ * Split an answer into case-insensitive choice-label keys. When `knownLabels` is supplied, an exact
+ * multi-character label wins before compact multi-correct notation is expanded: `II` stays the Roman
+ * label `II`, while `AC` becomes A+C only when the actual labels are one-character A and C.
  */
-export function answerInLetters(answer: string, optionCount: number): string | null {
-  const labels = answerLabels(answer);
-  if (labels.length === 0) return null;
-  const letters = labels.map((label) => {
-    if (/^[a-z]$/.test(label)) {
-      const index = label.charCodeAt(0) - 'a'.charCodeAt(0);
-      return index < optionCount ? label.toUpperCase() : null;
+export function answerLabels(answer: string, knownLabels: readonly string[] = []): string[] {
+  const known = new Map<string, string>();
+  for (const label of knownLabels) {
+    const key = optionLabelKey(label);
+    if (key) known.set(key, key);
+  }
+
+  const raw = optionLabelKey(answer.replace(/^\s*(?:correct\s+)?answer\s*[:=-]?\s*/i, ''));
+  if (raw && known.has(raw)) return [raw];
+
+  const terms = answerTerms(answer);
+  if (terms.length === 0) return [];
+  const values: string[] = [];
+  const oneCharacterKnown = known.size > 0 && [...known.keys()].every((label) => label.length === 1);
+  for (const term of terms) {
+    if (known.size === 0 || known.has(term)) {
+      values.push(term);
+      continue;
     }
-    if (!/^\d+$/.test(label)) return null;
-    const index = Number(label) - 1;
-    return index >= 0 && index < optionCount ? letterAt(index) : null;
+    // Compact multi-correct notation is only unambiguous for an alphabet of one-character labels.
+    // In particular, never split a numeric or Roman label such as `10` or `III` into characters.
+    if (oneCharacterKnown && /^[a-z]{2,}$/.test(term) && Array.from(term).every((part) => known.has(part))) {
+      values.push(...Array.from(term));
+      continue;
+    }
+    // Keep an unknown token so callers can correctly report that the answer does not name an option.
+    values.push(term);
+  }
+  return [...new Set(values)];
+}
+
+/** A direct `True`/`False` answer maps to a conventional labelled true/false option. */
+function trueFalseOptionKey(answer: string, options: readonly string[]): string | null {
+  const value = optionLabelKey(answer.replace(/^\s*(?:correct\s+)?answer\s*[:=-]?\s*/i, ''));
+  if (value !== 'true' && value !== 'false') return null;
+  const match = options.find((option) => {
+    const body = optionBody(option).trim();
+    return new RegExp(`^${value}\\b`, 'i').test(body);
   });
-  return letters.every((letter): letter is string => letter !== null) ? letters.join(', ') : null;
+  const label = match ? optionLabel(match) : null;
+  return label ? optionLabelKey(label) : null;
+}
+
+/**
+ * Resolve an answer against a question's real options. Besides ordinary labels, this understands the
+ * human-readable `True` / `False` answer stored for a conventional A/B true-false question. Matrix
+ * mappings intentionally resolve to no choice labels: a direct-response matrix does not mark options.
+ */
+export function answerOptionLabels(answer: string, options: readonly string[]): string[] {
+  const labels = labelsOf(options);
+  if (!labels) return answerLabels(answer);
+  const booleanLabel = trueFalseOptionKey(answer, options);
+  if (booleanLabel) return [booleanLabel];
+  return answerLabels(answer, labels);
+}
+
+/**
+ * Map a legacy positional answer (`3`, `A`, or `A,C`) onto the supplied printed labels. Returns null
+ * unless every term is an unambiguous position alias and none is already a real printed label.
+ */
+export function answerInOptionLabels(answer: string, labels: readonly string[]): string | null {
+  if (labels.length === 0) return null;
+  const known = new Set(labels.map(optionLabelKey));
+  const current = answerLabels(answer, labels);
+  if (current.length > 0 && current.every((label) => known.has(label))) return null;
+
+  const aliases = answerTerms(answer);
+  if (aliases.length === 0) return null;
+  const mapped: string[] = [];
+  for (const alias of aliases) {
+    const pieces = /^[a-z]{2,}$/.test(alias) ? Array.from(alias) : [alias];
+    for (const piece of pieces) {
+      let index: number | null = null;
+      if (/^\d+$/.test(piece)) index = Number(piece) - 1;
+      else if (/^[a-z]$/.test(piece)) index = piece.charCodeAt(0) - 'a'.charCodeAt(0);
+      if (index === null || !Number.isSafeInteger(index) || index < 0 || index >= labels.length) return null;
+      mapped.push(labels[index] ?? '');
+    }
+  }
+  const result = [...new Set(mapped.filter(Boolean))];
+  return result.length > 0 ? result.join(', ') : null;
 }

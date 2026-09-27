@@ -1,4 +1,12 @@
-import { type CSSProperties, type DragEvent, type JSX, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type CSSProperties,
+  type DragEvent,
+  type JSX,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/TextLayer.css';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -6,7 +14,15 @@ import 'react-pdf/dist/Page/AnnotationLayer.css';
 // origin, and correctly handled in both dev and build (the `new URL(bare-specifier)` form fails to
 // load in Vite dev with "Failed to fetch dynamically imported module").
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { ErrorBoundary, ErrorFallback, IconButton, IconCheck, IconLayers, IconTrash, IconX } from '../../../shared/ui/index.js';
+import {
+  ErrorBoundary,
+  ErrorFallback,
+  IconButton,
+  IconCheck,
+  IconLayers,
+  IconTrash,
+  IconX,
+} from '../../../shared/ui/index.js';
 import { setDraggedPages } from '../lib/page-dnd.js';
 import { PdfPageOverlay } from './pdf-page-overlay.js';
 import { PdfReflowOverlay } from './pdf-reflow-overlay.js';
@@ -49,7 +65,7 @@ type PdfPreviewerProps = {
   onToggleTag: (chapterId: string, sliceId: string) => void;
   onNumPages: (numPages: number) => void;
   onDeletePage: (pageNumber: number) => void;
-  /** Forwarded to the overlay: whether pages carry a question/answer/solution tag chip. */
+  /** Forwarded to the overlay: whether pages carry a question/supporting-source tag chip. */
   taggable?: boolean;
   /** When true, each page gets a select toggle + a drag handle for binding pages to a tree leaf. */
   bindable?: boolean;
@@ -102,13 +118,18 @@ export function PdfPreviewer({
       if (width) setGridWidth(width);
     });
     observer.observe(el);
-    return () => { observer.disconnect(); };
+    return () => {
+      observer.disconnect();
+    };
   }, [isGrid]);
 
   // Fewer columns → each column is wider → the page renders larger, so density doubles as zoom.
   const thumbWidth =
     isGrid && gridWidth > 0
-      ? Math.max(80, Math.floor((gridWidth - (gridColumns - 1) * GRID_GAP) / gridColumns) - THUMB_CHROME)
+      ? Math.max(
+          80,
+          Math.floor((gridWidth - (gridColumns - 1) * GRID_GAP) / gridColumns) - THUMB_CHROME,
+        )
       : GRID_THUMB_WIDTH;
 
   // A stable copy so pdf.js never reads a detached buffer across re-renders (only recut on new file).
@@ -264,7 +285,12 @@ export function PdfPreviewer({
             );
           })}
           {fullscreenPage !== null ? (
-            <PageFullscreen pageNumber={fullscreenPage} onClose={() => { setFullscreenPage(null); }} />
+            <PageFullscreen
+              pageNumber={fullscreenPage}
+              onClose={() => {
+                setFullscreenPage(null);
+              }}
+            />
           ) : null}
         </Document>
       </ErrorBoundary>
@@ -312,7 +338,10 @@ function PageThumb({
       onDragStart={(event: DragEvent) => {
         setDraggedPages(event, dragPages());
       }}
-      onContextMenu={(event) => { event.preventDefault(); onOpen(pageNumber); }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onOpen(pageNumber);
+      }}
       onClick={bindable ? select : undefined}
       onKeyDown={
         bindable
@@ -369,11 +398,21 @@ function PageThumb({
  * without leaving the grid. Rendered inside the `Document` so the `Page` shares its worker transport;
  * Escape or a click on the backdrop dismisses it (the shared modal pattern from `useConfirm`).
  */
-function PageFullscreen({ pageNumber, onClose }: { pageNumber: number; onClose: () => void }): JSX.Element {
+function PageFullscreen({
+  pageNumber,
+  onClose,
+}: {
+  pageNumber: number;
+  onClose: () => void;
+}): JSX.Element {
   useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') onClose(); };
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') onClose();
+    };
     document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('keydown', onKey); };
+    return () => {
+      document.removeEventListener('keydown', onKey);
+    };
   }, [onClose]);
 
   const width = Math.min(900, Math.round(window.innerWidth * 0.9));
@@ -384,7 +423,9 @@ function PageFullscreen({ pageNumber, onClose }: { pageNumber: number; onClose: 
         role="dialog"
         aria-modal="true"
         aria-label={`Page ${String(pageNumber)}`}
-        onMouseDown={(event) => { event.stopPropagation(); }}
+        onMouseDown={(event) => {
+          event.stopPropagation();
+        }}
       >
         <div className="modal__head">
           <h2>Page {pageNumber}</h2>

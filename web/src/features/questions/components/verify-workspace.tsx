@@ -1,6 +1,6 @@
 import { type CSSProperties, type JSX, type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { DetectedFigure, ImageCrop, Question, QuestionListResponse, ReExtractedGroup, ReExtractSource } from '@ingest/contracts';
+import type { DetectFiguresSource, DetectedFigure, ImageCrop, Question, QuestionListResponse, ReExtractedGroup, ReExtractSource } from '@ingest/contracts';
 import { DETECT_FIGURES_MAX_PAGES } from '@ingest/contracts';
 import { getCroppedBlob } from '../../../shared/lib/crop-image.js';
 import { useDocument } from '../../documents/index.js';
@@ -41,9 +41,19 @@ import {
 import { ComprehensionGroupPanel } from './comprehension-group.js';
 import { SourcePreviewPane, type SourcePreviewMagnifier } from './source-preview-pane.js';
 import { useVerifySources } from '../hooks/use-verify-sources.js';
+import type { VerifySibling } from '../lib/verify-sources.js';
 
 /** Which source PDFs sit beside the question page: question only, + answer, or + answer & solution. */
 type ViewMode = 'question' | 'answer' | 'solution';
+/** Destinations whose crop boundary is drawn on the main question-PDF canvas. */
+type CanvasCropTarget = 'question' | 'option' | 'answer' | 'solution';
+
+/** Last page an operator deliberately opened in one supporting source, scoped to its question page. */
+type SourcePageState = { context: string; page: number };
+
+function sourcePageContext(source: VerifySibling, questionPage: number): string {
+  return `${source.document.id}:${String(questionPage)}:${String(source.defaultPage)}`;
+}
 
 /** The view-toggle options. `needs` names the sibling document an option requires to be selectable. */
 const VIEW_MODES: readonly { mode: ViewMode; label: string; needs: 'answer' | 'solution' | null }[] = [
@@ -79,7 +89,9 @@ function writeVerifyPanelWidth(width: number): void {
 type Box = BoxRect & {
   id: string;
   questionId: string;
-  type: 'question' | 'option';
+  /** The question-PDF page that owns this canvas box; it may follow the question's source page. */
+  sourcePage: number;
+  type: CanvasCropTarget;
   optionIndex: number;
   label: string;
   /** `ai` = an unconfirmed AI suggestion (marked, not yet saved); `manual` = drawn by the user. */
@@ -101,6 +113,8 @@ type CropRequest = {
   questionId: string;
   /** Which source page the crop is taken from: main question canvas, answer key, or solution. */
   source: 'question' | 'answer' | 'solution';
+  /** Answer/solution destination when an inline paper draws it from the main question canvas. */
+  target?: 'answer' | 'solution';
   sourceDocumentId?: string;
   resolve: (url: string | null) => void;
 };
@@ -126,7 +140,9 @@ type SaveRun = { again: boolean; done: Promise<void> };
 type SavedBoxSpec = {
   id: string;
   questionId: string;
-  type: 'question' | 'option';
+  /** Natural crop coordinates belong to this specific question-PDF page. */
+  sourcePage: number;
+  type: CanvasCropTarget;
   optionIndex: number;
   label: string;
   source: 'manual' | 'ai';
@@ -147,6 +163,7 @@ function specToBox(spec: SavedBoxSpec, size: CanvasSize): Box {
   return {
     id: spec.id,
     questionId: spec.questionId,
+    sourcePage: spec.sourcePage,
     type: spec.type,
     optionIndex: spec.optionIndex,
     label: spec.label,
@@ -166,6 +183,7 @@ function boxToSpec(box: Box, url: string, size: CanvasSize): SavedBoxSpec {
   return {
     id: box.id,
     questionId: box.questionId,
+    sourcePage: box.sourcePage,
     type: box.type,
     optionIndex: box.optionIndex,
     label: box.label,
@@ -180,7 +198,7 @@ function boxToSpec(box: Box, url: string, size: CanvasSize): SavedBoxSpec {
 }
 
 /** Stable identity of a persisted crop for de-duping: its destination plus the image it attached. */
-function cropKey(crop: { url: string; type: 'question' | 'option'; optionIndex: number }): string {
+function cropKey(crop: { url: string; type: CanvasCropTarget; optionIndex: number }): string {
   return `${crop.type}:${String(crop.optionIndex)}:${crop.url}`;
 }
 
@@ -194,21 +212,43 @@ function specToCrop(spec: SavedBoxSpec): ImageCrop {
     ny: spec.ny,
     nw: spec.nw,
     nh: spec.nh,
+    sourcePage: spec.sourcePage,
   };
 }
 
 /** Rebuild the session's natural-pixel specs for a question from the crops persisted on it. */
-function cropsToSpecs(question: Question, number: number): SavedBoxSpec[] {
-  // Only question/option crops belong on the main canvas. Passage crops live on Passage, while
-  // answer/solution crops are re-opened in their sibling source pane.
+function cropsToSpecs(
+  question: Question,
+  number: number,
+  options: { documentId: string; inlineAnswers: boolean },
+): SavedBoxSpec[] {
+  // Main question/option crops always belong on this canvas. Answer/solution crops only do when
+  // this document explicitly uses the inline layout and their provenance says they came from this
+  // same source (or is legacy-inline with no sibling provenance). Sibling crops stay in their own
+  // preview pane; rendering them here would put a valid boundary onto the wrong PDF.
   return question.imageCrops
-    .filter((crop): crop is ImageCrop & { type: 'question' | 'option' } => crop.type === 'question' || crop.type === 'option')
+    .filter((crop): crop is ImageCrop & { type: CanvasCropTarget } =>
+      crop.type === 'question' ||
+      crop.type === 'option' ||
+      (options.inlineAnswers &&
+        (crop.type === 'answer' || crop.type === 'solution') &&
+        (crop.sourceDocumentId === undefined || crop.sourceDocumentId === options.documentId)),
+    )
     .map((crop, index) => ({
     id: `persist_${question.id}_${crop.type}_${String(crop.optionIndex)}_${String(index)}`,
     questionId: question.id,
+    sourcePage: crop.sourcePage ?? question.sourceRegion.page,
     type: crop.type,
     optionIndex: crop.optionIndex,
-    label: `Q${String(number)}${crop.type === 'option' ? ` · option ${String(crop.optionIndex + 1)}` : ''}`,
+    label: `Q${String(number)}${
+      crop.type === 'option'
+        ? ` · option ${String(crop.optionIndex + 1)}`
+        : crop.type === 'answer'
+          ? ' · answer figure'
+          : crop.type === 'solution'
+            ? ' · explanation figure'
+            : ''
+    }`,
     source: 'manual',
     nx: crop.nx,
     ny: crop.ny,
@@ -262,6 +302,115 @@ type AllPagesSummary = {
   /** Pages whose detection call failed (transient AI errors) — their figures were never detected. */
   failedPages: number;
 };
+
+/** One Answer/Solution-page figure already matched to the question it belongs to. */
+type SiblingDetectedFigure = {
+  sourceDocumentId: string;
+  sourcePage: number;
+  figure: DetectedFigure & { target: 'answer' | 'solution' };
+};
+
+/** Result of persisting a set of detected sibling-source figures. */
+type SiblingAttachResult = {
+  attached: number;
+  skipped: number;
+  failed: number;
+  sourcePages: ReadonlySet<string>;
+  error: string | null;
+};
+
+/** How much two natural-pixel crop rectangles overlap, relative to their union. */
+function cropOverlap(a: BoxRect, b: BoxRect): number {
+  const x = Math.max(a.x, b.x);
+  const y = Math.max(a.y, b.y);
+  const right = Math.min(a.x + a.width, b.x + b.width);
+  const bottom = Math.min(a.y + a.height, b.y + b.height);
+  const intersection = Math.max(0, right - x) * Math.max(0, bottom - y);
+  const union = a.width * a.height + b.width * b.height - intersection;
+  return union > 0 ? intersection / union : 0;
+}
+
+/** Re-running detection must not duplicate the same Answer/Solution figure while still allowing many. */
+function hasSiblingFigureCrop(
+  question: Question,
+  entry: SiblingDetectedFigure,
+): boolean {
+  const [x, y, width, height] = entry.figure.bbox;
+  const incoming: BoxRect = { x, y, width, height };
+  return question.imageCrops.some((crop) =>
+    crop.type === entry.figure.target &&
+    crop.sourceDocumentId === entry.sourceDocumentId &&
+    crop.sourcePage === entry.sourcePage &&
+    cropOverlap(
+      { x: crop.nx, y: crop.ny, width: crop.nw, height: crop.nh },
+      incoming,
+    ) >= 0.9,
+  );
+}
+
+/**
+ * Main-question figures normally remain one per destination, but a figure on a continuation page
+ * is a second source region for the same stem. It must not be hidden merely because the question's
+ * opening page already has a figure. Re-runs still skip the same continuation rectangle once its
+ * provenance has been saved.
+ */
+function hasQuestionFigureCrop(
+  question: Question,
+  sourcePage: number,
+  figure: DetectedFigure & { target: 'question' | 'option' },
+): boolean {
+  if (figure.target === 'option') return targetHasImage(question, figure.target, figure.optionIndex);
+  // Preserve the existing single-stem behavior on the question's own page. The exception below is
+  // deliberately narrow: only a later source page can add another question image.
+  if (sourcePage === question.sourceRegion.page) return hasQuestionImage(question);
+  const [x, y, width, height] = figure.bbox;
+  const incoming: BoxRect = { x, y, width, height };
+  return question.imageCrops.some((crop) =>
+    crop.type === 'question' &&
+    crop.sourcePage === sourcePage &&
+    cropOverlap({ x: crop.nx, y: crop.ny, width: crop.nw, height: crop.nh }, incoming) >= 0.9,
+  );
+}
+
+/**
+ * Answer/explanation figures on an inline question PDF are allowed to be plural. Unlike the stem
+ * skip rule, only the same saved source rectangle suppresses a re-run; a second distinct working
+ * diagram belongs in the same field. Main-canvas inline crops deliberately carry no sibling source
+ * id, which keeps a crop from an Answer/Solution PDF out of this comparison.
+ */
+function hasInlineFieldFigureCrop(
+  question: Question,
+  sourcePage: number,
+  figure: DetectedFigure & { target: 'answer' | 'solution' },
+): boolean {
+  const [x, y, width, height] = figure.bbox;
+  const incoming: BoxRect = { x, y, width, height };
+  return question.imageCrops.some((crop) =>
+    crop.type === figure.target &&
+    crop.sourceDocumentId === undefined &&
+    (crop.sourcePage ?? question.sourceRegion.page) === sourcePage &&
+    cropOverlap({ x: crop.nx, y: crop.ny, width: crop.nw, height: crop.nh }, incoming) >= 0.9,
+  );
+}
+
+function hasMainCanvasFigureCrop(
+  question: Question,
+  sourcePage: number,
+  figure: DetectedFigure & { target: CanvasCropTarget },
+): boolean {
+  if (figure.target === 'answer' || figure.target === 'solution') {
+    return hasInlineFieldFigureCrop(
+      question,
+      sourcePage,
+      figure as DetectedFigure & { target: 'answer' | 'solution' },
+    );
+  }
+  return hasQuestionFigureCrop(
+    question,
+    sourcePage,
+    figure as DetectedFigure & { target: 'question' | 'option' },
+  );
+}
 
 function allPagesSummaryText(s: AllPagesSummary): string {
   if (s.attached === 0 && s.skipped === 0 && s.failed === 0 && s.failedPages === 0) {
@@ -495,17 +644,52 @@ export function VerifyWorkspace({
   }, []);
 
   const [page, setPage] = useState(initialPage ?? 1);
+  // A figure can continue onto the page after its question begins. Remember owners discovered by the
+  // detector so that continuation page shows the real question card instead of an empty panel.
+  const [continuationOwnersByPage, setContinuationOwnersByPage] = useState<ReadonlyMap<number, ReadonlySet<string>>>(
+    () => new Map(),
+  );
+  useEffect(() => { setContinuationOwnersByPage(new Map()); }, [documentId]);
+  const rememberContinuationOwners = useCallback((sourcePage: number, figures: readonly DetectedFigure[]): void => {
+    const owners = figures
+      .filter((figure) =>
+        (figure.target === 'question' ||
+          figure.target === 'option' ||
+          figure.target === 'answer' ||
+          figure.target === 'solution') &&
+        figure.questionId.trim().length > 0,
+      )
+      .map((figure) => figure.questionId);
+    if (owners.length === 0) return;
+    setContinuationOwnersByPage((previous) => {
+      const next = new Map(previous);
+      const ids = new Set(next.get(sourcePage) ?? []);
+      owners.forEach((id) => ids.add(id));
+      next.set(sourcePage, ids);
+      return next;
+    });
+  }, []);
   // The sibling answer/solution sources for this unit, resolved for the page currently on screen so
   // both the preview panes and the answer/explanation re-read target this topic's pages in them.
   const sources = useVerifySources(document.data, page);
   // An inline-answer paper carries each question's answer beside it in the one question PDF — there is
   // no separate answer/solution PDF to show, so the side-by-side answer/solution views are dropped.
   const inlineAnswers = document.data?.answerLayout === 'inline';
+  // A `combined` layout deliberately resolves Answer and Solution to the SAME companion PDF. Keep
+  // that fact explicit here: the two field destinations remain separate, but the screen must never
+  // render two identical preview panes for one physical source.
+  const companionSource = sources.answer && sources.solution &&
+    sources.answer.document.kind === 'companion' &&
+    sources.answer.document.id === sources.solution.document.id
+    ? sources.answer
+    : null;
   const viewModes = inlineAnswers ? VIEW_MODES.filter((option) => option.mode === 'question') : VIEW_MODES;
   // The source previews are independently selectable: teachers often need to compare a question to
   // its answer, its worked solution, or both. The set is deliberately never empty — one source must
   // remain visible at all times.
   const [visibleViews, setVisibleViews] = useState<ReadonlySet<ViewMode>>(() => new Set<ViewMode>(['question']));
+  const [companionTarget, setCompanionTarget] = useState<'answer' | 'solution'>('answer');
+  useEffect(() => { setCompanionTarget('answer'); }, [companionSource?.document.id]);
   const toggleView = useCallback((mode: ViewMode): void => {
     setVisibleViews((previous) => {
       const next = new Set(previous);
@@ -518,12 +702,37 @@ export function VerifyWorkspace({
       return next;
     });
   }, []);
-  const answerSource: ReExtractSource | undefined = sources.answer
-    ? { documentId: sources.answer.document.id, page: sources.answer.defaultPage }
-    : undefined;
-  const solutionSource: ReExtractSource | undefined = sources.solution
-    ? { documentId: sources.solution.document.id, page: sources.solution.defaultPage }
-    : undefined;
+  // SourcePreviewPane owns the visual cursor; this small map mirrors it so a field's re-extract
+  // reads the page the operator is actually viewing, rather than always reopening range.from.
+  const [sourcePages, setSourcePages] = useState<ReadonlyMap<string, SourcePageState>>(() => new Map());
+  const sourcePageFor = useCallback((source: VerifySibling): number => {
+    // A grouped companion is one physical pane even though Answer and Explanation have different
+    // topic defaults. Both field re-extract buttons must therefore use the page currently open in
+    // that shared pane, not silently fall back to separate range starts.
+    const visibleSource = companionSource?.document.id === source.document.id ? companionSource : source;
+    const state = sourcePages.get(visibleSource.document.id);
+    return state?.context === sourcePageContext(visibleSource, page) ? state.page : visibleSource.defaultPage;
+  }, [companionSource, page, sourcePages]);
+  const rememberSourcePage = useCallback((source: VerifySibling, sourcePage: number): void => {
+    const context = sourcePageContext(source, page);
+    setSourcePages((previous) => {
+      const current = previous.get(source.document.id);
+      if (current?.context === context && current.page === sourcePage) return previous;
+      const next = new Map(previous);
+      next.set(source.document.id, { context, page: sourcePage });
+      return next;
+    });
+  }, [page]);
+  const reExtractSourceFor = useCallback((source: VerifySibling | null, target: 'answer' | 'solution'): ReExtractSource | undefined => {
+    if (!source) return undefined;
+    return {
+      documentId: source.document.id,
+      page: sourcePageFor(source),
+      ...(source.document.kind === 'companion' ? { target } : {}),
+    };
+  }, [sourcePageFor]);
+  const answerSource = reExtractSourceFor(sources.answer, 'answer');
+  const solutionSource = reExtractSourceFor(sources.solution, 'solution');
   const [boxes, setBoxes] = useState<Box[]>([]);
   const [size, setSize] = useState<CanvasSize | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
@@ -575,7 +784,13 @@ export function VerifyWorkspace({
 
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
-  const [aiResult, setAiResult] = useState<{ detected: number; placed: number; skipped: number } | null>(null);
+  const [aiResult, setAiResult] = useState<{
+    detected: number;
+    placed: number;
+    skipped: number;
+    sourceLabel?: 'Answer' | 'Solution';
+  } | null>(null);
+  const [siblingDetecting, setSiblingDetecting] = useState<ReadonlySet<'answer' | 'solution'>>(() => new Set());
   const [allProgress, setAllProgress] = useState<AllPagesProgress | null>(null);
   const [allSummary, setAllSummary] = useState<AllPagesSummary | null>(null);
 
@@ -622,6 +837,117 @@ export function VerifyWorkspace({
     });
     return run;
   };
+
+  /**
+   * Crop and attach already-mapped Answer/Solution figures. Each question is written once per batch,
+   * so multiple detected figures never overwrite one another; repeated scans skip an almost-identical
+   * source rectangle but retain genuinely separate figures on the same answer or solution.
+   */
+  const attachDetectedSiblingFigures = useCallback(
+    async (
+      entries: readonly SiblingDetectedFigure[],
+      onProgress?: () => void,
+    ): Promise<SiblingAttachResult> => {
+      let attached = 0;
+      let skipped = 0;
+      let failed = 0;
+      let firstError: string | null = null;
+      const sourcePages = new Set<string>();
+      const initial = await questionsApi.listByDocument(documentId);
+      const initialById = new Map(initial.questions.map((question) => [question.id, question]));
+      const byQuestion = new Map<string, SiblingDetectedFigure[]>();
+      for (const entry of entries) {
+        const group = byQuestion.get(entry.figure.questionId) ?? [];
+        group.push(entry);
+        byQuestion.set(entry.figure.questionId, group);
+      }
+
+      for (const [questionId, group] of byQuestion) {
+        let preparedForPatch = 0;
+        try {
+          await enqueueQuestionWrite(questionId, async () => {
+            const current = readQuestion(questionId) ?? initialById.get(questionId);
+            if (!current) {
+              skipped += group.length;
+              group.forEach(() => { onProgress?.(); });
+              return;
+            }
+            let answerImages = [...current.answerImages];
+            let explanationImages = [...current.explanationImages];
+            let imageCrops = [...current.imageCrops];
+            let answerChanged = false;
+            let solutionChanged = false;
+            let attachedHere = 0;
+            const pagesHere = new Set<string>();
+            for (const entry of group) {
+              if (hasSiblingFigureCrop({ ...current, answerImages, explanationImages, imageCrops }, entry)) {
+                skipped += 1;
+                onProgress?.();
+                continue;
+              }
+              try {
+                const [x, y, width, height] = entry.figure.bbox;
+                const blob = await getCroppedBlob(
+                  questionsApi.pageImageUrl(entry.sourceDocumentId, entry.sourcePage),
+                  { x, y, width, height },
+                );
+                const { url } = await questionsApi.uploadImage(
+                  questionId,
+                  `${entry.figure.target}_${String(entry.sourcePage)}_${String(Math.round(x))}_${String(Math.round(y))}_${String(Date.now())}`,
+                  blob,
+                );
+                const crop: ImageCrop = {
+                  url,
+                  type: entry.figure.target,
+                  optionIndex: 0,
+                  nx: x,
+                  ny: y,
+                  nw: width,
+                  nh: height,
+                  sourceDocumentId: entry.sourceDocumentId,
+                  sourcePage: entry.sourcePage,
+                };
+                imageCrops = upsertCrop(imageCrops, crop, undefined);
+                if (entry.figure.target === 'answer') {
+                  answerImages = [...answerImages, url];
+                  answerChanged = true;
+                } else {
+                  explanationImages = [...explanationImages, url];
+                  solutionChanged = true;
+                }
+                pagesHere.add(`${entry.sourceDocumentId}:${String(entry.sourcePage)}`);
+                attachedHere += 1;
+              } catch (caught) {
+                failed += 1;
+                firstError ??= caught instanceof Error ? caught.message : String(caught);
+              } finally {
+                onProgress?.();
+              }
+            }
+            if (attachedHere === 0) return;
+            preparedForPatch = attachedHere;
+            await patchQuestion({
+              id: questionId,
+              patch: {
+                ...(answerChanged ? { answerImages } : {}),
+                ...(solutionChanged ? { explanationImages } : {}),
+                imageCrops,
+              },
+            });
+            attached += attachedHere;
+            pagesHere.forEach((sourcePage) => sourcePages.add(sourcePage));
+          });
+        } catch (caught) {
+          // A patch failure means only the crops prepared for it were not attached. Individual crop
+          // failures have already been counted inside the loop, so do not double-count them here.
+          failed += preparedForPatch;
+          firstError ??= caught instanceof Error ? caught.message : String(caught);
+        }
+      }
+      return { attached, skipped, failed, sourcePages, error: firstError };
+    },
+    [documentId, patchQuestion, readQuestion],
+  );
 
   /** The single mutation point for boxes: keeps the ref in sync so async code never reads stale state. */
   const applyBoxes = useCallback((updater: (prev: Box[]) => Box[]): void => {
@@ -694,10 +1020,27 @@ export function VerifyWorkspace({
   imageSrcRef.current = imageSrc;
   pageRef.current = page;
 
-  const onThisPage = useMemo(
-    () => (questions.data ?? []).filter((q) => q.sourceRegion.page === page),
-    [questions.data, page],
-  );
+  const continuationQuestionIds = useMemo(() => {
+    const ids = new Set(continuationOwnersByPage.get(page) ?? []);
+    // A persisted continuation crop still has to reveal its owner after a reload, when no in-memory
+    // detector result remains. Legacy crops without sourcePage retain their original-page behaviour.
+    for (const question of questions.data ?? []) {
+      if (question.sourceRegion.page === page) continue;
+      if (question.imageCrops.some((crop) =>
+        (crop.type === 'question' ||
+          crop.type === 'option' ||
+          (inlineAnswers && (crop.type === 'answer' || crop.type === 'solution') && crop.sourceDocumentId === undefined)) &&
+        crop.sourcePage === page,
+      )) ids.add(question.id);
+    }
+    return ids;
+  }, [continuationOwnersByPage, inlineAnswers, page, questions.data]);
+  const onThisPage = useMemo(() => {
+    const all = questions.data ?? [];
+    const continued = all.filter((question) => continuationQuestionIds.has(question.id));
+    const startedHere = all.filter((question) => question.sourceRegion.page === page);
+    return [...continued, ...startedHere.filter((question) => !continuationQuestionIds.has(question.id))];
+  }, [continuationQuestionIds, page, questions.data]);
   // The number each question DISPLAYS is the printed number read from the sheet. The list arrives
   // in PDF reading order from the API, so for the rare question without a readable number the
   // fallback is its ordinal in that full order — never a per-page array index.
@@ -800,6 +1143,9 @@ export function VerifyWorkspace({
   const applyGroupReExtract = useCallback(
     (passageId: string, groupQuestions: Question[], result: ReExtractedGroup): void => {
       passageDrafts.setText(passageId, result.passage);
+      // A passage-only operation deliberately has no authority to replace any child field, even if an
+      // older/misbehaving server returned them. This keeps the selected Verify scope non-destructive.
+      if (result.mode === 'passage_only') return;
       const byId = new Map(result.subQuestions.map((sub) => [sub.questionId, sub]));
       for (const q of groupQuestions) {
         const sub = byId.get(q.id);
@@ -810,6 +1156,9 @@ export function VerifyWorkspace({
           if (sub.options.length > 0) next.options = sub.options;
           if (sub.answer.trim() !== '') next.answer = sub.answer;
           if (sub.explanation && sub.explanation.trim() !== '') next.explanation = sub.explanation;
+          // A comprehension can contain a real matrix child. Apply only a validated returned table to
+          // a draft that is still matrix-typed; never infer or overwrite the answer from its match key.
+          if (prev.questionType === 'matrix' && sub.match !== null) next.match = sub.match;
           return next;
         });
       }
@@ -947,10 +1296,20 @@ export function VerifyWorkspace({
         id: question.id,
         patch: { questionImage: kept.length > 0 ? kept.join(',') : null, imageCrops },
       });
-    } else if ((question.optionImages[box.optionIndex] ?? '') === url) {
+    } else if (box.type === 'option' && (question.optionImages[box.optionIndex] ?? '') === url) {
       const optionImages = [...question.optionImages];
       optionImages[box.optionIndex] = '';
       await patchQuestion({ id: question.id, patch: { optionImages, imageCrops } });
+    } else if (box.type === 'answer' && question.answerImages.includes(url)) {
+      await patchQuestion({
+        id: question.id,
+        patch: { answerImages: question.answerImages.filter((item) => item !== url), imageCrops },
+      });
+    } else if (box.type === 'solution' && question.explanationImages.includes(url)) {
+      await patchQuestion({
+        id: question.id,
+        patch: { explanationImages: question.explanationImages.filter((item) => item !== url), imageCrops },
+      });
     }
   };
 
@@ -968,7 +1327,16 @@ export function VerifyWorkspace({
     // Persist the crop rect (natural pixels) alongside its url so the box reappears on any device.
     const imageCrops = upsertCrop(
       question.imageCrops,
-      { url, type: box.type, optionIndex: box.optionIndex, nx: natural.x, ny: natural.y, nw: natural.width, nh: natural.height },
+      {
+        url,
+        type: box.type,
+        optionIndex: box.optionIndex,
+        nx: natural.x,
+        ny: natural.y,
+        nw: natural.width,
+        nh: natural.height,
+        sourcePage: box.sourcePage,
+      },
       previousUrl,
     );
     if (box.type === 'question') {
@@ -980,11 +1348,18 @@ export function VerifyWorkspace({
         id: question.id,
         patch: { isQuestionImage: true, questionImage: urls.join(','), imageCrops },
       });
-    } else {
+    } else if (box.type === 'option') {
       const optionImages = [...question.optionImages];
       while (optionImages.length <= box.optionIndex) optionImages.push('');
       optionImages[box.optionIndex] = url;
       await patchQuestion({ id: question.id, patch: { isOptionImage: true, optionImages, imageCrops } });
+    } else {
+      const field = box.type === 'answer' ? 'answerImages' : 'explanationImages';
+      const current = [...question[field]];
+      const at = previousUrl ? current.indexOf(previousUrl) : -1;
+      if (at >= 0) current[at] = url;
+      else current.push(url);
+      await patchQuestion({ id: question.id, patch: { [field]: current, imageCrops } });
     }
     if (!boxesRef.current.some((b) => b.id === box.id)) {
       await detachUrl(box, url);
@@ -1016,7 +1391,7 @@ export function VerifyWorkspace({
         width: box.width * scaleX,
         height: box.height * scaleY,
       };
-      const blob = await getCroppedBlob(imageSrcRef.current, natural);
+      const blob = await getCroppedBlob(questionsApi.pageImageUrl(documentId, box.sourcePage), natural);
       // Fresh storage key per save: the store upserts by key and serves cached URLs, so re-using a
       // key on re-crop would keep the stale image visible everywhere. A new key = a new URL.
       const { url } = await questionsApi.uploadImage(box.questionId, `${boxId}_${String(Date.now())}`, blob);
@@ -1034,6 +1409,46 @@ export function VerifyWorkspace({
   const runActive = allProgress !== null;
   /** Async-safe mirror of `runActive`, set by detectAllPages itself so mid-run saves block immediately. */
   const runActiveRef = useRef(false);
+
+  /** Scan and attach figures from the Answer or Solution page currently open in its sibling pane. */
+  const detectSiblingPage = useCallback(async (
+    target: 'answer' | 'solution',
+    sourceDocumentId: string,
+    sourcePage: number,
+  ): Promise<void> => {
+    if (runActiveRef.current) return;
+    setSiblingDetecting((previous) => new Set(previous).add(target));
+    setAiError(null);
+    setAiResult(null);
+    try {
+      const result = await questionsApi.detectFigures(documentId, sourcePage, {
+        documentId: sourceDocumentId,
+        target,
+      });
+      const entries: SiblingDetectedFigure[] = result.figures
+        .filter((figure): figure is DetectedFigure & { target: 'answer' | 'solution' } =>
+          figure.target === 'answer' || figure.target === 'solution',
+        )
+        .filter((figure) => figure.target === target)
+        .map((figure) => ({ sourceDocumentId, sourcePage, figure }));
+      const outcome = await attachDetectedSiblingFigures(entries);
+      if (outcome.error) setAiError(outcome.error);
+      setAiResult({
+        detected: result.figures.length,
+        placed: outcome.attached,
+        skipped: outcome.skipped,
+        sourceLabel: target === 'answer' ? 'Answer' : 'Solution',
+      });
+    } catch (caught) {
+      setAiError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSiblingDetecting((previous) => {
+        const next = new Set(previous);
+        next.delete(target);
+        return next;
+      });
+    }
+  }, [attachDetectedSiblingFigures, documentId]);
 
   /**
    * Save a box, serialised per box: at most one upload in flight, and adjustments made while one is
@@ -1119,6 +1534,7 @@ export function VerifyWorkspace({
       {
         id,
         questionId: question.id,
+        sourcePage: page,
         type: drawTarget.type,
         optionIndex: drawTarget.optionIndex,
         source: 'manual',
@@ -1164,18 +1580,27 @@ export function VerifyWorkspace({
       new Promise<string | null>((resolve) => {
         cropRequestRef.current?.resolve(null); // supersede any prior pending request
         setDrawTarget(null); // the editable-box draw and a field crop can't be armed at once
-        setVisibleViews((previous) => new Set([...previous, source]));
         const sibling = source === 'answer' ? sources.answer : source === 'solution' ? sources.solution : undefined;
+        // The grouped companion has one pane for both destinations. Reflect the field the card asked
+        // for in its compact picker, while `req.source` below still remains the durable destination.
+        if (sibling && companionSource?.document.id === sibling.document.id && (source === 'answer' || source === 'solution')) {
+          setCompanionTarget(source);
+        }
+        // An inline layout has no sibling pane: draw the answer/explanation directly on the question
+        // canvas, but preserve its field destination independently from the canvas source.
+        const inlineField = inlineAnswers && !sibling && (source === 'answer' || source === 'solution') ? source : undefined;
+        if (!inlineField) setVisibleViews((previous) => new Set([...previous, source]));
         const req: CropRequest = {
           questionId,
-          source,
+          source: inlineField ? 'question' : source,
+          ...(inlineField ? { target: inlineField } : {}),
           ...(sibling ? { sourceDocumentId: sibling.document.id } : {}),
           resolve,
         };
         cropRequestRef.current = req;
         setCropRequest(req);
       }),
-    [sources.answer, sources.solution],
+    [companionSource?.document.id, inlineAnswers, sources.answer, sources.solution],
   );
   /** Put a just-drawn sibling figure in the card immediately, before upload latency is visible. */
   const addOptimisticSiblingImage = (questionId: string, source: 'answer' | 'solution', previewUrl: string): void => {
@@ -1209,6 +1634,40 @@ export function VerifyWorkspace({
         : previous,
     );
   };
+  /**
+   * A manual answer/explanation crop from an inline question PDF is already durable after its
+   * background write. Materialise its boundary on this same canvas straight away, instead of making
+   * the operator reload before they can drag the crop they just made.
+   */
+  const rememberInlineFieldBox = (
+    questionId: string,
+    target: 'answer' | 'solution',
+    url: string,
+    natural: BoxRect,
+    sourcePage: number,
+  ): void => {
+    const number = questionNumberById.get(questionId) ?? '?';
+    const spec: SavedBoxSpec = {
+      id: `inline_${questionId}_${target}_${String(Date.now())}`,
+      questionId,
+      sourcePage,
+      type: target,
+      optionIndex: 0,
+      label: `Q${String(number)} · ${target === 'answer' ? 'answer' : 'explanation'} figure`,
+      source: 'manual',
+      nx: natural.x,
+      ny: natural.y,
+      nw: natural.width,
+      nh: natural.height,
+      url,
+    };
+    const existing = pageCache.current.get(sourcePage) ?? [];
+    pageCache.current.set(sourcePage, [...existing, spec]);
+    const canvasSize = sizeRef.current;
+    if (pageRef.current !== sourcePage || !canvasSize || canvasSize.displayWidth === 0) return;
+    applyBoxes((previous) => [...previous, specToBox(spec, canvasSize)]);
+    applySavedUrls((previous) => new Map(previous).set(spec.id, url));
+  };
   // Crop `imageUrl` at `natural` (natural px), upload it against the pending request's question, and
   // resolve the request with the new URL. Any failure resolves null so the caller's button just resets.
   const fulfilCrop = async (imageUrl: string, natural: BoxRect, sourcePage?: number): Promise<void> => {
@@ -1217,8 +1676,8 @@ export function VerifyWorkspace({
     clearCropRequest();
     try {
       const blob = await getCroppedBlob(imageUrl, natural);
-      if (req.source === 'answer' || req.source === 'solution') {
-        const siblingSource = req.source;
+      const siblingSource = req.target ?? (req.source === 'answer' || req.source === 'solution' ? req.source : null);
+      if (siblingSource !== null) {
         // The UI gets a browser-local image as soon as the crop encoder finishes (usually far sooner
         // than an upload + database round trip). The background job replaces it with the durable URL.
         const previewUrl = URL.createObjectURL(blob);
@@ -1247,6 +1706,17 @@ export function VerifyWorkspace({
                 ...(sourcePage ? { sourcePage } : {}),
               }, undefined);
               await patchQuestion({ id: latest.id, patch: { [field]: media, imageCrops } });
+              // An inline field was drawn on the main question canvas. Keep its durable crop box
+              // on that exact page, whereas a sibling source is projected by SourcePreviewPane.
+              if (req.source === 'question' && req.target) {
+                rememberInlineFieldBox(
+                  latest.id,
+                  req.target,
+                  url,
+                  natural,
+                  sourcePage ?? pageRef.current,
+                );
+              }
             });
           } catch (caught) {
             removeOptimisticSiblingImage(req.questionId, siblingSource, previewUrl);
@@ -1380,9 +1850,11 @@ export function VerifyWorkspace({
       if (!url || saveRuns.current.has(box.id)) return true;
       const question = byId.get(box.questionId);
       if (!question) return false;
-      return box.type === 'question'
-        ? splitUrls(question.questionImage).includes(url)
-        : (question.optionImages[box.optionIndex] ?? '') === url;
+      if (box.type === 'question') return splitUrls(question.questionImage).includes(url);
+      if (box.type === 'option') return (question.optionImages[box.optionIndex] ?? '') === url;
+      return box.type === 'answer'
+        ? question.answerImages.includes(url)
+        : question.explanationImages.includes(url);
     };
     if (boxesRef.current.some((b) => !stillAttached(b))) {
       applyBoxes((prev) => prev.filter(stillAttached));
@@ -1401,17 +1873,21 @@ export function VerifyWorkspace({
     if (seededPersisted.current || !data || data.length === 0) return;
     seededPersisted.current = true;
     data.forEach((question, index) => {
-      const specs = cropsToSpecs(question, question.questionNumber ?? index + 1);
+      const specs = cropsToSpecs(question, question.questionNumber ?? index + 1, {
+        documentId,
+        inlineAnswers,
+      });
       if (specs.length === 0) return;
-      const pageNumber = question.sourceRegion.page;
-      const existing = pageCache.current.get(pageNumber) ?? [];
-      const seen = new Set(existing.map(cropKey));
-      const added = specs.filter((spec) => !seen.has(cropKey(spec)));
-      if (added.length > 0) pageCache.current.set(pageNumber, [...existing, ...added]);
+      for (const spec of specs) {
+        const pageNumber = spec.sourcePage;
+        const existing = pageCache.current.get(pageNumber) ?? [];
+        if (existing.some((item) => cropKey(item) === cropKey(spec))) continue;
+        pageCache.current.set(pageNumber, [...existing, spec]);
+      }
     });
     pendingRestore.current = pageRef.current;
     setRestoreTick((n) => n + 1);
-  }, [questions.data]);
+  }, [documentId, inlineAnswers, questions.data]);
 
   // Redraw a page's cached saved boxes when navigation (or the seed above) lands on it — once the
   // fitted size is known so the natural-pixel specs map to the right display region. Only fires for the
@@ -1439,6 +1915,7 @@ export function VerifyWorkspace({
     setAiResult(null);
     try {
       const { imageWidth, imageHeight, figures } = await questionsApi.detectFigures(documentId, page);
+      rememberContinuationOwners(page, figures);
       const sx = size.displayWidth / imageWidth;
       const sy = size.displayHeight / imageHeight;
       let skipped = 0;
@@ -1453,10 +1930,15 @@ export function VerifyWorkspace({
       }
       const placed: Box[] = [];
       figures
-        .filter((f): f is DetectedFigure & { target: 'question' | 'option' } => f.target !== 'passage')
+        .filter((f): f is DetectedFigure & { target: CanvasCropTarget } =>
+          f.target === 'question' ||
+          f.target === 'option' ||
+          f.target === 'answer' ||
+          f.target === 'solution',
+        )
         .forEach((figure, index) => {
         const question = questionById.get(figure.questionId);
-        if (question && targetHasImage(question, figure.target, figure.optionIndex)) {
+        if (question && hasMainCanvasFigureCrop(question, page, figure)) {
           skipped += 1;
           return;
         }
@@ -1464,11 +1946,20 @@ export function VerifyWorkspace({
         placed.push({
           id: `${figure.questionId}_ai_${String(page)}_${String(index)}`,
           questionId: figure.questionId,
+          sourcePage: page,
           type: figure.target,
           optionIndex: figure.optionIndex,
           source: 'ai',
           snippet: figure.snippet,
-          label: `AI · Q${String(questionNumberById.get(figure.questionId) ?? '?')}${figure.target === 'option' ? ` · option ${String(figure.optionIndex + 1)}` : ''}`,
+          label: `AI · Q${String(questionNumberById.get(figure.questionId) ?? '?')}${
+            figure.target === 'option'
+              ? ` · option ${String(figure.optionIndex + 1)}`
+              : figure.target === 'answer'
+                ? ' · answer figure'
+                : figure.target === 'solution'
+                  ? ' · explanation figure'
+                  : ''
+          }`,
           x: x * sx,
           y: y * sy,
           width: w * sx,
@@ -1488,7 +1979,7 @@ export function VerifyWorkspace({
       setAiBusy(false);
     }
     // commit/questionNumberById are stable enough; guarded single-run via effect below for autoRun.
-  }, [documentId, page, size, questionById, questionNumberById, attachPassageFigure]);
+  }, [documentId, page, size, questionById, questionNumberById, attachPassageFigure, rememberContinuationOwners]);
 
   // --- Whole-document detection (detect + attach across ALL pages in one run). ---
   /**
@@ -1503,54 +1994,123 @@ export function VerifyWorkspace({
    * instead of driving the document page by page.
    */
   const detectAllPages = useCallback(async (): Promise<void> => {
-    const pagesWithQuestions = [
-      ...new Set((questions.data ?? []).map((q) => q.sourceRegion.page)),
+    const questionStartPages = [
+      ...new Set((questions.data ?? []).map((question) => question.sourceRegion.page)),
     ].sort((a, b) => a - b);
-    if (pagesWithQuestions.length === 0 || runActiveRef.current) return;
+    if (questionStartPages.length === 0 || runActiveRef.current) return;
+
+    type DetectionPlan = {
+      sourceDocumentId: string;
+      sourceTarget: 'question' | 'answer' | 'solution';
+      source?: DetectFiguresSource;
+      pages: readonly number[];
+    };
+    type DetectedPageFigure = {
+      sourceDocumentId: string;
+      sourceTarget: DetectionPlan['sourceTarget'];
+      page: number;
+      figure: DetectedFigure;
+    };
+
     runActiveRef.current = true;
     setAiError(null);
     setAiResult(null);
     setAllSummary(null);
-    setAllProgress({ phase: 'detect', done: 0, total: pagesWithQuestions.length });
+    // Page counts for sibling PDFs are loaded after this turn begins. Mark the run active immediately
+    // so a crop save cannot interleave with its grouped question patches during that short preflight.
+    setAllProgress({ phase: 'detect', done: 0, total: 0 });
     try {
-      const detected: { page: number; figure: DetectedFigure }[] = [];
-      const failedPages = new Set<number>();
+      const questionPageCount = pageCount.data ?? await questionsApi.pageCount(documentId);
+      const questionPages = [
+        ...new Set([
+          ...questionStartPages,
+          ...questionStartPages
+            .filter((sourcePage) => sourcePage < questionPageCount)
+            .map((sourcePage) => sourcePage + 1),
+        ]),
+      ].sort((a, b) => a - b);
+      const plans: DetectionPlan[] = [{
+        sourceDocumentId: documentId,
+        sourceTarget: 'question',
+        pages: questionPages,
+      }];
+      let preflightFailures = 0;
       let firstFailure: string | null = null;
-      for (let start = 0; start < pagesWithQuestions.length; start += DETECT_FIGURES_MAX_PAGES) {
-        const chunk = pagesWithQuestions.slice(start, start + DETECT_FIGURES_MAX_PAGES);
+      // A combined companion is ONE physical source. There is no safe way for a whole-document
+      // vision pass to infer whether an arbitrary figure is answer evidence or explanation evidence,
+      // so scan it once into the explicitly selected destination instead of duplicating every crop
+      // into both fields.
+      const siblingSources: readonly { target: 'answer' | 'solution'; documentId: string }[] = companionSource
+        ? [{ target: companionTarget, documentId: companionSource.document.id }]
+        : [
+            ...(sources.answer ? [{ target: 'answer' as const, documentId: sources.answer.document.id }] : []),
+            ...(sources.solution ? [{ target: 'solution' as const, documentId: sources.solution.document.id }] : []),
+          ];
+      for (const sibling of siblingSources) {
         try {
-          const { pages: results } = await questionsApi.detectFiguresBatch(documentId, chunk);
-          for (const result of results) {
-            if (!result.ok) {
-              failedPages.add(result.page);
-              firstFailure ??= result.error;
-              continue;
-            }
-            for (const figure of result.figures) detected.push({ page: result.page, figure });
+          const totalPages = await questionsApi.pageCount(sibling.documentId);
+          const pages = Array.from({ length: totalPages }, (_unused, index) => index + 1);
+          if (pages.length > 0) {
+            plans.push({
+              sourceDocumentId: sibling.documentId,
+              sourceTarget: sibling.target,
+              source: { documentId: sibling.documentId, target: sibling.target },
+              pages,
+            });
           }
         } catch (caught) {
-          // One chunk's request failing must not discard the other chunks' detections.
-          for (const failedPage of chunk) failedPages.add(failedPage);
+          preflightFailures += 1;
           firstFailure ??= caught instanceof Error ? caught.message : String(caught);
         }
-        setAllProgress({
-          phase: 'detect',
-          done: Math.min(start + chunk.length, pagesWithQuestions.length),
-          total: pagesWithQuestions.length,
-        });
+      }
+
+      const totalDetectionPages = plans.reduce((total, plan) => total + plan.pages.length, 0);
+      let detectedPages = 0;
+      setAllProgress({ phase: 'detect', done: detectedPages, total: totalDetectionPages });
+      const detected: DetectedPageFigure[] = [];
+      const failedPages = new Set<string>();
+      for (const plan of plans) {
+        for (let start = 0; start < plan.pages.length; start += DETECT_FIGURES_MAX_PAGES) {
+          const chunk = plan.pages.slice(start, start + DETECT_FIGURES_MAX_PAGES);
+          try {
+            const { pages: results } = await questionsApi.detectFiguresBatch(documentId, [...chunk], plan.source);
+            for (const result of results) {
+              const key = `${plan.sourceDocumentId}:${String(result.page)}`;
+              if (!result.ok) {
+                failedPages.add(key);
+                firstFailure ??= result.error;
+                continue;
+              }
+              if (plan.sourceTarget === 'question') rememberContinuationOwners(result.page, result.figures);
+              for (const figure of result.figures) {
+                detected.push({
+                  sourceDocumentId: plan.sourceDocumentId,
+                  sourceTarget: plan.sourceTarget,
+                  page: result.page,
+                  figure,
+                });
+              }
+            }
+          } catch (caught) {
+            // One chunk's request failing must not discard the other chunks' detections.
+            for (const failedPage of chunk) failedPages.add(`${plan.sourceDocumentId}:${String(failedPage)}`);
+            firstFailure ??= caught instanceof Error ? caught.message : String(caught);
+          }
+          detectedPages += chunk.length;
+          setAllProgress({ phase: 'detect', done: detectedPages, total: totalDetectionPages });
+        }
       }
 
       // Re-read the questions before building patches: detection can take minutes and a patch built
       // from the run-start snapshot would silently erase anything saved in the meantime.
       const freshQuestions = (await questionsApi.listByDocument(documentId)).questions;
-      const freshById = new Map(freshQuestions.map((q) => [q.id, q]));
+      const freshById = new Map(freshQuestions.map((question) => [question.id, question]));
 
-      // Shared-passage figures attach straight to their passage; the rest go through the question
-      // pipeline. Dedup per passageId (first-wins across pages) so one passage is attached at most once
-      // per run — the per-page matcher only dedups within its own page.
+      // Shared-passage figures only exist on the main question source. Dedup per passageId
+      // (first-wins across pages), so one passage is attached at most once per run.
       const passageFirst = new Map<string, { page: number; bbox: [number, number, number, number] }>();
       for (const entry of detected) {
-        if (entry.figure.target !== 'passage' || entry.figure.passageId === null) continue;
+        if (entry.sourceTarget !== 'question' || entry.figure.target !== 'passage' || entry.figure.passageId === null) continue;
         if (!passageFirst.has(entry.figure.passageId)) {
           passageFirst.set(entry.figure.passageId, { page: entry.page, bbox: entry.figure.bbox });
         }
@@ -1562,17 +2122,33 @@ export function VerifyWorkspace({
           firstFailure ??= caught instanceof Error ? caught.message : String(caught);
         }
       }
+
       const questionDetected = detected.filter(
-        (e): e is { page: number; figure: DetectedFigure & { target: 'question' | 'option' } } =>
-          e.figure.target !== 'passage',
+        (entry): entry is DetectedPageFigure & {
+          sourceTarget: 'question';
+          figure: DetectedFigure & { target: CanvasCropTarget };
+        } =>
+          entry.sourceTarget === 'question' &&
+          (entry.figure.target === 'question' ||
+            entry.figure.target === 'option' ||
+            entry.figure.target === 'answer' ||
+            entry.figure.target === 'solution'),
+      );
+      const siblingDetected = detected.filter(
+        (entry): entry is DetectedPageFigure & {
+          sourceTarget: 'answer' | 'solution';
+          figure: DetectedFigure & { target: 'answer' | 'solution' };
+        } =>
+          (entry.sourceTarget === 'answer' || entry.sourceTarget === 'solution') &&
+          (entry.figure.target === 'answer' || entry.figure.target === 'solution'),
       );
 
       let skipped = 0;
-      const byQuestion = new Map<string, { page: number; figure: DetectedFigure & { target: 'question' | 'option' } }[]>();
+      const byQuestion = new Map<string, typeof questionDetected>();
       for (const entry of questionDetected) {
         const question = freshById.get(entry.figure.questionId);
         if (!question) continue;
-        if (targetHasImage(question, entry.figure.target, entry.figure.optionIndex)) {
+        if (hasMainCanvasFigureCrop(question, entry.page, entry.figure)) {
           skipped += 1;
           continue;
         }
@@ -1581,13 +2157,13 @@ export function VerifyWorkspace({
         byQuestion.set(question.id, group);
       }
 
-      const total = [...byQuestion.values()].reduce((n, group) => n + group.length, 0);
+      const total = [...byQuestion.values()].reduce((count, group) => count + group.length, 0) + siblingDetected.length;
       let done = 0;
       let attached = 0;
-      let failed = 0;
-      const touchedPages = new Set<number>();
-      // Saved-box specs (natural pixels) for every attached figure, grouped by the page it sits on, so
-      // navigation can redraw the boxes this run cropped. Only committed once a question's patch lands.
+      let failed = preflightFailures;
+      // Key by source document + page. Main-page boxes can be restored locally; sibling source panes
+      // re-render from their updated question crops instead.
+      const touchedPages = new Set<string>();
       const cachedByPage = new Map<number, SavedBoxSpec[]>();
       let specSeq = 0;
       setAllProgress({ phase: 'apply', done, total });
@@ -1596,35 +2172,54 @@ export function VerifyWorkspace({
         if (!question) continue;
         const stemUrls = splitUrls(question.questionImage);
         const optionImages = [...question.optionImages];
+        const answerImages = [...question.answerImages];
+        const explanationImages = [...question.explanationImages];
         let touchedStem = false;
         let touchedOption = false;
+        let touchedAnswer = false;
+        let touchedSolution = false;
         let attachedHere = 0;
-        const pagesHere = new Set<number>();
+        const pagesHere = new Set<string>();
         const specsHere: { sourcePage: number; spec: SavedBoxSpec }[] = [];
-        for (const { page: sourcePage, figure } of group) {
+        for (const { page: sourcePage, sourceDocumentId, figure } of group) {
           try {
             const [x, y, w, h] = figure.bbox;
-            const blob = await getCroppedBlob(questionsApi.pageImageUrl(documentId, sourcePage), {
+            const blob = await getCroppedBlob(questionsApi.pageImageUrl(sourceDocumentId, sourcePage), {
               x, y, width: w, height: h,
             });
-            const name = `${questionId}_${figure.target}_${String(figure.optionIndex)}_${String(Date.now())}`;
+            const name = `${questionId}_${figure.target}_${String(figure.optionIndex)}_${String(Math.round(x))}_${String(Math.round(y))}_${String(Date.now())}`;
             const { url } = await questionsApi.uploadImage(questionId, name, blob);
             if (figure.target === 'question') {
               stemUrls.push(url);
               touchedStem = true;
-            } else {
+            } else if (figure.target === 'option') {
               while (optionImages.length <= figure.optionIndex) optionImages.push('');
               optionImages[figure.optionIndex] = url;
               touchedOption = true;
+            } else if (figure.target === 'answer') {
+              answerImages.push(url);
+              touchedAnswer = true;
+            } else {
+              explanationImages.push(url);
+              touchedSolution = true;
             }
             specsHere.push({
               sourcePage,
               spec: {
                 id: `all_${questionId}_${figure.target}_${String(figure.optionIndex)}_${String(specSeq++)}`,
                 questionId,
+                sourcePage,
                 type: figure.target,
                 optionIndex: figure.optionIndex,
-                label: `Q${String(questionNumberById.get(questionId) ?? '?')}${figure.target === 'option' ? ` · option ${String(figure.optionIndex + 1)}` : ''}`,
+                label: `Q${String(questionNumberById.get(questionId) ?? '?')}${
+                  figure.target === 'option'
+                    ? ` · option ${String(figure.optionIndex + 1)}`
+                    : figure.target === 'answer'
+                      ? ' · answer figure'
+                      : figure.target === 'solution'
+                        ? ' · explanation figure'
+                        : ''
+                }`,
                 source: 'ai',
                 snippet: figure.snippet,
                 nx: x,
@@ -1635,7 +2230,7 @@ export function VerifyWorkspace({
               },
             });
             attachedHere += 1;
-            pagesHere.add(sourcePage);
+            pagesHere.add(`${sourceDocumentId}:${String(sourcePage)}`);
           } catch (caught) {
             failed += 1;
             firstFailure ??= caught instanceof Error ? caught.message : String(caught);
@@ -1651,12 +2246,14 @@ export function VerifyWorkspace({
               patch: {
                 ...(touchedStem ? { isQuestionImage: true, questionImage: stemUrls.join(',') } : {}),
                 ...(touchedOption ? { isOptionImage: true, optionImages } : {}),
+                ...(touchedAnswer ? { answerImages } : {}),
+                ...(touchedSolution ? { explanationImages } : {}),
                 imageCrops: [...question.imageCrops, ...specsHere.map(({ spec }) => specToCrop(spec))],
               },
             });
           });
           attached += attachedHere;
-          for (const touched of pagesHere) touchedPages.add(touched);
+          pagesHere.forEach((sourcePage) => touchedPages.add(sourcePage));
           // Patch landed — the crops are attached, so their boxes can now be redrawn per page.
           for (const { sourcePage, spec } of specsHere) {
             const list = cachedByPage.get(sourcePage) ?? [];
@@ -1669,8 +2266,25 @@ export function VerifyWorkspace({
         }
       }
 
-      // Stash each page's new boxes for restore-on-navigation; the current page gets them live now so
-      // the run's result is visible on the canvas without leaving and coming back.
+      const siblingResult = await attachDetectedSiblingFigures(
+        siblingDetected.map((entry) => ({
+          sourceDocumentId: entry.sourceDocumentId,
+          sourcePage: entry.page,
+          figure: entry.figure,
+        })),
+        () => {
+          done += 1;
+          setAllProgress({ phase: 'apply', done, total });
+        },
+      );
+      attached += siblingResult.attached;
+      skipped += siblingResult.skipped;
+      failed += siblingResult.failed;
+      siblingResult.sourcePages.forEach((sourcePage) => touchedPages.add(sourcePage));
+      firstFailure ??= siblingResult.error;
+
+      // Stash each main-question page's new boxes for restore-on-navigation; the current page gets
+      // them live now so the run's result is visible without leaving and coming back.
       const currentSize = sizeRef.current;
       for (const [pg, specs] of cachedByPage) {
         if (pg === pageRef.current && currentSize && currentSize.displayWidth > 0) {
@@ -1694,7 +2308,7 @@ export function VerifyWorkspace({
       runActiveRef.current = false;
       setAllProgress(null);
     }
-  }, [documentId, questions.data, patchQuestion, questionNumberById, applyBoxes, applySavedUrls, attachPassageFigure]);
+  }, [documentId, questions.data, pageCount.data, sources.answer, sources.solution, companionSource, companionTarget, patchQuestion, questionNumberById, applyBoxes, applySavedUrls, attachPassageFigure, attachDetectedSiblingFigures, rememberContinuationOwners]);
 
   // Auto-detect once on arrival when the session pushed us here with ?auto=1 (still only marks).
   const autoStarted = useRef(false);
@@ -1768,7 +2382,12 @@ export function VerifyWorkspace({
   // presence in the card is its attached image, and adjustments happen on the canvas box itself.
   const cardBoxesFor = (questionId: string): CardBox[] =>
     boxes
-      .filter((b) => b.questionId === questionId && b.source === 'manual' && !savedUrls.has(b.id))
+      .filter((b): b is Box & { type: 'question' | 'option' } =>
+        b.questionId === questionId &&
+        b.source === 'manual' &&
+        !savedUrls.has(b.id) &&
+        (b.type === 'question' || b.type === 'option'),
+      )
       .map((b) => ({ id: b.id, type: b.type, optionIndex: b.optionIndex, label: b.label, saving: busy.has(b.id) }));
   const cardDrawTargetFor = (questionId: string): CardDrawTarget | null =>
     drawTarget && drawTarget.questionId === questionId
@@ -1821,6 +2440,7 @@ export function VerifyWorkspace({
         {...(!nested ? { selection: { checked: selectedIds.has(question.id), onChange: () => { toggleSelect(question.id); } } } : {})}
         answerSource={answerSource}
         solutionSource={solutionSource}
+        inlineAnswers={inlineAnswers}
         onDraftUpdate={(updater) => { drafts.updateDraft(question.id, updater); }}
         onSave={() => { void drafts.save([question.id]); }}
         onDelete={() => { void handleDeleteQuestion(question); }}
@@ -1900,13 +2520,13 @@ export function VerifyWorkspace({
             <IconButton
               icon={aiBusy ? <Spinner /> : <IconSparkle />}
               label="Auto-detect figures on this page"
-              disabled={aiBusy || allProgress !== null || !size}
+              disabled={aiBusy || allProgress !== null || siblingDetecting.size > 0 || !size}
               onClick={() => { void detectCurrentPage(); }}
             />
             <IconButton
               icon={allProgress ? <Spinner /> : <IconLayers />}
               label="Detect figures across all pages"
-              disabled={aiBusy || allProgress !== null}
+              disabled={aiBusy || allProgress !== null || siblingDetecting.size > 0}
               onClick={() => { void detectAllPages(); }}
             />
           </div>
@@ -1944,7 +2564,52 @@ export function VerifyWorkspace({
           </div>
         ) : null}
 
-        {visibleViews.has('answer') && sources.answer ? (
+        {companionSource && (visibleViews.has('answer') || visibleViews.has('solution')) ? (
+          <SourcePreviewPane
+            title="Answer + Explanation"
+            tone={companionTarget === 'answer' ? 'answer' : 'solution'}
+            documentId={companionSource.document.id}
+            fileName={companionSource.document.fileName}
+            defaultPage={companionSource.defaultPage}
+            crop={{
+              armed: cropRequest?.source === 'answer' || cropRequest?.source === 'solution',
+              onCrop: (imageUrl, natural, sourcePage) => { void fulfilCrop(imageUrl, natural, sourcePage); },
+              onCancel: cancelCropRequest,
+              existingCrops: [...answerPreviewCrops, ...solutionPreviewCrops].map((item) => ({
+                id: item.id,
+                url: item.crop.url,
+                rect: { x: item.crop.nx, y: item.crop.ny, width: item.crop.nw, height: item.crop.nh },
+                page: item.page,
+                label: item.label,
+              })),
+              onExistingCrop: (id, replacedUrl, imageUrl, natural, sourcePage) => {
+                const target = [...answerPreviewCrops, ...solutionPreviewCrops].find((item) => item.id === id);
+                const type = target?.crop.type;
+                if (!target || (type !== 'answer' && type !== 'solution')) return null;
+                return replacePreviewCrop(
+                  target.questionId,
+                  type,
+                  replacedUrl,
+                  companionSource.document.id,
+                  imageUrl,
+                  natural,
+                  sourcePage,
+                );
+              },
+            }}
+            detection={{
+              busy: aiBusy || allProgress !== null || siblingDetecting.size > 0,
+              label: `Auto-detect ${companionTarget === 'answer' ? 'answer' : 'explanation'} figures on this page`,
+              onDetect: (sourcePage) => {
+                void detectSiblingPage(companionTarget, companionSource.document.id, sourcePage);
+              },
+            }}
+            destination={{ target: companionTarget, onTargetChange: setCompanionTarget }}
+            onPageChange={(sourcePage) => { rememberSourcePage(companionSource, sourcePage); }}
+            onMagnifierChange={setSiblingMagnifier}
+          />
+        ) : null}
+        {!companionSource && visibleViews.has('answer') && sources.answer ? (
           <SourcePreviewPane
             title="Answer"
             tone="answer"
@@ -1977,10 +2642,18 @@ export function VerifyWorkspace({
                 );
               },
             }}
+            detection={{
+              busy: aiBusy || allProgress !== null || siblingDetecting.size > 0,
+              onDetect: (sourcePage) => {
+                const source = sources.answer;
+                if (source) void detectSiblingPage('answer', source.document.id, sourcePage);
+              },
+            }}
+            onPageChange={(sourcePage) => { rememberSourcePage(sources.answer as VerifySibling, sourcePage); }}
             onMagnifierChange={setSiblingMagnifier}
           />
         ) : null}
-        {visibleViews.has('solution') && sources.solution ? (
+        {!companionSource && visibleViews.has('solution') && sources.solution ? (
           <SourcePreviewPane
             title="Solution"
             tone="solution"
@@ -2013,6 +2686,14 @@ export function VerifyWorkspace({
                 );
               },
             }}
+            detection={{
+              busy: aiBusy || allProgress !== null || siblingDetecting.size > 0,
+              onDetect: (sourcePage) => {
+                const source = sources.solution;
+                if (source) void detectSiblingPage('solution', source.document.id, sourcePage);
+              },
+            }}
+            onPageChange={(sourcePage) => { rememberSourcePage(sources.solution as VerifySibling, sourcePage); }}
             onMagnifierChange={setSiblingMagnifier}
           />
         ) : null}
@@ -2182,11 +2863,15 @@ export function VerifyWorkspace({
         {!aiBusy && pendingAi.length === 0 && aiResult ? (
           <p className="note">
             {aiResult.placed === 0 && aiResult.detected === 0
-              ? 'No figures detected on this page.'
+              ? `No figures detected on this ${aiResult.sourceLabel?.toLowerCase() ?? 'question'} page.`
               : aiResult.skipped > 0
-                ? `Detected ${String(aiResult.detected)} figure(s); ${String(aiResult.skipped)} already have an image and were skipped.`
-                : `Detected ${String(aiResult.detected)} figure(s).`}
+                ? `Detected ${String(aiResult.detected)} ${aiResult.sourceLabel?.toLowerCase() ?? 'question'} figure(s); ${String(aiResult.skipped)} already have an image and were skipped.`
+                : `Detected ${String(aiResult.detected)} ${aiResult.sourceLabel?.toLowerCase() ?? 'question'} figure(s).`}
           </p>
+        ) : null}
+
+        {continuationQuestionIds.size > 0 ? (
+          <p className="note">Showing question cards continued from the previous page.</p>
         ) : null}
 
         {onThisPage.length === 0 ? (
@@ -2213,7 +2898,6 @@ export function VerifyWorkspace({
                   passage={passageDrafts.textFor(item.passageId)}
                   passageImage={passageById.get(item.passageId)?.passageImage ?? null}
                   dirty={passageDrafts.dirtyIds.has(item.passageId)}
-                  questionType={drafts.draftFor(item.first).questionType || null}
                   disabled={runActive}
                   onPassageChange={(value) => { passageDrafts.setText(item.passageId, value); }}
                   onReExtracted={(result) => { applyGroupReExtract(item.passageId, item.questions, result); }}

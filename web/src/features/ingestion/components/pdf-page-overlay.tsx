@@ -13,12 +13,12 @@ type PdfPageOverlayProps = {
   order: ReadingOrder;
   controller: SplitPointsController;
   chapter: PageChapterInfo;
-  /** Page → default kind, so a whole page from an answer/explanation source pre-tags accordingly. */
+  /** Page → default kind, so a whole page from a supporting source pre-tags accordingly. */
   pageKinds?: PageKinds | undefined;
   hoveredSliceId: string | null;
   onHoverSlice: (sliceId: string | null) => void;
   onToggleTag: (chapterId: string, sliceId: string) => void;
-  /** Whether whole-page cells carry the question/answer/solution tag chip. Off in the
+  /** Whether whole-page cells carry the question/supporting-source tag chip. Off in the
    *  separate-files crop, where each file is already one fixed kind (chosen by its tab). */
   taggable?: boolean;
 };
@@ -27,6 +27,7 @@ const KIND_LABEL: Record<ChapterKind, string> = {
   question: 'Question',
   answer: 'Answer',
   solution: 'Solution',
+  companion: 'Answer + solution',
 };
 
 /** Tag id of a page with no interior cuts — matches the single slice `slicesForPage` emits. */
@@ -37,8 +38,8 @@ const wholePageSliceId = (pageNumber: number): string => `${String(pageNumber)}:
  * orientation (right-click draws the opposite axis as a quick guide); every cut line is
  * draggable/removable. The cells the current lines will produce are shaded and numbered in
  * column-major reading order so the operator sees the result before applying. Once cuts are
- * materialised into their own pages, a page has one whole-page cell that carries the question /
- * answer tag chip.
+ * materialised into their own pages, a page has one whole-page cell that carries the question / source
+ * tag chip.
  */
 export function PdfPageOverlay({
   pageNumber,
@@ -57,9 +58,10 @@ export function PdfPageOverlay({
   const cells = cellsForPage(pageNumber, pageSplits, order);
   const isWholePage = cells.length === 1;
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dragging, setDragging] = useState<{ id: string; orientation: SplitPoint['orientation'] } | null>(
-    null,
-  );
+  const [dragging, setDragging] = useState<{
+    id: string;
+    orientation: SplitPoint['orientation'];
+  } | null>(null);
 
   const handleAddSplit = (event: MouseEvent<HTMLDivElement>): void => {
     if (!containerRef.current || event.target !== containerRef.current) return;
@@ -84,7 +86,9 @@ export function PdfPageOverlay({
           : (event.clientX - rect.left) / rect.width;
       moveSplit(dragging.id, Math.max(0, Math.min(1, raw)));
     };
-    const handleUp = (): void => { setDragging(null); };
+    const handleUp = (): void => {
+      setDragging(null);
+    };
     window.addEventListener('mousemove', handleMove);
     window.addEventListener('mouseup', handleUp);
     return () => {
@@ -98,7 +102,9 @@ export function PdfPageOverlay({
       ref={containerRef}
       className="page-overlay"
       onClick={handleAddSplit}
-      onContextMenu={(event) => { event.preventDefault(); }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+      }}
     >
       {/* Cell grid: whole-page cells carry the tag chip; multi-cut cells just preview the split. */}
       {cells.map((cell, index) => {
@@ -111,12 +117,16 @@ export function PdfPageOverlay({
         if (isWholePage) {
           const sliceId = wholePageSliceId(pageNumber);
           const kind: ChapterKind | null = chapter
-            ? chapter.tags[sliceId] ?? pageKinds?.[pageNumber] ?? 'question'
+            ? (chapter.tags[sliceId] ?? pageKinds?.[pageNumber] ?? 'question')
             : null;
           const kindClass = kind === null ? 'is-loose' : `is-${kind}`;
           const isHovered = hoveredSliceId === sliceId;
           return (
-            <div key={sliceId} className={`slice-band ${kindClass} ${isHovered ? 'is-hovered' : ''}`} style={bandStyle}>
+            <div
+              key={sliceId}
+              className={`slice-band ${kindClass} ${isHovered ? 'is-hovered' : ''}`}
+              style={bandStyle}
+            >
               <span className="slice-band__label">
                 {chapter ? `C${String(chapter.chapterIndex + 1)} · ` : ''}
                 page {pageNumber}
@@ -127,9 +137,15 @@ export function PdfPageOverlay({
                   type="button"
                   className={`slice-band__chip ${kind ? `is-${kind}` : ''}`}
                   disabled={!chapter}
-                  title={chapter ? 'Toggle question / answer' : 'Add this page to a chapter to tag it'}
-                  onMouseEnter={() => { onHoverSlice(sliceId); }}
-                  onMouseLeave={() => { onHoverSlice(null); }}
+                  title={
+                    chapter ? 'Toggle the page source kind' : 'Add this page to a chapter to tag it'
+                  }
+                  onMouseEnter={() => {
+                    onHoverSlice(sliceId);
+                  }}
+                  onMouseLeave={() => {
+                    onHoverSlice(null);
+                  }}
                   onClick={(event) => {
                     event.stopPropagation();
                     if (chapter) onToggleTag(chapter.chapterId, sliceId);
