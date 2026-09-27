@@ -137,9 +137,9 @@ export function StructureTreePanel({
           </p>
         ) : (
           <div className="grid grid-cols-2 gap-2">
+            <MetaField label="Module" value={tree.metadata.module} options={vocabulary.modules} placeholder="e.g. Allen / PW" onChange={(v) => { controller.setMetadata(cascadeMetadata('module', v, tree.metadata, vocabulary)); }} />
             <MetaField label="Exam" value={tree.metadata.exam} options={vocabulary.exams} placeholder="e.g. JEE" onChange={(v) => { controller.setMetadata(cascadeMetadata('exam', v, tree.metadata, vocabulary)); }} />
             <MetaField label="Subject" value={tree.metadata.subject} options={vocabulary.subjectsFor(tree.metadata.exam)} placeholder="e.g. Physics" onChange={(v) => { controller.setMetadata(cascadeMetadata('subject', v, tree.metadata, vocabulary)); }} />
-            <MetaField label="Module" value={tree.metadata.module} options={vocabulary.modulesFor(tree.metadata.subject)} placeholder="e.g. Resonance" onChange={(v) => { controller.setMetadata(cascadeMetadata('module', v, tree.metadata, vocabulary)); }} />
             <MetaField label="Chapter" value={tree.metadata.chapter} options={vocabulary.chaptersFor(tree.metadata.subject)} placeholder="e.g. Gravitation" onChange={(v) => { controller.setMetadata(cascadeMetadata('chapter', v, tree.metadata, vocabulary)); }} />
           </div>
         )}

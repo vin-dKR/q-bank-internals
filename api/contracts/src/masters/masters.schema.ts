@@ -9,9 +9,9 @@ import { z } from 'zod';
 
 /** The eight managed taxonomy dimensions, in display order. */
 export const TAXONOMY_DIMENSIONS = [
+  'module',
   'exam',
   'subject',
-  'module',
   'chapter',
   'section',
   'questionType',
@@ -38,7 +38,7 @@ export const DictionaryEntrySchema = z.object({
   kind: z.string().nullable(),
   /** level only — 1|2|3 for easy→hard sort; null on other dimensions. */
   rank: z.number().int().nullable(),
-  /** chapter/module only — the subject it is scoped to; null otherwise / unresolved. */
+  /** chapter only — the subject it is scoped to; null otherwise / unresolved. */
   subjectId: z.string().nullable(),
   /** topic only — the chapter it is scoped to; null otherwise / unresolved. */
   chapterId: z.string().nullable(),
@@ -63,7 +63,7 @@ export type DictionaryQuery = z.infer<typeof DictionaryQuerySchema>;
 /**
  * Create one dictionary entry. `name` is folded to a canonical `key` server-side (a known alias maps
  * to the existing row and 409s). `kind` is required for questionType, `rank`/inferred for level,
- * `subjectId` scopes a chapter/module, `chapterId` scopes a topic — all validated by the service.
+ * `subjectId` scopes a chapter, `chapterId` scopes a topic — all validated by the service.
  */
 export const CreateDictionaryEntrySchema = z.object({
   name: z.string().trim().min(1).max(160),

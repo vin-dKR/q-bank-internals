@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
 import type { ReExtractedGroup, ReExtractSource } from '@ingest/contracts';
-import { Badge, Button, CropImageButton, IconLayers, IconScan, useToast } from '../../../shared/ui/index.js';
+import { Badge, Button, CropImageButton, IconLayers, IconScan, IconSparkle, useToast } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { questionsApi } from '../api/questions.api.js';
 
@@ -61,6 +61,24 @@ export function ComprehensionGroupPanel({
 }: Props): JSX.Element {
   const toast = useToast();
   const [reading, setReading] = useState(false);
+  const [fixingLatex, setFixingLatex] = useState(false);
+
+  /** Clean the shared passage in place, just like the field-level LaTeX action on question/options. */
+  const refinePassageLatex = async (): Promise<void> => {
+    if (!passage.trim()) return;
+    setFixingLatex(true);
+    try {
+      onPassageChange(await questionsApi.refine(passage));
+      toast.success('Fixed passage LaTeX', 'Review the updated passage, then Update to save.');
+    } catch (error) {
+      toast.error(
+        'Could not fix passage LaTeX',
+        error instanceof Error ? error.message : 'Please try again.',
+      );
+    } finally {
+      setFixingLatex(false);
+    }
+  };
 
   const reExtract = async (): Promise<void> => {
     setReading(true);
@@ -101,7 +119,17 @@ export function ComprehensionGroupPanel({
           <Button
             variant="ghost"
             size="xs"
-            disabled={reading || disabled}
+            disabled={fixingLatex || reading || disabled || !passage.trim()}
+            title="Fix LaTeX with AI"
+            aria-label="Fix passage LaTeX with AI"
+            onClick={() => { void refinePassageLatex(); }}
+          >
+            {fixingLatex ? '…' : <IconSparkle />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="xs"
+            disabled={reading || fixingLatex || disabled}
             title="Re-read the passage and all its sub-questions from the page"
             onClick={() => { void reExtract(); }}
           >

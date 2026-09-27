@@ -5,7 +5,7 @@ import { toQuestionTypeOptions, useDictionary } from '../../taxonomy/index.js';
 
 /**
  * The masters-backed suggestion lists that seed every metadata Combobox in the ingestion flow, plus the
- * dependent lookups (`subjectsFor`, `modulesFor`, `chaptersFor`, `sectionsFor`) that scope a child
+ * dependent lookups (`subjectsFor`, `chaptersFor`, `sectionsFor`) that scope a child
  * field to the parent already chosen. Values normally come from the all-masters dictionaries; the two
  * supported behavioral profiles `true_false` and `fill_blank` remain selectable even though the
  * legacy bank master folds them into Subjective. That keeps an operator's type aligned with the
@@ -26,7 +26,6 @@ export type ChapterVocabulary = {
   sections: string[];
   questionTypes: ComboboxOption[];
   subjectsFor: (exam: string) => string[];
-  modulesFor: (subject: string) => string[];
   chaptersFor: (subject: string) => string[];
   sectionsFor: (module: string, chapter: string) => string[];
 };
@@ -43,7 +42,8 @@ function push(relation: Map<string, string[]>, key: string | null, child: string
  * The single source of Combobox suggestions for chapter metadata — every list read from the all-masters
  * dictionaries (with ids, so the dependent cascade can scope children to the chosen subject). Extracted
  * so the chapter form and the structure-tree builder offer identical managed values (one concept, one
- * place). Chapters and modules are subject-scoped in masters; exam/subject/section are global lists.
+ * place). Modules are independent provider names; chapters are subject-scoped, while exam, subject,
+ * and section are global lists.
  */
 export function useChapterVocabulary(): ChapterVocabulary {
   const exam = useDictionary('exam', {});
@@ -66,12 +66,10 @@ export function useChapterVocabulary(): ChapterVocabulary {
     const sections = (section.data?.entries ?? []).map((entry) => entry.name);
     const questionTypes: ComboboxOption[] = toQuestionTypeOptions(questionType.data?.entries ?? []);
 
-    // Subject name → id, and the subject-scoped child lists, so picking a subject narrows its modules
-    // and chapters (the only parent link masters encodes for these dimensions).
+    // Subject name → id and the subject-scoped chapter lists. Modules are intentionally not linked to
+    // a subject: they identify content providers such as Allen or PW.
     const subjectIdByName = new Map(subjectEntries.map((entry) => [entry.name.trim().toLowerCase(), entry.id]));
-    const modulesBySubjectId = new Map<string, string[]>();
     const chaptersBySubjectId = new Map<string, string[]>();
-    for (const entry of moduleEntries) push(modulesBySubjectId, entry.subjectId, entry.name);
     for (const entry of chapterEntries) push(chaptersBySubjectId, entry.subjectId, entry.name);
 
     // Children scoped to the chosen subject; the full list when the subject is blank/unknown or has no
@@ -95,7 +93,6 @@ export function useChapterVocabulary(): ChapterVocabulary {
       questionTypes,
       // Subjects are global taxonomy (Physics is Physics across exams), so exam does not narrow them.
       subjectsFor: () => subjects,
-      modulesFor: (subjectName) => forSubject(modulesBySubjectId, subjectName, modules),
       chaptersFor: (subjectName) => forSubject(chaptersBySubjectId, subjectName, chapters),
       // Sections are global exercise/section labels (Exercise-1, PYQ …), shared across chapters.
       sectionsFor: () => sections,

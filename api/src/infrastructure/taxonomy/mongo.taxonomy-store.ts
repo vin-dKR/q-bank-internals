@@ -89,7 +89,7 @@ export class MongoTaxonomyStore implements TaxonomyStore {
   async list(dimension: TaxonomyDimension, filter: DictionaryFilter): Promise<DictionaryRow[]> {
     const match: Record<string, unknown> = {};
     if (filter.q) match.name = { $regex: escapeRegex(filter.q), $options: 'i' };
-    if ((dimension === 'chapter' || dimension === 'module') && filter.subjectId && OBJECT_ID.test(filter.subjectId)) {
+    if (dimension === 'chapter' && filter.subjectId && OBJECT_ID.test(filter.subjectId)) {
       match.subjectId = { $oid: filter.subjectId };
     }
     if (dimension === 'topic' && filter.chapterId && OBJECT_ID.test(filter.chapterId)) {

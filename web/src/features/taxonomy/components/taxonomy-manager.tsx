@@ -10,7 +10,7 @@ import { DictionaryPanel } from './dictionary-panel.js';
  * scrolls horizontally rather than wrapping, so the seven dimensions stay one clean row on any width.
  */
 export function TaxonomyManager(): JSX.Element {
-  const [active, setActive] = useState<TaxonomyDimension>('exam');
+  const [active, setActive] = useState<TaxonomyDimension>('module');
 
   return (
     <div>

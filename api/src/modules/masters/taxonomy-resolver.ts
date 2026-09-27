@@ -119,7 +119,7 @@ class DimensionDict {
       aliases: [canon.name],
       kind: this.dimension === 'questionType' ? (canon.kind ?? null) : null,
       rank: this.dimension === 'level' ? levelRank(canon.key) : null,
-      subjectId: this.dimension === 'chapter' || this.dimension === 'module' ? parentId : null,
+      subjectId: this.dimension === 'chapter' ? parentId : null,
       chapterId: this.dimension === 'topic' ? parentId : null,
     };
     try {
@@ -177,12 +177,11 @@ export class TaxonomyResolver {
       this.dicts.questionType.resolve(input.questionType),
       this.dicts.level.resolve(input.level),
     ]);
-    // Resolve chapter + module AFTER their subject so a newly-created row is scoped to that subject id
-    // (Chapter.subjectId / Module.subjectId) rather than orphaned — keeping the masters subject→chapter
-    // and subject→module cascades honest.
+    // Only chapters are subject-scoped. Modules identify the source/provider (for example Allen or PW),
+    // so they resolve independently and remain reusable across every subject and exam.
     const [chapter, module] = await Promise.all([
       this.dicts.chapter.resolve(input.chapter, subject?.id ?? null),
-      this.dicts.module.resolve(input.module, subject?.id ?? null),
+      this.dicts.module.resolve(input.module),
     ]);
     const structuralKind = deriveKindFromStructure({
       group_id: input.groupId,
