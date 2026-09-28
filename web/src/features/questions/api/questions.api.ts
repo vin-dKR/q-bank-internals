@@ -3,6 +3,8 @@ import type {
   BatchUpdateQuestionsResult,
   DetectedFigures,
   DetectedFiguresBatch,
+  ReExtractGroupMode,
+  DetectFiguresSource,
   Passage,
   Question,
   QuestionBatchUpdate,
@@ -30,6 +32,14 @@ import { fetchPageCount, pageImageUrl } from '../../../shared/api/pages.js';
 import { refineLatex } from '../../../shared/api/refine.js';
 
 const OkSchema = z.object({ ok: z.boolean() });
+
+/** Options for a comprehension re-read. The explicit mode prevents a passage correction from overwriting children. */
+export type ReExtractGroupOptions = {
+  source?: ReExtractSource;
+  /** Legacy callers may still send this; the API uses it only when a stored child has no type. */
+  questionType?: string | null;
+  mode?: ReExtractGroupMode;
+};
 
 /** Feature-scoped calls to the questions + pages endpoints. The only place this feature hits the network. */
 export const questionsApi = {
@@ -81,24 +91,32 @@ export const questionsApi = {
    * natural pixels (plus the page's size), mapped to the question it belongs to — the client crops
    * those regions out of the same page image and uploads them via {@link uploadImage}.
    */
-  detectFigures: (documentId: string, page: number): Promise<DetectedFigures> => {
+  detectFigures: (
+    documentId: string,
+    page: number,
+    source?: DetectFiguresSource,
+  ): Promise<DetectedFigures> => {
     return request('/questions/detect-figures', {
       method: 'POST',
-      body: { documentId, page },
+      body: { documentId, page, ...(source ? { source } : {}) },
       schema: DetectedFiguresSchema,
     });
   },
 
   /**
    * AI-locate figures on several pages in one request (the whole-document detect). Send at most
-   * `DETECT_FIGURES_MAX_PAGES` pages per call; pages without extracted questions are skipped
-   * server-side. Each returned page carries `ok` — a page whose vision call failed comes back as
-   * `ok: false` with its error instead of failing the whole request.
+   * `DETECT_FIGURES_MAX_PAGES` pages per call. An optional sibling source scans Answer/Solution pages
+   * while `documentId` remains the question-owner document. Each returned page carries `ok` — a page
+   * whose vision call failed comes back as `ok: false` with its error instead of failing the request.
    */
-  detectFiguresBatch: (documentId: string, pages: number[]): Promise<DetectedFiguresBatch> => {
+  detectFiguresBatch: (
+    documentId: string,
+    pages: number[],
+    source?: DetectFiguresSource,
+  ): Promise<DetectedFiguresBatch> => {
     return request('/questions/detect-figures/batch', {
       method: 'POST',
-      body: { documentId, pages },
+      body: { documentId, pages, ...(source ? { source } : {}) },
       schema: DetectedFiguresBatchSchema,
     });
   },
@@ -131,25 +149,24 @@ export const questionsApi = {
   },
 
   /**
-   * AI "re-read the whole passage": re-extract a comprehension group's shared passage and every
-   * sub-question in one call, addressed by the group's `passageId`. Returns the passage (to apply to
-   * the group's passage record) and the per-sub-question fields, each already matched to the
-   * `questionId` it should update. `source` redirects the read to a sibling answer/solution page
+   * AI re-read for a comprehension group. `passage_only` changes only the shared passage; the explicit
+   * `passage_and_questions` mode also returns each member's typed fields. The server maps every child
+   * back to its existing `questionId`; `source` redirects the read to a sibling answer/solution page
    * exactly like {@link reExtract}.
    */
   reExtractGroup: (
     documentId: string,
     passageId: string,
-    source?: ReExtractSource,
-    questionType?: string | null,
+    options: ReExtractGroupOptions = {},
   ): Promise<ReExtractedGroup> => {
     return request('/questions/re-extract-group', {
       method: 'POST',
       body: {
         documentId,
         passageId,
-        ...(source ? { source } : {}),
-        ...(questionType ? { questionType } : {}),
+        ...(options.source ? { source: options.source } : {}),
+        ...(options.questionType ? { questionType: options.questionType } : {}),
+        ...(options.mode ? { mode: options.mode } : {}),
       },
       schema: ReExtractedGroupSchema,
     });

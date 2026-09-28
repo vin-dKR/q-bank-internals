@@ -1,5 +1,5 @@
 import type { ChapterTopic } from '@ingest/contracts';
-import type { AnswerEntry, AnswerSheet, ExtractedQuestion } from './vision-extractor.js';
+import { mergeAnswerEntries, type AnswerEntry, type AnswerSheet, type ExtractedQuestion } from './vision-extractor.js';
 import { topicBindingForPage } from './topic-lookup.js';
 
 /** Normalize a section name so "Exercise O-1" and "exercise o-1" match (ported from json_merger). */
@@ -8,22 +8,17 @@ function normalizeSection(name: string | null): string {
 }
 
 /**
- * Fold one sheet's entries into a section's accumulated key, giving precedence to what is already
- * there. `applyAnswers` orders sheets answers-first, so an answer sheet's answer letter is kept and a
- * later solution sheet only *fills gaps* (a missing answer, the worked explanation) rather than
- * clobbering it. Two answer sheets for the same section likewise union their question numbers instead
- * of the second replacing the first.
+ * Fold one sheet's entries into a section's accumulated key. An explicit answer-key value wins over a
+ * conflicting solution restatement regardless of page order, while solution working is always retained.
+ * Two answer sheets for the same section likewise union their question numbers instead of the second
+ * replacing the first.
  */
 function foldSheet(
   into: Record<string, AnswerEntry>,
   entries: Record<string, AnswerEntry>,
 ): void {
   for (const [questionNumber, entry] of Object.entries(entries)) {
-    const existing = into[questionNumber];
-    into[questionNumber] = {
-      answer: existing?.answer ?? entry.answer,
-      explanation: existing?.explanation ?? entry.explanation,
-    };
+    into[questionNumber] = mergeAnswerEntries(into[questionNumber], entry);
   }
 }
 

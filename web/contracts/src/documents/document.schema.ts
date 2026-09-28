@@ -30,10 +30,12 @@ export type PageRange = z.infer<typeof PageRangeSchema>;
  * the uploaded question PDF. The operator fixes this at cut time, so extraction maps every question
  * on those pages to exactly this type — the model never picks or invents one.
  *
- * `answerPageRange` / `solutionPageRange` are the same topic's spans in the sibling answer / solution
- * PDFs. When present (v2 assembled uploads), the extractor reads this topic's answers/explanations
- * from exactly those pages and binds them to this topic's questions — the operator's drag decides the
- * association, not a section-name-and-number guess. Absent for legacy uploads (behaviour unchanged).
+ * `answerPageRange` / `solutionPageRange` are the same topic's spans in the standalone sibling
+ * answer / solution PDFs. `companionPageRange` is the equivalent span when ONE grouped Answer +
+ * Solution companion PDF was uploaded. When present (v2 assembled uploads), the extractor reads this
+ * topic's answers/explanations from exactly those pages and binds them to this topic's questions — the
+ * operator's drag decides the association, not a section-name-and-number guess. Absent for legacy
+ * uploads (behaviour unchanged).
  *
  * `pyq` is the operator's per-node previous-year-questions toggle for this segment. When set,
  * extraction asks the model to read each question's SOURCE exam + year printed on the page
@@ -47,6 +49,8 @@ export const TopicTypeConfigSchema = z.object({
   pageRange: PageRangeSchema,
   answerPageRange: PageRangeSchema.optional(),
   solutionPageRange: PageRangeSchema.optional(),
+  /** This topic's span in the grouped Answer + Solution companion PDF (`answerLayout: combined`). */
+  companionPageRange: PageRangeSchema.optional(),
   pyq: z.boolean().optional(),
 });
 export type TopicTypeConfig = z.infer<typeof TopicTypeConfigSchema>;
@@ -83,7 +87,7 @@ export const DocumentSchema = z.object({
   driveFileId: z.string(),
   fileName: z.string(),
   /**
-   * The upload's identity within its session: shared by the question/answer/solution parts of one
+   * The upload's identity within its session: shared by the question/answer/solution/companion parts of one
    * upload, fresh per upload. Empty string on legacy rows uploaded before this existed (they fall back
    * to the old unit-path sibling matching).
    */
@@ -104,7 +108,7 @@ export const DocumentSchema = z.object({
   pyqYear: z.string().nullable(),
   /** Paper-level PYQ provenance (exam name/year/session/shift/paper code …); null when not a PYQ upload. */
   paper: PaperMetadataSchema.nullable(),
-  /** How answers are laid out in the source PDF: `separate` (grouped/sibling) or `inline` (with each question). */
+  /** How answers are laid out: `separate` siblings, one grouped `combined` companion, or `inline`. */
   answerLayout: AnswerLayoutSchema.default('separate'),
   /** Where the questions came from: pyq / module / textbook (open string). Null for legacy documents. */
   source: SourceSchema.nullable(),
@@ -162,6 +166,8 @@ export const DocumentListQuerySchema = PaginationQuerySchema.extend({
   status: z
     .union([DocumentStatusSchema, z.array(DocumentStatusSchema)])
     .optional()
-    .transform((value) => (value === undefined ? undefined : Array.isArray(value) ? value : [value])),
+    .transform((value) =>
+      value === undefined ? undefined : Array.isArray(value) ? value : [value],
+    ),
 });
 export type DocumentListQuery = z.infer<typeof DocumentListQuerySchema>;

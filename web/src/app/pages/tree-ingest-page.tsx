@@ -1,4 +1,12 @@
-import { type CSSProperties, type JSX, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  type CSSProperties,
+  type JSX,
+  type MouseEvent as ReactMouseEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ChapterKind, ChapterTopic, ChapterUploadMetadata } from '@ingest/contracts';
 import {
@@ -36,7 +44,15 @@ import {
 import { SessionBar } from '../../features/sessions/index.js';
 import { useCurrentSession } from '../../shared/lib/current-session.js';
 import { bytesToBlob, saveBlob } from '../../shared/lib/files.js';
-import { IconButton, IconChevronDown, IconDownload, IconGripVertical, PageHeader, Spinner, useToast } from '../../shared/ui/index.js';
+import {
+  IconButton,
+  IconChevronDown,
+  IconDownload,
+  IconGripVertical,
+  PageHeader,
+  Spinner,
+  useToast,
+} from '../../shared/ui/index.js';
 
 const DEFAULT_WIDTH = 560;
 const MIN_WIDTH = 320;
@@ -86,7 +102,9 @@ export function TreeIngestPage(): JSX.Element {
   const [sessionId] = useCurrentSession();
   const [pdfBytes, setPdfBytes] = useState<ArrayBuffer | Uint8Array | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
-  const [mergedSources, setMergedSources] = useState<{ name: string; from: number; to: number }[]>([]);
+  const [mergedSources, setMergedSources] = useState<{ name: string; from: number; to: number }[]>(
+    [],
+  );
   // The individual uploaded PDFs are kept (not just the merged bytes) so the operator can reorder
   // them and we can re-merge in the new order. Only populated when more than one file is loaded.
   const [loadedFiles, setLoadedFiles] = useState<LoadedPdf[]>([]);
@@ -110,7 +128,9 @@ export function TreeIngestPage(): JSX.Element {
   const [didUpload, setDidUpload] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [results, setResults] = useState<string[]>([]);
-  const [uploadProgress, setUploadProgress] = useState<{ kind: ChapterKind; pct: number } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ kind: ChapterKind; pct: number } | null>(
+    null,
+  );
 
   const splitPoints = useSplitPoints();
   const reflow = useReflowBlocks();
@@ -145,21 +165,26 @@ export function TreeIngestPage(): JSX.Element {
 
   // Drag the split: moving the handle left widens the right panel (the topic tree), shrinking the
   // preview so long topic names fit. The chosen width persists on release; double-click resets it.
-  const onResizeStart = useCallback((event: ReactMouseEvent): void => {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = panelWidthRef.current;
-    const move = (moveEvent: MouseEvent): void => { setPanel(startWidth - (moveEvent.clientX - startX)); };
-    const up = (): void => {
-      writePanelWidth(panelWidthRef.current);
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('mouseup', up);
-      document.body.classList.remove('is-col-resizing');
-    };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
-    document.body.classList.add('is-col-resizing');
-  }, [setPanel]);
+  const onResizeStart = useCallback(
+    (event: ReactMouseEvent): void => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = panelWidthRef.current;
+      const move = (moveEvent: MouseEvent): void => {
+        setPanel(startWidth - (moveEvent.clientX - startX));
+      };
+      const up = (): void => {
+        writePanelWidth(panelWidthRef.current);
+        window.removeEventListener('mousemove', move);
+        window.removeEventListener('mouseup', up);
+        document.body.classList.remove('is-col-resizing');
+      };
+      window.addEventListener('mousemove', move);
+      window.addEventListener('mouseup', up);
+      document.body.classList.add('is-col-resizing');
+    },
+    [setPanel],
+  );
 
   const resetPanel = useCallback((): void => {
     setPanel(DEFAULT_PANEL);
@@ -229,7 +254,14 @@ export function TreeIngestPage(): JSX.Element {
   const reorderFiles = useCallback(
     (from: number, to: number): void => {
       setDragIndex(null);
-      if (from === to || from < 0 || to < 0 || from >= loadedFiles.length || to >= loadedFiles.length) return;
+      if (
+        from === to ||
+        from < 0 ||
+        to < 0 ||
+        from >= loadedFiles.length ||
+        to >= loadedFiles.length
+      )
+        return;
       const next = [...loadedFiles];
       const [moved] = next.splice(from, 1);
       if (!moved) return;
@@ -290,7 +322,8 @@ export function TreeIngestPage(): JSX.Element {
       setSelectedPages((prev) => {
         const next = new Set(prev);
         if (options?.range && anchorPage !== null) {
-          const [lo, hi] = anchorPage <= pageNumber ? [anchorPage, pageNumber] : [pageNumber, anchorPage];
+          const [lo, hi] =
+            anchorPage <= pageNumber ? [anchorPage, pageNumber] : [pageNumber, anchorPage];
           for (let page = lo; page <= hi; page += 1) next.add(page);
         } else if (next.has(pageNumber)) {
           next.delete(pageNumber);
@@ -389,7 +422,10 @@ export function TreeIngestPage(): JSX.Element {
           // The paper's exam name also fills the document's main exam (a PYQ paper files under it).
           ...(merged.pyqExamName.trim() ? { exam: merged.pyqExamName.trim() } : {}),
         });
-        success('Paper details filled', 'Review the fields and correct anything the reader missed.');
+        success(
+          'Paper details filled',
+          'Review the fields and correct anything the reader missed.',
+        );
       } catch (err) {
         toastError('Couldn’t read the paper header', errorMessage(err));
       } finally {
@@ -436,28 +472,62 @@ export function TreeIngestPage(): JSX.Element {
       const mod = event.metaKey || event.ctrlKey;
       const key = event.key.toLowerCase();
       if (mod) {
-        if (key === 'z') { event.preventDefault(); if (event.shiftKey) a.redo(); else a.undo(); }
-        else if (key === 'a') { event.preventDefault(); a.selectAll(); }
-        else if (key === 'enter' && a.canApply) { event.preventDefault(); void a.applyMode(); }
+        if (key === 'z') {
+          event.preventDefault();
+          if (event.shiftKey) a.redo();
+          else a.undo();
+        } else if (key === 'a') {
+          event.preventDefault();
+          a.selectAll();
+        } else if (key === 'enter' && a.canApply) {
+          event.preventDefault();
+          void a.applyMode();
+        }
         return;
       }
       switch (key) {
-        case 'n': event.preventDefault(); a.setCutMode('none'); break;
-        case 'h': event.preventDefault(); a.setCutMode('horizontal'); break;
-        case 'v': event.preventDefault(); a.setCutMode('vertical'); break;
-        case 'r': event.preventDefault(); a.setCutMode('reflow'); break;
-        case 'l': event.preventDefault(); a.setView('list'); break;
-        case 'g': event.preventDefault(); a.setView('grid'); break;
-        case 'escape': a.clearSelection(); break;
+        case 'n':
+          event.preventDefault();
+          a.setCutMode('none');
+          break;
+        case 'h':
+          event.preventDefault();
+          a.setCutMode('horizontal');
+          break;
+        case 'v':
+          event.preventDefault();
+          a.setCutMode('vertical');
+          break;
+        case 'r':
+          event.preventDefault();
+          a.setCutMode('reflow');
+          break;
+        case 'l':
+          event.preventDefault();
+          a.setView('list');
+          break;
+        case 'g':
+          event.preventDefault();
+          a.setView('grid');
+          break;
+        case 'escape':
+          a.clearSelection();
+          break;
         case 'delete':
         case 'backspace':
-          if (a.hasSelection) { event.preventDefault(); void a.handleDeleteSelected(); }
+          if (a.hasSelection) {
+            event.preventDefault();
+            void a.handleDeleteSelected();
+          }
           break;
-        default: break;
+        default:
+          break;
       }
     };
     window.addEventListener('keydown', onKey);
-    return () => { window.removeEventListener('keydown', onKey); };
+    return () => {
+      window.removeEventListener('keydown', onKey);
+    };
   }, [activeBytes]);
 
   const handleUpload = async (): Promise<void> => {
@@ -469,16 +539,18 @@ export function TreeIngestPage(): JSX.Element {
     }
     setUploadError(null);
     setUploading(true);
-    // One id per upload action, shared by this chapter's question/answer/solution parts — so the three
-    // are matched to each other during extraction, yet a fresh click (even of the same file) mints a new
+    // One id per upload action, shared by this chapter's question/supporting parts — so they are
+    // matched to each other during extraction, yet a fresh click (even of the same file) mints a new
     // id and becomes a distinct document. Kept out of the tree/exported config so it never leaks reuse.
     const uploadGroupId = crypto.randomUUID();
-    // One unit for the whole chapter: question (primary, carries per-section topics) + optional
-    // answer / solution as bound context. Three uploads at most, never one-per-leaf.
+    // One unit for the whole chapter: question (primary, carries per-section topics) plus the
+    // layout-specific supporting source(s). `combined` uploads one companion rather than separate
+    // answer and solution documents; never one file per leaf.
     const parts: { kind: ChapterKind; bytes: Uint8Array; topics?: ChapterTopic[] }[] = [
       { kind: 'question', bytes: assembled.question.bytes, topics: assembled.question.topics },
       ...(assembled.answer ? [{ kind: 'answer' as const, bytes: assembled.answer }] : []),
       ...(assembled.solution ? [{ kind: 'solution' as const, bytes: assembled.solution }] : []),
+      ...(assembled.companion ? [{ kind: 'companion' as const, bytes: assembled.companion }] : []),
     ];
     const lines: string[] = [];
     let failed = false;
@@ -495,7 +567,9 @@ export function TreeIngestPage(): JSX.Element {
         const result = await upload.mutateAsync({
           pdfBytes: part.bytes,
           metadata,
-          onProgress: (fraction) => { setUploadProgress({ kind: part.kind, pct: Math.round(fraction * 100) }); },
+          onProgress: (fraction) => {
+            setUploadProgress({ kind: part.kind, pct: Math.round(fraction * 100) });
+          },
         });
         setDidUpload(true);
         lines.push(`${part.kind} → ${result.document.status}`);
@@ -511,7 +585,10 @@ export function TreeIngestPage(): JSX.Element {
     for (const problem of assembled.problems) lines.push(problem);
     setResults([...lines]);
     if (!failed) {
-      success('Uploaded to the session', `${String(parts.length)} file${parts.length === 1 ? '' : 's'} filed to Drive.`);
+      success(
+        'Uploaded to the session',
+        `${String(parts.length)} file${parts.length === 1 ? '' : 's'} filed to Drive.`,
+      );
     }
     setUploadProgress(null);
     setUploading(false);
@@ -528,7 +605,9 @@ export function TreeIngestPage(): JSX.Element {
         <div className="card stack">
           <PdfUploader
             fileName={fileName}
-            onLoad={(files) => { void loadFiles(files); }}
+            onLoad={(files) => {
+              void loadFiles(files);
+            }}
             onClear={resetDoc}
           />
         </div>
@@ -538,19 +617,25 @@ export function TreeIngestPage(): JSX.Element {
 
   return (
     <section className="workspace">
-      <div className="cutter-layout" style={{ '--cutter-panel-w': `${String(panelWidth)}px` } as CSSProperties}>
+      <div
+        className="cutter-layout"
+        style={{ '--cutter-panel-w': `${String(panelWidth)}px` } as CSSProperties}
+      >
         <div className="cutter-layout__preview">
           <PdfModeSelector
             mode={cutMode}
             onModeChange={setCutMode}
             lineCount={pendingCount}
-            onApply={() => { void applyMode(); }}
+            onApply={() => {
+              void applyMode();
+            }}
             onResetLines={isReflow ? reflow.clear : splitPoints.clearAll}
             onNewBlock={reflow.newBlock}
             order={readingOrder}
             onOrderChange={setReadingOrder}
             onApplyToAllPages={() => {
-              if (sourceCutPage !== undefined) splitPoints.applyToAllPages(Number(sourceCutPage), numPages);
+              if (sourceCutPage !== undefined)
+                splitPoints.applyToAllPages(Number(sourceCutPage), numPages);
             }}
             canApplyToAllPages={sourceCutPage !== undefined && numPages > 1}
             cutFragmentFirst={reflowFragmentFirst}
@@ -567,9 +652,15 @@ export function TreeIngestPage(): JSX.Element {
             view={view}
             onViewChange={setView}
             zoomPercent={Math.round((pageWidth / DEFAULT_WIDTH) * 100)}
-            onZoomIn={() => { setPageWidth((w) => Math.min(MAX_WIDTH, w + ZOOM_STEP)); }}
-            onZoomOut={() => { setPageWidth((w) => Math.max(MIN_WIDTH, w - ZOOM_STEP)); }}
-            onZoomReset={() => { setPageWidth(DEFAULT_WIDTH); }}
+            onZoomIn={() => {
+              setPageWidth((w) => Math.min(MAX_WIDTH, w + ZOOM_STEP));
+            }}
+            onZoomOut={() => {
+              setPageWidth((w) => Math.max(MIN_WIDTH, w - ZOOM_STEP));
+            }}
+            onZoomReset={() => {
+              setPageWidth(DEFAULT_WIDTH);
+            }}
             gridColumns={gridColumns}
             onGridColumnsChange={(columns) => {
               setGridColumns(Math.min(MAX_GRID_COLUMNS, Math.max(MIN_GRID_COLUMNS, columns)));
@@ -581,7 +672,9 @@ export function TreeIngestPage(): JSX.Element {
             selectedCount={selectedPages.size}
             onSelectAll={selectAll}
             onClearSelection={clearSelection}
-            onDeleteSelected={() => { void handleDeleteSelected(); }}
+            onDeleteSelected={() => {
+              void handleDeleteSelected();
+            }}
           />
           <div className="cutter-layout__scroll">
             <PdfPreviewer
@@ -593,10 +686,16 @@ export function TreeIngestPage(): JSX.Element {
               groups={[]}
               pageWidth={pageWidth}
               hoveredSliceId={null}
-              onHoverSlice={() => { /* no per-slice tagging in the tree flow */ }}
-              onToggleTag={() => { /* tagging happens by dropping onto the tree */ }}
+              onHoverSlice={() => {
+                /* no per-slice tagging in the tree flow */
+              }}
+              onToggleTag={() => {
+                /* tagging happens by dropping onto the tree */
+              }}
               onNumPages={setNumPages}
-              onDeletePage={(pageNumber) => { void handleDeletePage(pageNumber); }}
+              onDeletePage={(pageNumber) => {
+                void handleDeletePage(pageNumber);
+              }}
               taggable={false}
               bindable
               view={view}
@@ -628,21 +727,38 @@ export function TreeIngestPage(): JSX.Element {
                   type="button"
                   className="panel-file__name panel-file__toggle"
                   aria-expanded={mergeExpanded}
-                  onClick={() => { setMergeExpanded((open) => !open); }}
+                  onClick={() => {
+                    setMergeExpanded((open) => !open);
+                  }}
                   title="Show merged files — drag to reorder"
                 >
-                  <IconChevronDown className={mergeExpanded ? 'panel-file__caret is-open' : 'panel-file__caret'} />
+                  <IconChevronDown
+                    className={mergeExpanded ? 'panel-file__caret is-open' : 'panel-file__caret'}
+                  />
                   <span className="truncate">{fileName}</span>
                 </button>
               ) : (
-                <span className="panel-file__name" title={fileName ?? undefined}>{fileName ?? 'Loaded PDF'}</span>
+                <span className="panel-file__name" title={fileName ?? undefined}>
+                  {fileName ?? 'Loaded PDF'}
+                </span>
               )}
               <span className="panel-file__meta">
-                {numPages > 0 ? <span>{numPages} page{numPages === 1 ? '' : 's'}</span> : null}
-                <button type="button" className="btn btn--ghost btn--xs" onClick={downloadWorking} title="Download the current working PDF">
+                {numPages > 0 ? (
+                  <span>
+                    {numPages} page{numPages === 1 ? '' : 's'}
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--xs"
+                  onClick={downloadWorking}
+                  title="Download the current working PDF"
+                >
                   <IconDownload /> Download PDF
                 </button>
-                <button type="button" className="btn btn--ghost btn--xs" onClick={resetDoc}>Change file</button>
+                <button type="button" className="btn btn--ghost btn--xs" onClick={resetDoc}>
+                  Change file
+                </button>
               </span>
             </div>
           </div>
@@ -652,12 +768,25 @@ export function TreeIngestPage(): JSX.Element {
               {mergedSources.map((source, index) => (
                 <li
                   key={index}
-                  className={dragIndex === index ? 'merge-list__item is-dragging' : 'merge-list__item'}
+                  className={
+                    dragIndex === index ? 'merge-list__item is-dragging' : 'merge-list__item'
+                  }
                   draggable
-                  onDragStart={(event) => { setDragIndex(index); event.dataTransfer.effectAllowed = 'move'; }}
-                  onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }}
-                  onDrop={(event) => { event.preventDefault(); if (dragIndex !== null) reorderFiles(dragIndex, index); }}
-                  onDragEnd={() => { setDragIndex(null); }}
+                  onDragStart={(event) => {
+                    setDragIndex(index);
+                    event.dataTransfer.effectAllowed = 'move';
+                  }}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = 'move';
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    if (dragIndex !== null) reorderFiles(dragIndex, index);
+                  }}
+                  onDragEnd={() => {
+                    setDragIndex(null);
+                  }}
                 >
                   <IconButton
                     className="merge-list__grip"
@@ -665,14 +794,26 @@ export function TreeIngestPage(): JSX.Element {
                     label={`Reorder ${source.name} — drag, or use the arrow keys`}
                     size="sm"
                     onKeyDown={(event) => {
-                      if (event.key === 'ArrowUp') { event.preventDefault(); reorderFiles(index, index - 1); }
-                      else if (event.key === 'ArrowDown') { event.preventDefault(); reorderFiles(index, index + 1); }
+                      if (event.key === 'ArrowUp') {
+                        event.preventDefault();
+                        reorderFiles(index, index - 1);
+                      } else if (event.key === 'ArrowDown') {
+                        event.preventDefault();
+                        reorderFiles(index, index + 1);
+                      }
                     }}
                   />
-                  <span className="merge-list__pos" aria-hidden>{index + 1}</span>
-                  <span className="merge-list__name truncate" title={source.name}>{source.name}</span>
+                  <span className="merge-list__pos" aria-hidden>
+                    {index + 1}
+                  </span>
+                  <span className="merge-list__name truncate" title={source.name}>
+                    {source.name}
+                  </span>
                   <span className="merge-list__span text-ink-2">
-                    page{source.from === source.to ? ` ${String(source.from)}` : `s ${String(source.from)}–${String(source.to)}`}
+                    page
+                    {source.from === source.to
+                      ? ` ${String(source.from)}`
+                      : `s ${String(source.from)}–${String(source.to)}`}
                   </span>
                 </li>
               ))}
@@ -688,7 +829,9 @@ export function TreeIngestPage(): JSX.Element {
             bindingSlot={bindingSlot}
             maxPages={numPages}
             onImport={onImportConfig}
-            onImportError={(message) => { toastError('Couldn’t import config', message); }}
+            onImportError={(message) => {
+              toastError('Couldn’t import config', message);
+            }}
             onAiFillPaper={handleAiFillPaper}
             aiFillingPaper={aiFillingPaper}
           />
@@ -700,16 +843,26 @@ export function TreeIngestPage(): JSX.Element {
               type="button"
               className="btn btn--primary btn--block"
               disabled={uploading || !sessionId}
-              onClick={() => { void handleUpload(); }}
+              onClick={() => {
+                void handleUpload();
+              }}
             >
-              {uploading ? <><Spinner /> Uploading…</> : 'Upload all units'}
+              {uploading ? (
+                <>
+                  <Spinner /> Uploading…
+                </>
+              ) : (
+                'Upload all units'
+              )}
             </button>
           ) : null}
 
           {uploading && uploadProgress ? (
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between gap-3 text-[13px] font-medium">
-                <span className="min-w-0 truncate text-ink">Uploading {uploadProgress.kind} PDF…</span>
+                <span className="min-w-0 truncate text-ink">
+                  Uploading {uploadProgress.kind} PDF…
+                </span>
                 <span className="flex-none text-ink-3">{uploadProgress.pct}%</span>
               </div>
               <div
@@ -727,12 +880,16 @@ export function TreeIngestPage(): JSX.Element {
             </div>
           ) : null}
 
-          {!sessionId ? <p className="muted">Select or create a session above before uploading.</p> : null}
+          {!sessionId ? (
+            <p className="muted">Select or create a session above before uploading.</p>
+          ) : null}
 
           {results.length > 0 ? (
             <ul className="results">
               {results.map((line, index) => (
-                <li key={index} className="note">{line}</li>
+                <li key={index} className="note">
+                  {line}
+                </li>
               ))}
             </ul>
           ) : null}
@@ -744,7 +901,9 @@ export function TreeIngestPage(): JSX.Element {
                 type="button"
                 className="btn btn--primary"
                 disabled={!sessionId}
-                onClick={() => { if (sessionId) void navigate(`/sessions/${sessionId}`); }}
+                onClick={() => {
+                  if (sessionId) void navigate(`/sessions/${sessionId}`);
+                }}
               >
                 Continue to extraction →
               </button>

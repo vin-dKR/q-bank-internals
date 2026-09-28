@@ -4,6 +4,8 @@ import {
   canonicalizeMaster,
   deriveKindFromStructure,
   levelRank,
+  norm,
+  slug,
 } from '../../shared/taxonomy/fold-maps.js';
 import type { DictionaryRow, NewDictionaryRow, TaxonomyStore } from './masters.repository.js';
 
@@ -83,21 +85,49 @@ class DimensionDict {
   }
 
   /**
-   * raw name → resolved entry, creating the canonical row on first sight; junk/unknown → null.
+   * raw name → resolved entry, creating an OPEN-vocabulary canonical row on first sight;
+   * junk/unknown → null. QuestionType is deliberately different: its rows are curated/seeded,
+   * so publishing an extracted value must never invent a dictionary row.
    * `parentId` is the resolved subject (for a chapter) / chapter (for a topic) to scope a NEW row to.
-   */
+  */
   async resolve(raw: string | null | undefined, parentId: string | null = null): Promise<Resolved | null> {
     const canon = canonicalizeMaster(this.dimension, raw);
-    if (!canon) return null;
+    const hasCuratedQuestionTypeCandidate = this.dimension === 'questionType' && Boolean(raw?.trim());
+    // Preserve the cheap null/junk path for every dimension. The one exception is a non-empty
+    // QuestionType that is unknown to the built-in fold map: it may still name an existing curated row.
+    if (!canon && !hasCuratedQuestionTypeCandidate) return null;
+    const rows = await this.rows();
+
+    // The extraction vocabulary has a few more precise tokens than the historical seven master
+    // kinds (for example `true_false` and `fill_blank`). Prefer an explicitly curated matching row
+    // before folding either token to its generic Subjective kind. This only ever reads an existing row.
+    if (hasCuratedQuestionTypeCandidate && raw) {
+      const exact = this.existingQuestionType(rows, raw);
+      if (exact) return toResolved(exact);
+    }
+
+    if (!canon) {
+      // QuestionType remains closed for creation, but a live master snapshot may contain a curated
+      // custom row. Resolve only an existing exact key/name/alias for it; never let an unknown model
+      // string create a new taxonomy row merely because the prompt listed dynamic masters.
+      if (!hasCuratedQuestionTypeCandidate || !raw) return null;
+      const existing = this.existingQuestionType(rows, raw);
+      return existing ? toResolved(existing) : null;
+    }
 
     // Match by key, OR by an alias folded the SAME way (aliases are stored in display form, so a
     // slug-keyed dimension needs canonicalizeMaster here — a raw lowercase compare would miss them).
-    const hit = (await this.rows()).find(
+    const hit = rows.find(
       (row) =>
         row.key === canon.key ||
         row.aliases.some((alias) => canonicalizeMaster(this.dimension, alias)?.key === canon.key),
     );
     if (hit) return toResolved(hit);
+
+    // Unlike the open dimensions, QuestionType is a deliberately curated taxonomy. The raw
+    // question_type remains on the published question and its built-in kind is derived below, but a
+    // missing master must leave its FK null rather than letting an extraction create a new row.
+    if (this.dimension === 'questionType') return null;
 
     const pending = this.inflight.get(canon.key);
     if (pending) return pending;
@@ -111,6 +141,16 @@ class DimensionDict {
     }
   }
 
+  /** Exact/slug-equivalent lookup for a pre-existing curated QuestionType row; never creates. */
+  private existingQuestionType(rows: DictionaryRow[], raw: string): DictionaryRow | undefined {
+    const rawKey = norm(raw);
+    const slugKey = slug(raw);
+    return rows.find((row) =>
+      norm(row.key) === rawKey || row.key === slugKey || norm(row.name) === rawKey ||
+      row.aliases.some((alias) => norm(alias) === rawKey || slug(alias) === slugKey),
+    );
+  }
+
   /** Insert the canonical row; on a unique-race or an unconfigured store, re-read (or degrade to null). */
   private async createAndCache(canon: Canonical, parentId: string | null): Promise<Resolved | null> {
     const row: NewDictionaryRow = {
@@ -119,7 +159,7 @@ class DimensionDict {
       aliases: [canon.name],
       kind: this.dimension === 'questionType' ? (canon.kind ?? null) : null,
       rank: this.dimension === 'level' ? levelRank(canon.key) : null,
-      subjectId: this.dimension === 'chapter' || this.dimension === 'module' ? parentId : null,
+      subjectId: this.dimension === 'chapter' ? parentId : null,
       chapterId: this.dimension === 'topic' ? parentId : null,
     };
     try {
@@ -170,6 +210,10 @@ export class TaxonomyResolver {
   }
 
   async resolveQuestionTaxonomy(input: QuestionTaxonomyInput): Promise<ResolvedTaxonomy> {
+    // Keep built-in extraction categories useful even before a deployment has seeded (or curated) a
+    // matching QuestionType row. This derives only the denormalized kind; it does NOT manufacture an
+    // FK or rewrite the raw `question_type`, so a custom/unknown model value still stays unresolved.
+    const builtInQuestionType = canonicalizeMaster('questionType', input.questionType);
     const [exam, subject, section, questionType, level] = await Promise.all([
       this.dicts.exam.resolve(input.exam),
       this.dicts.subject.resolve(input.subject),
@@ -177,12 +221,11 @@ export class TaxonomyResolver {
       this.dicts.questionType.resolve(input.questionType),
       this.dicts.level.resolve(input.level),
     ]);
-    // Resolve chapter + module AFTER their subject so a newly-created row is scoped to that subject id
-    // (Chapter.subjectId / Module.subjectId) rather than orphaned — keeping the masters subject→chapter
-    // and subject→module cascades honest.
+    // Only chapters are subject-scoped. Modules identify the source/provider (for example Allen or PW),
+    // so they resolve independently and remain reusable across every subject and exam.
     const [chapter, module] = await Promise.all([
       this.dicts.chapter.resolve(input.chapter, subject?.id ?? null),
-      this.dicts.module.resolve(input.module, subject?.id ?? null),
+      this.dicts.module.resolve(input.module),
     ]);
     const structuralKind = deriveKindFromStructure({
       group_id: input.groupId,
@@ -203,7 +246,7 @@ export class TaxonomyResolver {
       sectionLabel: section?.name ?? null,
       questionTypeId: questionType?.id ?? null,
       questionTypeName: questionType?.name ?? null,
-      questionKind: structuralKind ?? questionType?.kind ?? null,
+      questionKind: structuralKind ?? questionType?.kind ?? builtInQuestionType?.kind ?? null,
       levelId: level?.id ?? null,
       levelName: level?.name ?? null,
       levelRank: level?.rank ?? null,

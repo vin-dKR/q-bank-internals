@@ -1,5 +1,10 @@
 import { OpenAI } from 'openai';
-import type { MatchData, QuestionOption } from '@ingest/contracts';
+import {
+  mergeMatrixKeyWithAnswer,
+  synthesizeMatrixChoiceOptions,
+  type MatchData,
+  type QuestionOption,
+} from '@ingest/contracts';
 import type {
   GroupReExtractInput,
   GroupReExtraction,
@@ -13,6 +18,7 @@ import { errors } from '../../shared/errors/error-catalog.js';
 import { logger } from '../../shared/logger/logger.js';
 import { reExtractGroupPrompt, reExtractQuestionPrompt } from './prompts/extraction-prompts.js';
 import { sanitizeExtractedLatex } from './latex-sanitizer.js';
+import type { PromptOverrides } from '../../modules/prompts/index.js';
 
 /**
  * Output-token budget for the first re-extract attempt. Covers a reasoning model's hidden reasoning
@@ -34,36 +40,48 @@ type RawReExtract = {
 };
 /** Shape the group re-extract prompt asks for: the shared passage plus one entry per sub-question. */
 type RawGroupQuestion = {
+  member_index?: unknown;
   question_number?: unknown;
   stem?: unknown;
   options?: unknown;
+  columns?: unknown;
+  match?: unknown;
   answer?: unknown;
   explanation?: unknown;
 };
 type RawGroupReExtract = { passage?: unknown; questions?: unknown };
 
 function asString(value: unknown): string {
-  return typeof value === 'string' ? value : '';
+  if (typeof value === 'string') return value;
+  // Numerical answers routinely arrive as JSON numbers even when the prompt requests strings.
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value === 'boolean') return String(value);
+  return '';
 }
 
 /** Parse a model-supplied question number to an int, or null when it is missing/unreadable. */
 function toQuestionNumber(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const number = Math.trunc(value);
+    return number > 0 ? number : null;
+  }
   const match = /\d+/.exec(asString(value));
-  return match ? Number(match[0]) : null;
+  if (!match) return null;
+  const number = Number(match[0]);
+  return Number.isSafeInteger(number) && number > 0 ? number : null;
 }
 
-/**
- * Coerce a model-supplied option label to a canonical A/B/C/D, labelling by position as a fallback.
- * Matches the batch path's `parseOption` (extraction.worker): only a bare A–D / 1–4 token is trusted;
- * anything else (a leaked match-column label like "p", a run-on like "AAPB") falls back to the
- * positional letter, so re-read options can never come back with garbage labels.
- */
+/** Parse a zero-based comprehension-member index, or null when the model omitted/garbled it. */
+function toMemberIndex(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) return null;
+  return value;
+}
+
+/** Preserve a short printed label; use a stable ordinal only when the model leaks prose or a column row. */
 function normalizeLabel(raw: unknown, index: number): string {
-  const token = asString(raw).trim().replace(/[()[\].]/g, '');
-  if (/^[A-Da-d]$/.test(token)) return token.toUpperCase();
-  if (/^[1-4]$/.test(token)) return String.fromCharCode(64 + Number(token));
-  return String.fromCharCode(65 + index); // A, B, C, D by position
+  const token = asString(raw).trim().replace(/^[([{\s]+|[)\]}\s.:]+$/g, '');
+  if (/^[A-Za-z0-9]{1,12}$/.test(token)) return token;
+  return index < 26 ? String.fromCharCode(65 + index) : `Option${String(index + 1)}`;
 }
 
 /** A model string with its mhchem `\ce{…}` JSON-escape corruption repaired (see {@link sanitizeExtractedLatex}), trimmed. */
@@ -93,14 +111,51 @@ function parseReply(content: string): unknown {
   }
 }
 
-/** Normalise the raw `options` array into the contract shape, forcing A/B/C/D labels. */
+function stringOption(value: string): { label: string; body: string } {
+  const match = /^\s*(?:\(\s*([^()]+?)\s*\)|([A-Za-z0-9]+)\s*[.)])\s*([\s\S]*)$/.exec(value);
+  const label = match?.[1] ?? match?.[2] ?? '';
+  return { label, body: match?.[3] ?? value };
+}
+
+/** Normalise the raw `options` array into the contract shape without erasing 5th/Roman/custom labels. */
 function toOptions(raw: unknown): QuestionOption[] {
   if (!Array.isArray(raw)) return [];
-  return (raw as RawOption[]).map((item, index) => ({
-    label: normalizeLabel(item.label, index),
-    body: cleanString(item.body),
-    isCorrect: item.is_correct === true,
-  }));
+  return raw.flatMap((item, index) => {
+    const source = typeof item === 'string'
+      ? stringOption(item)
+      : item && typeof item === 'object'
+        ? item as RawOption
+        : null;
+    if (!source) return [];
+    const body = cleanString(source.body);
+    if (!body && typeof item !== 'string') return [];
+    return [{
+      label: normalizeLabel(source.label, index),
+      body,
+      isCorrect: typeof item === 'object' && item !== null && !Array.isArray(item) && (item as RawOption).is_correct === true,
+    }];
+  });
+}
+
+/**
+ * Some otherwise-valid model replies use `is_correct` on the printed choices but omit the scalar
+ * `answer`.  The editor and downstream answer key use the scalar as their canonical selection, so
+ * recover it from the explicitly-marked printed choice rather than leaving a matrix/MCQ blank.
+ * A direct-response matrix never has such choices, so it remains untouched.
+ */
+function answerFromMarkedOptions(options: QuestionOption[], questionType: string | null): string {
+  const labels = options
+    .filter((option) => option.isCorrect)
+    .map((option) => option.label.trim())
+    .filter(Boolean);
+  if (labels.length === 0) return '';
+  if (questionType === 'multi_correct') {
+    // Preserve non-letter labels too. Compact A/C style remains natural for ordinary option labels.
+    return labels.every((label) => /^[A-Za-z0-9]$/.test(label))
+      ? labels.join('')
+      : labels.join(', ');
+  }
+  return labels.length === 1 ? (labels[0] ?? '') : '';
 }
 
 /**
@@ -167,6 +222,7 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
   constructor(
     apiKey: string,
     private readonly model: string,
+    private readonly loadPromptOverrides: () => Promise<PromptOverrides>,
   ) {
     this.client = new OpenAI({ apiKey });
   }
@@ -180,10 +236,14 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
    */
   private async callVision(
     prompt: string,
-    png: Buffer,
+    png: Buffer | readonly Buffer[],
     startTokens: number,
   ): Promise<{ content: string; usage: AiTokenUsage }> {
-    const imageUrl = `data:image/png;base64,${png.toString('base64')}`;
+    const pngs: readonly Buffer[] = Buffer.isBuffer(png) ? [png] : png;
+    if (pngs.length === 0) {
+      throw errors.extractionFailed('No source page was available to re-read.');
+    }
+    const imageUrls = pngs.map((image) => `data:image/png;base64,${image.toString('base64')}`);
     let promptTokens = 0;
     let completionTokens = 0;
     let totalTokens = 0;
@@ -201,7 +261,7 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
             role: 'user',
             content: [
               { type: 'text', text: prompt },
-              { type: 'image_url', image_url: { url: imageUrl, detail: 'high' } },
+              ...imageUrls.map((url) => ({ type: 'image_url' as const, image_url: { url, detail: 'high' as const } })),
             ],
           },
         ],
@@ -233,27 +293,38 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
   }
 
   async reExtract(input: ReExtractInput): Promise<QuestionReExtraction> {
+    const overrides = await this.loadPromptOverrides();
     const prompt = reExtractQuestionPrompt({
       questionNumber: input.questionNumber,
       stemHint: input.stemHint,
       questionType: input.questionType,
-    });
+      ...(input.sourceKind ? { sourceKind: input.sourceKind } : {}),
+      ...(input.fieldTarget ? { fieldTarget: input.fieldTarget } : {}),
+      ...(input.inlineAnswers ? { inlineAnswers: true } : {}),
+    }, overrides);
     const { content, usage } = await this.callVision(prompt, input.png, MAX_TOKENS);
 
     const parsed = parseReply(content) as RawReExtract;
     // A MATRIX MATCH question stores structured columns instead of options — parse them first, and when
     // present clear options so the flat option array is never cluttered with leaked column entries
     // (the "1 4 1 2 3 4 / same value four times" garbage). Non-matrix replies leave match null.
-    const match = toMatchData(parsed.columns, parsed.match);
+    const extractedMatch = toMatchData(parsed.columns, parsed.match);
     // A matrix question keeps BOTH: the structured columns/key AND the printed multiple-choice options
     // (each a full matching like "A-i, B-ii, …"), so the operator can click a printed option to fill the
-    // grid. Labels are still forced to A/B/C/D by toOptions, so a leaked column label can't survive.
-    const options = toOptions(parsed.options);
+    // grid. `toOptions` keeps real printed labels/counts while still rejecting leaked prose labels.
+    const extractedOptions = toOptions(parsed.options);
     // When the columns are stored structurally, remove any duplicate column dump the model left in the
     // stem so the same lists don't appear twice (question text + match table).
     const rawStem = cleanString(parsed.stem);
-    const stem = match ? stripMatchColumnsFromStem(rawStem) : rawStem;
-    const answer = cleanString(parsed.answer);
+    const stem = extractedMatch ? stripMatchColumnsFromStem(rawStem) : rawStem;
+    const rawAnswer = cleanString(parsed.answer) || answerFromMarkedOptions(extractedOptions, input.questionType);
+    // A matrix's direct answer map can arrive in `answer` while the visual table arrives separately.
+    // Complete only missing rows, then synthesize selections only when the source printed no choices.
+    const match = extractedMatch ? mergeMatrixKeyWithAnswer(extractedMatch, rawAnswer) : null;
+    const generated = match && extractedOptions.length === 0 ? synthesizeMatrixChoiceOptions(match) : null;
+    const synthesized = generated?.status === 'generated' ? generated : null;
+    const options = synthesized?.options ?? extractedOptions;
+    const answer = synthesized?.answer ?? rawAnswer;
     const explanation = cleanStringOrNull(parsed.explanation);
     // A genuine question always has a stem, options, or a match table; a reply with none means the read
     // failed (bad JSON, wrong page, refusal) rather than a truly blank question — don't hand back a wipe.
@@ -270,35 +341,64 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
   }
 
   async reExtractGroup(input: GroupReExtractInput): Promise<GroupReExtraction> {
+    const overrides = await this.loadPromptOverrides();
     const prompt = reExtractGroupPrompt({
-      questionNumbers: input.questionNumbers,
+      mode: input.mode,
+      members: input.members,
       passageHint: input.passageHint,
-    });
-    const { content, usage } = await this.callVision(prompt, input.png, GROUP_MAX_TOKENS);
+      ...(input.sourceKind ? { sourceKind: input.sourceKind } : {}),
+      ...(input.fieldTarget ? { fieldTarget: input.fieldTarget } : {}),
+      ...(input.inlineAnswers ? { inlineAnswers: true } : {}),
+    }, overrides);
+    const { content, usage } = await this.callVision(prompt, input.pngs, GROUP_MAX_TOKENS);
 
     const parsed = parseReply(content) as RawGroupReExtract;
     const passage = cleanString(parsed.passage);
     const rawQuestions = Array.isArray(parsed.questions) ? (parsed.questions as RawGroupQuestion[]) : [];
-    const subQuestions: ReExtractedSubDraft[] = rawQuestions.map((raw) => ({
-      questionNumber: toQuestionNumber(raw.question_number),
-      stem: cleanString(raw.stem),
-      options: toOptions(raw.options),
-      answer: cleanString(raw.answer),
-      explanation: cleanStringOrNull(raw.explanation),
-      // A comprehension sub-question is never a matrix; keep the shape uniform with the single re-read.
-      match: null,
-    }));
+    const subQuestions: ReExtractedSubDraft[] = input.mode === 'passage_only'
+      ? []
+      : rawQuestions.map((raw, position) => {
+        const memberIndex = toMemberIndex(raw.member_index);
+        const questionNumber = toQuestionNumber(raw.question_number);
+        // The group response has no question_type field by design; recover the member's persisted
+        // type from the stable member index first, then its printed number, then source order. This
+        // lets an otherwise valid `is_correct: true` response retain every multi-correct selection
+        // instead of returning a blank scalar answer solely because the model omitted `answer`.
+        const member =
+          (memberIndex === null ? undefined : input.members[memberIndex]) ??
+          (questionNumber === null
+            ? undefined
+            : input.members.find((candidate) => candidate.questionNumber === questionNumber)) ??
+          input.members[position];
+        const extractedOptions = toOptions(raw.options);
+        const rawAnswer = cleanString(raw.answer) || answerFromMarkedOptions(extractedOptions, member?.questionType ?? null);
+        const extractedMatch = toMatchData(raw.columns, raw.match);
+        const match = extractedMatch ? mergeMatrixKeyWithAnswer(extractedMatch, rawAnswer) : null;
+        const generated = match && extractedOptions.length === 0 ? synthesizeMatrixChoiceOptions(match) : null;
+        const synthesized = generated?.status === 'generated' ? generated : null;
+        return {
+          memberIndex,
+          questionNumber,
+          stem: cleanString(raw.stem),
+          options: synthesized?.options ?? extractedOptions,
+          answer: synthesized?.answer ?? rawAnswer,
+          explanation: cleanStringOrNull(raw.explanation),
+          // A comprehension group can contain a matrix child. The service admits this shape only onto a
+          // stored matrix row, so a model mistake cannot turn another child into a match-table question.
+          match,
+        };
+      });
     // The read failed (bad JSON, wrong page, refusal) when it yields neither a passage nor any
     // sub-question — surface it rather than wiping the group's drafts to blanks.
-    if (!passage && subQuestions.length === 0) {
+    if (!passage && (input.mode === 'passage_only' || subQuestions.length === 0)) {
       throw errors.extractionFailed(
         'The model could not read this comprehension passage from the page. Please try again or edit the fields manually.',
       );
     }
     logger.info(
-      { subQuestions: subQuestions.length, passageChars: passage.length },
+      { mode: input.mode, pages: input.pngs.length, subQuestions: subQuestions.length, passageChars: passage.length },
       'comprehension group re-extract done',
     );
-    return { passage, subQuestions, usage };
+    return { mode: input.mode, passage, subQuestions, usage };
   }
 }

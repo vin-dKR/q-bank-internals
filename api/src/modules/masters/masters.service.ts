@@ -34,7 +34,8 @@ const QUESTION_KIND_KEYS = new Set(QUESTION_KINDS.map((k) => k.key));
  * lists each dimension with its bank-usage count, creates/renames/deletes canonical entries (folding
  * every write through the SAME `foldMaps` the publisher and eduents use, so the vocabulary can never
  * re-dirty), and seeds the closed vocabularies (question kinds, difficulty levels) plus the curated
- * subject/section starting sets. Modules and chapters are subject-scoped; topics are chapter-scoped.
+ * subject/section starting sets. Modules are independent providers; chapters are subject-scoped and
+ * topics are chapter-scoped.
  */
 export class MastersService {
   constructor(private readonly store: TaxonomyStore) {}
@@ -42,8 +43,8 @@ export class MastersService {
   async list(dimension: TaxonomyDimension, query: DictionaryQuery): Promise<DictionaryList> {
     const filter: DictionaryFilter = {
       q: query.q,
-      subjectId: query.subjectId,
-      chapterId: query.chapterId,
+      subjectId: dimension === 'chapter' ? query.subjectId : undefined,
+      chapterId: dimension === 'topic' ? query.chapterId : undefined,
     };
     const rows = await this.store.list(dimension, filter);
     const counts = await this.store.usageCounts(dimension, rows.map((row) => row.id));
@@ -57,6 +58,13 @@ export class MastersService {
     const canonical = canonicalizeMaster(dimension, input.name);
     if (!canonical) throw errors.dictionaryValueRejected(dimension, input.name);
 
+    if (input.subjectId !== undefined && dimension !== 'chapter') {
+      throw errors.dictionaryFieldNotAllowed(dimension, 'subjectId');
+    }
+    if (input.chapterId !== undefined && dimension !== 'topic') {
+      throw errors.dictionaryFieldNotAllowed(dimension, 'chapterId');
+    }
+
     const existing = await this.store.findByKey(dimension, canonical.key);
     if (existing) throw errors.dictionaryEntryExists(dimension, existing.name);
 
@@ -68,7 +76,7 @@ export class MastersService {
       aliases: this.mergeAliases([canonical.name], input.aliases),
       kind: dimension === 'questionType' ? (canonical.kind ?? null) : null,
       rank: dimension === 'level' ? levelRank(canonical.key) : null,
-      subjectId: dimension === 'chapter' || dimension === 'module' ? (input.subjectId ?? null) : null,
+      subjectId: dimension === 'chapter' ? (input.subjectId ?? null) : null,
       chapterId: dimension === 'topic' ? (input.chapterId ?? null) : null,
     };
     const created = await this.store.create(dimension, row);
@@ -106,7 +114,7 @@ export class MastersService {
     }
 
     if (input.subjectId !== undefined) {
-      if (dimension !== 'chapter' && dimension !== 'module') {
+      if (dimension !== 'chapter') {
         throw errors.dictionaryFieldNotAllowed(dimension, 'subjectId');
       }
       if (input.subjectId) await this.assertScopeExists(dimension, input.subjectId, undefined);
@@ -180,7 +188,7 @@ export class MastersService {
     subjectId: string | undefined,
     chapterId: string | undefined,
   ): Promise<void> {
-    if ((dimension === 'chapter' || dimension === 'module') && subjectId) {
+    if (dimension === 'chapter' && subjectId) {
       const parent = await this.store.findById('subject', subjectId);
       if (!parent) throw errors.dictionaryParentNotFound('subject', subjectId);
     }

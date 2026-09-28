@@ -36,10 +36,9 @@ export const DIMENSION_META: Record<TaxonomyDimension, DimensionMeta> = {
   module: {
     label: 'Modules',
     singular: 'module',
-    description: 'Modules, scoped to a subject — the grouping above chapters. Pick a subject to narrow or add under it.',
+    description: 'The content providers or institutes questions come from, such as Allen, PW, or Resonance.',
     creatable: true,
     seedable: false,
-    scope: 'subject',
   },
   chapter: {
     label: 'Chapters',
@@ -84,9 +83,9 @@ export const DIMENSION_META: Record<TaxonomyDimension, DimensionMeta> = {
 
 /** Tab order for the dimension switcher. */
 export const DIMENSION_ORDER: readonly TaxonomyDimension[] = [
+  'module',
   'exam',
   'subject',
-  'module',
   'chapter',
   'section',
   'questionType',

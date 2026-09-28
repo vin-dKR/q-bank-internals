@@ -20,7 +20,8 @@ function mapForest(
 ): StructureNode[] {
   return nodes.map((node) => {
     const mappedChildren = mapForest(node.children, transform);
-    const withChildren = mappedChildren === node.children ? node : { ...node, children: mappedChildren };
+    const withChildren =
+      mappedChildren === node.children ? node : { ...node, children: mappedChildren };
     return transform(withChildren);
   });
 }
@@ -160,7 +161,8 @@ export function unbindArtifact(
     const bindings: LeafBindings = { ...node.bindings };
     if (kind === 'question') delete bindings.question;
     else if (kind === 'answer') delete bindings.answer;
-    else delete bindings.solution;
+    else if (kind === 'solution') delete bindings.solution;
+    else delete bindings.companion;
     return { ...node, bindings };
   });
 }

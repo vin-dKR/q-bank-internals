@@ -8,6 +8,8 @@ import {
   type Passage,
   type PublishSessionResult,
   type Question,
+  type QuestionOption,
+  synthesizeMatrixChoiceOptions,
 } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
@@ -144,6 +146,113 @@ function taxonomyInput(question: Question, document: Document): QuestionTaxonomy
   };
 }
 
+/**
+ * A choice-based matrix stores its correct answer as the selected printed answer-choice label. Its structured
+ * matching table is extra verification data, not a value that may replace that answer during publish.
+ * Older direct-response matrices had no printed choices and stored only a flat matching string, so keep
+ * the derived-key fallback for that narrow legacy layout.
+ */
+function answerForBank(question: Question): string | null {
+  const answer = question.answer.trim();
+  if (answer) return answer;
+  if (question.options.length === 0 && question.match && Object.keys(question.match.key).length > 0) {
+    return matchKeyToAnswer(question.match.key) || null;
+  }
+  return null;
+}
+
+/** Matrix option labels are source identifiers, so selection uses a case-insensitive exact match only. */
+function matrixOptionLabelKey(value: string): string {
+  return value
+    .trim()
+    .replace(/^[\s([{"']+/, '')
+    .replace(/[\s)\]}.:,;"']+$/, '')
+    .toLocaleLowerCase();
+}
+
+/** Resolve one canonical matrix choice label; mapping text and multi-choice values deliberately fail. */
+function selectedMatrixOption(answer: string, options: readonly QuestionOption[]): string | null {
+  const raw = matrixOptionLabelKey(answer.replace(/^\s*(?:correct\s+)?answer\s*[:=-]?\s*/i, ''));
+  if (!raw) return null;
+  const matches = options.filter((option) => matrixOptionLabelKey(option.label) === raw);
+  return matches.length === 1 ? (matches[0]?.label ?? null) : null;
+}
+
+function matrixReason(reason: string): string {
+  switch (reason) {
+    case 'ambiguous_labels':
+      return 'a target label appears in more than one later column; rename the duplicate label';
+    case 'missing_columns':
+      return 'the match table has fewer than two populated columns';
+    case 'missing_entries':
+      return 'one or more match columns has no entries';
+    case 'incomplete_key':
+      return 'every Column-I entry must have at least one valid matching target';
+    default:
+      return 'the matching key contains an invalid or dangling label';
+  }
+}
+
+/** A row is a matrix whenever its declared type or its persisted structure says so. */
+function isMatrixQuestion(question: Question): boolean {
+  // Extraction retains section headings on older rows (for example "MATCH THE COLUMN") instead of
+  // the canonical `matrix` code. Treat those as matrix too: otherwise precisely the malformed rows
+  // that lost their table could slip through publish as an unrelated direct-response question.
+  const declared = question.questionType?.trim() ?? '';
+  return question.match !== null || /matrix|matching\s+list|match\s+the/i.test(declared);
+}
+
+type MatrixPublishProjection = { options: QuestionOption[]; answer: string };
+
+/**
+ * Convert a valid direct-response matrix into deterministic answer choices at the publish boundary.
+ * This keeps historic rows compatible without trusting an AI-invented panel. Real printed/manual panels
+ * remain untouched, but must name exactly one real option. A malformed matrix is the only new publish
+ * rejection; every non-matrix still follows the existing permissive publish path.
+ */
+function matrixProjectionForPublish(question: Question): MatrixPublishProjection | null {
+  if (!isMatrixQuestion(question)) return null;
+  if (!question.match) {
+    throw errors.matrixNotPublishable(question.id, 'the matching columns/key are missing');
+  }
+
+  const generated = synthesizeMatrixChoiceOptions(question.match);
+  if (generated.status === 'blocked') {
+    throw errors.matrixNotPublishable(question.id, matrixReason(generated.reason));
+  }
+
+  // No panel is the legacy direct-response layout. The complete table is enough to create a safe,
+  // deterministic panel at publish time. Likewise, refresh an all-generated panel after a table edit
+  // so the selected choice always represents the current key, not an old draft.
+  if (question.options.length === 0 || question.options.every((option) => option.generated === true)) {
+    return { options: generated.options, answer: generated.answer };
+  }
+
+  const selected = selectedMatrixOption(question.answer, question.options);
+  if (!selected) {
+    throw errors.matrixNotPublishable(
+      question.id,
+      'the printed/manual choice panel must have exactly one answer label that matches an option',
+    );
+  }
+
+  const marked = question.options.filter((option) => option.isCorrect);
+  if (marked.length > 1 || (marked.length === 1 && matrixOptionLabelKey(marked[0]?.label ?? '') !== matrixOptionLabelKey(selected))) {
+    throw errors.matrixNotPublishable(
+      question.id,
+      'the marked option conflicts with the selected answer label',
+    );
+  }
+
+  return {
+    options: question.options.map((option) => ({
+      ...option,
+      isCorrect: matrixOptionLabelKey(option.label) === matrixOptionLabelKey(selected),
+    })),
+    answer: selected,
+  };
+}
+
 /** Map one ingest question into the main bank's Question document shape. */
 function toBankQuestion(
   question: Question,
@@ -161,6 +270,9 @@ function toBankQuestion(
   if (!passage && (question.passageId !== null || question.groupOrder !== null)) {
     throw errors.passageNotResolved(question.id, question.passageId ?? '(legacy pre-v2 row)');
   }
+  const matrix = matrixProjectionForPublish(question);
+  const options = matrix?.options ?? question.options;
+  const answer = matrix?.answer ?? answerForBank(question);
   return {
     // The shared admin bank: ingest publishes for every org to read. eduents' tenancy read filter
     // (`{ organizationId: null }`) matches a row only when the field EXISTS and is null — a row that
@@ -172,7 +284,7 @@ function toBankQuestion(
     isQuestionImage: question.isQuestionImage,
     question_image: question.questionImage,
     isOptionImage: question.isOptionImage,
-    options: question.options.map((option) => `(${option.label}) ${option.body}`),
+    options: options.map((option) => `(${option.label}) ${option.body}`),
     option_images: question.optionImages,
     // Structured match-the-column data (2+ columns + the label→labels key) for MATRIX questions;
     // null for every other type. New bank fields — a flat renderer still shows the matching via the
@@ -224,11 +336,9 @@ function toBankQuestion(
     // the upload was not a PYQ paper.
     paper: toBankPaper(question.paper ?? document.paper),
     chapter: question.path.chapter,
-    // For a match question the answer is the key mirrored to text ("A-p,t; B-q,u"); else the raw answer.
-    answer:
-      (question.match && Object.keys(question.match.key).length > 0
-        ? matchKeyToAnswer(question.match.key)
-        : question.answer) || null,
+    // Keep a matrix's selected printed answer-choice label when it has choices. Direct-response
+    // matrices retain the legacy matching-string fallback through `answerForBank`.
+    answer,
     // Answer-key and worked-solution figures are kept distinct in Verify. The bank's historical
     // singular columns carry comma-separated URLs, matching `question_image`.
     answer_image: question.answerImages.join(',') || null,

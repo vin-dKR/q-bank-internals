@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useState } from 'react';
-import type { ReExtractedGroup, ReExtractSource } from '@ingest/contracts';
-import { Badge, Button, CropImageButton, IconLayers, IconScan, useToast } from '../../../shared/ui/index.js';
+import type { ReExtractGroupMode, ReExtractedGroup, ReExtractSource } from '@ingest/contracts';
+import { Badge, Button, CropImageButton, IconLayers, IconScan, IconSparkle, useToast } from '../../../shared/ui/index.js';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { questionsApi } from '../api/questions.api.js';
 
@@ -17,8 +17,6 @@ type Props = {
   passageImage: string | null;
   /** True when this passage has unsaved edits — shows the indicator. */
   dirty: boolean;
-  /** The group's question type, passed through to the re-read for symmetry with the single path. */
-  questionType: string | null;
   /** Pause the re-read control while a whole-document crop run is in flight. */
   disabled?: boolean;
   /** Redirect the page read to a sibling answer/solution page, exactly like the single re-extract. */
@@ -38,10 +36,9 @@ type Props = {
 /**
  * The shared-passage header for a comprehension group on the Verify screen (BLA-125, v2). Renders once
  * above the group's sub-question cards: the passage is a first-class entity, edited HERE in one place
- * (no more copying it onto every sibling) and saved with a single PATCH. A single "re-extract passage +
- * all questions" action re-reads the whole block from the page — the group companion to the card's
- * per-question "re-extract with this type". Errors are toasted; the passage/questions only change on a
- * successful read, so a failed re-read never wipes the current values.
+ * (no more copying it onto every sibling) and saved with a single PATCH. The operator explicitly picks
+ * whether a re-read corrects only the passage or the passage plus member questions. Errors are toasted;
+ * the passage/questions only change on a successful read, so a failed re-read never wipes current values.
  */
 export function ComprehensionGroupPanel({
   documentId,
@@ -50,7 +47,6 @@ export function ComprehensionGroupPanel({
   passage,
   passageImage,
   dirty,
-  questionType,
   disabled = false,
   reExtractSource,
   onPassageChange,
@@ -61,6 +57,27 @@ export function ComprehensionGroupPanel({
 }: Props): JSX.Element {
   const toast = useToast();
   const [reading, setReading] = useState(false);
+  const [fixingLatex, setFixingLatex] = useState(false);
+  // Default to the narrow operation: correcting a shared passage should not unexpectedly replace every
+  // member question. The API default stays full-group for existing callers that do not send a mode.
+  const [reExtractMode, setReExtractMode] = useState<ReExtractGroupMode>('passage_only');
+
+  /** Clean the shared passage in place, just like the field-level LaTeX action on question/options. */
+  const refinePassageLatex = async (): Promise<void> => {
+    if (!passage.trim()) return;
+    setFixingLatex(true);
+    try {
+      onPassageChange(await questionsApi.refine(passage));
+      toast.success('Fixed passage LaTeX', 'Review the updated passage, then Update to save.');
+    } catch (error) {
+      toast.error(
+        'Could not fix passage LaTeX',
+        error instanceof Error ? error.message : 'Please try again.',
+      );
+    } finally {
+      setFixingLatex(false);
+    }
+  };
 
   const reExtract = async (): Promise<void> => {
     setReading(true);
@@ -68,14 +85,15 @@ export function ComprehensionGroupPanel({
       const result = await questionsApi.reExtractGroup(
         documentId,
         passageId,
-        reExtractSource,
-        questionType,
+        { mode: reExtractMode, ...(reExtractSource ? { source: reExtractSource } : {}) },
       );
       onReExtracted(result);
       toast.toast({
         tone: 'success',
-        title: 'Re-extracted the passage',
-        description: 'Review the passage and its questions, then Update to save.',
+        title: reExtractMode === 'passage_only' ? 'Re-extracted the passage' : 'Re-extracted the passage and questions',
+        description: reExtractMode === 'passage_only'
+          ? 'Review the shared passage, then Update to save.'
+          : 'Review the passage and its questions, then Update to save.',
       });
     } catch (error) {
       toast.error(
@@ -101,12 +119,48 @@ export function ComprehensionGroupPanel({
           <Button
             variant="ghost"
             size="xs"
-            disabled={reading || disabled}
-            title="Re-read the passage and all its sub-questions from the page"
-            onClick={() => { void reExtract(); }}
+            disabled={fixingLatex || reading || disabled || !passage.trim()}
+            title="Fix LaTeX with AI"
+            aria-label="Fix passage LaTeX with AI"
+            onClick={() => { void refinePassageLatex(); }}
           >
-            {reading ? '…' : <><IconScan /> Re-extract passage + all questions</>}
+            {fixingLatex ? '…' : <IconSparkle />}
           </Button>
+          <div className="flex items-center gap-1.5">
+            <div className="segmented" role="group" aria-label="Comprehension re-extract scope">
+              <button
+                type="button"
+                className={`segmented__item ${reExtractMode === 'passage_only' ? 'is-active' : ''}`}
+                aria-pressed={reExtractMode === 'passage_only'}
+                disabled={reading || fixingLatex || disabled}
+                title="Re-read only the shared passage; keep every member question unchanged"
+                onClick={() => { setReExtractMode('passage_only'); }}
+              >
+                Passage only
+              </button>
+              <button
+                type="button"
+                className={`segmented__item ${reExtractMode === 'passage_and_questions' ? 'is-active' : ''}`}
+                aria-pressed={reExtractMode === 'passage_and_questions'}
+                disabled={reading || fixingLatex || disabled}
+                title="Re-read the shared passage and every member question"
+                onClick={() => { setReExtractMode('passage_and_questions'); }}
+              >
+                Passage + questions
+              </button>
+            </div>
+            <Button
+              variant="ghost"
+              size="xs"
+              disabled={reading || fixingLatex || disabled}
+              title={reExtractMode === 'passage_only'
+                ? 'Re-read only the shared passage from the source page'
+                : 'Re-read the shared passage and every member question from the source pages'}
+              onClick={() => { void reExtract(); }}
+            >
+              {reading ? '…' : <><IconScan /> Re-extract</>}
+            </Button>
+          </div>
           <Button
             variant="ghost"
             size="xs"

@@ -136,6 +136,13 @@ export const errors = {
   publishWriteFailed: (reason: string): AppError =>
     new AppError('PUBLISH_WRITE_FAILED', 502, `Publishing to the question bank failed: ${reason}`),
 
+  matrixNotPublishable: (questionId: string, reason: string): AppError =>
+    new AppError(
+      'MATRIX_NOT_PUBLISHABLE',
+      422,
+      `Matrix question "${questionId}" cannot be published: ${reason}. Complete the matching table or correct its selected option in Verify.`,
+    ),
+
   documentNotPublishable: (id: string, status: string): AppError =>
     new AppError(
       'DOCUMENT_NOT_PUBLISHABLE',

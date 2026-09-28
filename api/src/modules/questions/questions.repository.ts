@@ -76,6 +76,8 @@ export interface QuestionRepository {
    * ordered by `groupOrder`). Verify and publish both rely on this order matching the sheet.
    */
   findByDocument(documentId: string): Promise<Question[]>;
+  /** Read one staged question so service-side invariants can normalize a partial verify patch safely. */
+  findById(id: string): Promise<Question | null>;
   /** Read the comprehension passages for a document (empty when the document has no groups). */
   findPassagesByDocument(documentId: string): Promise<Passage[]>;
   /** Apply verify-screen edits (image flags/urls, stem, options, answer) to one question. */

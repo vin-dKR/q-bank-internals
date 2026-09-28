@@ -1,5 +1,11 @@
 import { useMemo, useState } from 'react';
-import type { MatchData, Question, QuestionBatchUpdate, QuestionOption, UpdateQuestion } from '@ingest/contracts';
+import type {
+  MatchData,
+  Question,
+  QuestionBatchUpdate,
+  QuestionOption,
+  UpdateQuestion,
+} from '@ingest/contracts';
 import { useToast } from '../../../shared/ui/index.js';
 import { useBatchUpdateQuestions } from './use-questions.js';
 
@@ -46,7 +52,12 @@ function toQuestionDraft(question: Question, fallbacks: DraftFallbacks): Questio
 }
 
 function optionEquals(a: QuestionOption, b: QuestionOption): boolean {
-  return a.label === b.label && a.body === b.body && a.isCorrect === b.isCorrect;
+  return (
+    a.label === b.label &&
+    a.body === b.body &&
+    a.isCorrect === b.isCorrect &&
+    a.generated === b.generated
+  );
 }
 
 /** Deep-compare structured match data. A cheap JSON compare is enough — the shape is small and any
@@ -138,7 +149,10 @@ export function useQuestionDrafts(
   const serverDrafts = useMemo(() => {
     const map = new Map<string, QuestionDraft>();
     for (const question of questions ?? []) {
-      map.set(question.id, toQuestionDraft(question, { questionType, sectionName, pyqExam, pyqYear }));
+      map.set(
+        question.id,
+        toQuestionDraft(question, { questionType, sectionName, pyqExam, pyqYear }),
+      );
     }
     return map;
   }, [questions, questionType, sectionName, pyqExam, pyqYear]);
@@ -161,7 +175,10 @@ export function useQuestionDrafts(
     setDrafts((prev) => new Map(prev).set(questionId, draft));
   };
 
-  const updateDraft = (questionId: string, updater: (prev: QuestionDraft) => QuestionDraft): void => {
+  const updateDraft = (
+    questionId: string,
+    updater: (prev: QuestionDraft) => QuestionDraft,
+  ): void => {
     setDrafts((prev) => {
       // Base on the freshest state: an in-flight local draft if any, else the server truth. Computed
       // inside the functional update so it can never read a stale render-time snapshot.

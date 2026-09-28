@@ -1,19 +1,32 @@
 import type {
   BatchUpdateQuestionsResult,
+  DetectFiguresSource,
+  DetectedFigure,
   DetectedFigures,
   DetectedFiguresBatch,
   DetectedFiguresPage,
+  Document,
   PaperMetadata,
   Passage,
   Question,
   QuestionBatchUpdate,
   QuestionListResponse,
+  QuestionOption,
   ReExtractedGroup,
   ReExtractedQuestion,
   ReExtractedSubQuestion,
+  ReExtractGroupMode,
   ReExtractSource,
   UpdatePassage,
   UpdateQuestion,
+} from '@ingest/contracts';
+import {
+  findMatrixChoiceForMatch,
+  hasOnlyGeneratedMatrixChoices,
+  matrixChoiceMappingText,
+  mergeMatrixKeyWithAnswer,
+  parseMatchKey,
+  synthesizeMatrixChoiceOptions,
 } from '@ingest/contracts';
 import { createHash } from 'node:crypto';
 import type { ReExtractedSubDraft } from './question-reextractor.js';
@@ -30,8 +43,15 @@ import type { ImageStore } from './image-store.js';
 import type { LatexRefiner } from './latex-refiner.js';
 import type { PageRenderer } from './page-renderer.js';
 import type { PaperMetadataExtractor } from './paper-metadata-extractor.js';
-import type { QuestionReExtractor } from './question-reextractor.js';
+import type { QuestionReExtractor, ReExtractSourceKind } from './question-reextractor.js';
 import type { QuestionRepository } from './questions.repository.js';
+import {
+  questionPageBelongsToBindings,
+  topicNames,
+  topicScopeForSourcePage,
+  type SourceTopicScope,
+  type TopicSourceKind,
+} from './source-topic-scope.js';
 
 /**
  * How many pages a whole-document detection pass sends to the vision model at once. Rendering is
@@ -39,6 +59,415 @@ import type { QuestionRepository } from './questions.repository.js';
  * serverless window, low enough not to trip provider rate limits.
  */
 const DETECT_PAGE_CONCURRENCY = 3;
+
+/** The document whose page is rendered for one figure-detection request. */
+type FigureDetectionSource = {
+  documentId: string;
+  /** Null means the question PDF itself; a sibling target changes the attached image field. */
+  target: 'answer' | 'solution' | null;
+  /** Only an inline question PDF may emit explicit Answer/Solution targets from the detector. */
+  inlineAnswerFields: boolean;
+  /** Which operator-configured range owns the rendered page. */
+  sourceKind: TopicSourceKind;
+  /** The question document whose topic map constrains matching. */
+  owner: Document;
+};
+
+/** A validated page source for an interactive re-read. */
+type ReExtractPageSource = {
+  documentId: string;
+  page: number;
+  sourceKind: ReExtractSourceKind;
+  fieldTarget?: 'answer' | 'solution';
+  inlineAnswers: boolean;
+};
+
+/** Answer/Solution figures may only come from the matching sibling upload, never an arbitrary PDF. */
+function isSiblingFigureSource(
+  owner: Document,
+  candidate: Document,
+  target: 'answer' | 'solution',
+): boolean {
+  const samePath =
+    owner.path.module === candidate.path.module &&
+    owner.path.chapter === candidate.path.chapter &&
+    owner.path.section === candidate.path.section;
+  const sameGroup =
+    !owner.uploadGroupId ||
+    !candidate.uploadGroupId ||
+    owner.uploadGroupId === candidate.uploadGroupId;
+  // Do not let a stale sibling left over from a different upload layout become a source. A
+  // `combined` question document has exactly one companion; a `separate` one may use only the
+  // matching Answer or Solution document. Inline documents never have a sibling source.
+  const matchesLayout =
+    owner.answerLayout === 'combined'
+      ? candidate.kind === 'companion'
+      : owner.answerLayout === 'separate'
+        ? candidate.kind === target
+        : false;
+  return (
+    owner.kind === 'question' &&
+    owner.deletedAt === null &&
+    matchesLayout &&
+    candidate.deletedAt === null &&
+    owner.sessionId === candidate.sessionId &&
+    samePath &&
+    sameGroup
+  );
+}
+
+/** Same-unit/group companion validation shared by source-specific AI reads. */
+function isSiblingReExtractSource(owner: Document, candidate: Document): boolean {
+  const samePath =
+    owner.path.module === candidate.path.module &&
+    owner.path.chapter === candidate.path.chapter &&
+    owner.path.section === candidate.path.section;
+  const sameGroup =
+    !owner.uploadGroupId ||
+    !candidate.uploadGroupId ||
+    owner.uploadGroupId === candidate.uploadGroupId;
+  const matchesLayout =
+    owner.answerLayout === 'combined'
+      ? candidate.kind === 'companion'
+      : owner.answerLayout === 'separate'
+        ? candidate.kind === 'answer' || candidate.kind === 'solution'
+        : false;
+  return (
+    owner.kind === 'question' &&
+    owner.deletedAt === null &&
+    matchesLayout &&
+    candidate.deletedAt === null &&
+    owner.sessionId === candidate.sessionId &&
+    samePath &&
+    sameGroup
+  );
+}
+
+/** Reclassify source-PDF figures after their printed number has been mapped to the owner question. */
+function asSiblingFigures(
+  figures: DetectedFigure[],
+  target: 'answer' | 'solution',
+): DetectedFigure[] {
+  return figures
+    .filter((figure) => figure.target !== 'passage')
+    .map((figure) => ({ ...figure, target }));
+}
+
+/**
+ * Return the one topic that owns a configured source page. There is deliberately no broad fallback
+ * once a document has source-range bindings: applying an Answer/Solution page from Topic B to a
+ * same-number Question 1 in Topic A is silent data corruption, not a best-effort match.
+ */
+function requiredSourceScope(
+  owner: Document,
+  sourceKind: TopicSourceKind,
+  page: number,
+  operation: string,
+): SourceTopicScope | null {
+  const scope = topicScopeForSourcePage(owner, sourceKind, page);
+  if (!scope.configured) {
+    // A grouped companion is a new layout whose one PDF is ambiguous without its cut-time ranges.
+    // Standalone legacy Answer/Solution PDFs retain their existing number/stem based fallback.
+    if (sourceKind === 'companion') {
+      throw errors.validation({
+        message:
+          'A combined Answer + Solution PDF needs a page range for this topic before it can be used here.',
+      });
+    }
+    return null;
+  }
+  const names = topicNames(scope);
+  if (names.length === 0) {
+    throw errors.validation({
+      message: `${operation} page ${String(page)} is not assigned to a topic in this source PDF.`,
+    });
+  }
+  if (names.length > 1) {
+    throw errors.validation({
+      message: `${operation} page ${String(page)} is assigned to multiple topics. Split its source-page ranges before using it.`,
+    });
+  }
+  return scope;
+}
+
+/** Filter a sibling source page to only questions in the page's explicitly bound topic. */
+function questionsForSiblingSourcePage(
+  owner: Document,
+  questions: Question[],
+  sourceKind: Exclude<TopicSourceKind, 'question'>,
+  page: number,
+): Question[] {
+  const scope = requiredSourceScope(owner, sourceKind, page, 'This');
+  if (scope === null) return questions; // Legacy standalone Answer/Solution upload, no cut-time ranges.
+  const scoped = questions.filter((question) =>
+    questionPageBelongsToBindings(question.sourceRegion.page, scope.bindings),
+  );
+  if (scoped.length === 0) {
+    throw errors.validation({
+      message: `No extracted questions belong to the topic assigned to source page ${String(page)}.`,
+    });
+  }
+  return scoped;
+}
+
+/**
+ * Current/continuation candidates on the question PDF. A direct source page gets the same range
+ * protection as sibling sheets, while a continuation may still look one page back for a figure.
+ */
+function questionsForQuestionSourcePage(
+  owner: Document,
+  questions: Question[],
+  page: number,
+): Question[] {
+  const scope = topicScopeForSourcePage(owner, 'question', page);
+  if (!scope.configured) return questions.filter((question) => question.sourceRegion.page === page);
+  const names = topicNames(scope);
+  if (names.length === 0) return [];
+  if (names.length > 1) {
+    throw errors.validation({
+      message: `Question page ${String(page)} is assigned to multiple topics. Split its page ranges before detecting figures.`,
+    });
+  }
+  return questions.filter(
+    (question) =>
+      question.sourceRegion.page === page &&
+      questionPageBelongsToBindings(question.sourceRegion.page, scope.bindings),
+  );
+}
+
+/**
+ * Check an explicit re-read page against the target question(s)' topic. This happens before
+ * rendering/calling AI, so a stale UI page cannot overwrite a same-number row in another topic.
+ */
+function assertReExtractPageOwnsQuestions(
+  owner: Document,
+  sourceKind: TopicSourceKind,
+  sourcePage: number,
+  questionPages: readonly number[],
+): void {
+  const sourceScope = requiredSourceScope(owner, sourceKind, sourcePage, 'Re-extract');
+  if (sourceScope === null) {
+    // A legacy question PDF still has a safe local rule: a question can only continue onto the next
+    // page. Answer/Solution legacy layouts have no reliable page correspondence, so preserve their
+    // backwards-compatible number/stem anchored behaviour instead of inventing a false mapping.
+    if (sourceKind === 'question') {
+      const allowedPages = new Set(questionPages.flatMap((page) => [page, page + 1]));
+      if (!allowedPages.has(sourcePage)) {
+        throw errors.validation({
+          message:
+            'Re-extract a question from its own source page (or its immediately following continuation page).',
+        });
+      }
+    }
+    return;
+  }
+
+  for (const questionPage of questionPages) {
+    if (!questionPageBelongsToBindings(questionPage, sourceScope.bindings)) {
+      throw errors.validation({
+        message:
+          'The selected source page belongs to a different topic or question-type block than this question. Choose the corresponding page from the same block.',
+      });
+    }
+  }
+}
+
+type MatrixDraftState = Pick<Question, 'questionType' | 'match' | 'options' | 'answer'>;
+
+/** Assemble the small matrix-relevant projection after a partial Verify patch, without mutating it. */
+function matrixStateAfterPatch(question: Question, patch: UpdateQuestion): MatrixDraftState {
+  return {
+    questionType: patch.questionType !== undefined ? patch.questionType : question.questionType,
+    match: patch.match !== undefined ? patch.match : question.match,
+    options: patch.options !== undefined ? patch.options : question.options,
+    answer: patch.answer !== undefined ? patch.answer : question.answer,
+  };
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+/**
+ * Return the explicitly selected existing choice only when its body is the exact supplied table key.
+ * This is intentionally checked before generated-set synthesis: selecting B in Verify is a user
+ * decision about this particular option order/label, not a request for the server to reshuffle a
+ * mathematically equivalent set while saving the matching table.
+ */
+function selectedMatrixChoiceForMatch(
+  options: readonly QuestionOption[],
+  answer: string,
+  match: NonNullable<Question['match']>,
+): QuestionOption | null {
+  const selectedLabel = answer.trim().toLocaleLowerCase();
+  if (!selectedLabel) return null;
+  const selected = options.find((option) => option.label.trim().toLocaleLowerCase() === selectedLabel);
+  if (!selected) return null;
+  return findMatrixChoiceForMatch([selected], match) === selected.label ? selected : null;
+}
+
+/** A generated correct mapping needs a label that cannot shadow a source/manual choice. */
+function nextGeneratedMatrixLabel(options: MatrixDraftState['options']): string {
+  const used = new Set(options.map((option) => option.label.trim().toLocaleLowerCase()));
+  for (let index = 0; index < 26; index += 1) {
+    const label = String.fromCharCode(65 + index);
+    if (!used.has(label.toLocaleLowerCase())) return label;
+  }
+  let ordinal = 1;
+  while (used.has(`option${String(ordinal)}`.toLocaleLowerCase())) ordinal += 1;
+  return `Option${String(ordinal)}`;
+}
+
+/**
+ * Keep source/manual choice bodies untouched but guarantee a complete manual table has one visible,
+ * selected mapping option. Existing generated rows are replaced as a small fresh choice set (never
+ * left stale after a custom key edit); otherwise one generated correct row is appended with a unique
+ * label. Source/manual rows retain their bodies, order, and provenance.
+ */
+function refreshOrAppendGeneratedMatrixChoice(
+  options: MatrixDraftState['options'],
+  synthesis: Extract<ReturnType<typeof synthesizeMatrixChoiceOptions>, { status: 'generated' }>,
+): { options: MatrixDraftState['options']; answer: string } {
+  const generatedIndexes = options
+    .map((option, index) => option.generated === true ? index : -1)
+    .filter((index) => index >= 0);
+  if (generatedIndexes.length > 0) {
+    const correct = synthesis.options.find((option) => option.isCorrect);
+    const choices = [correct, ...synthesis.options.filter((option) => !option.isCorrect)]
+      .filter((option): option is NonNullable<typeof option> => option !== undefined);
+    const selectedIndex = generatedIndexes[0] ?? -1;
+    const selected = options[selectedIndex]?.label ?? '';
+    let generatedPosition = 0;
+    const refreshed: MatrixDraftState['options'] = [];
+    for (const option of options) {
+      if (option.generated !== true) {
+        refreshed.push({ ...option, isCorrect: false });
+        continue;
+      }
+      const replacement = choices[generatedPosition];
+      generatedPosition += 1;
+      // The shared planner returns at most four unique mappings. Drop any surplus stale generated
+      // row rather than duplicating a distractor; source/manual rows above are untouched.
+      if (!replacement) continue;
+      refreshed.push({
+        ...option,
+        body: replacement.body,
+        isCorrect: generatedPosition === 1,
+        generated: true,
+      });
+    }
+    return {
+      answer: selected,
+      options: refreshed,
+    };
+  }
+  const label = nextGeneratedMatrixLabel(options);
+  return {
+    answer: label,
+    options: [
+      ...options.map((option) => ({ ...option, isCorrect: false })),
+      { label, body: synthesis.correctMapping, isCorrect: true, generated: true },
+    ],
+  };
+}
+
+/**
+ * Reconcile matrix table/key/choice invariants in one place. A complete, unambiguous table gets a
+ * deterministic selectable set only when choices are empty or all carry `generated: true`. Printed
+ * and hand-edited (`generated: false`) choices are never replaced. If a manual key becomes unsafe,
+ * stale generated choices are cleared instead of silently pointing at the old mapping.
+ */
+function normalizeMatrixState(state: MatrixDraftState): MatrixDraftState {
+  if (state.questionType !== 'matrix' || state.match === null) return state;
+  const match = mergeMatrixKeyWithAnswer(state.match, state.answer);
+  const selectedExisting = selectedMatrixChoiceForMatch(state.options, state.answer, match);
+  if (selectedExisting?.generated === true) {
+    // Preserve every submitted generated choice body/order/label exactly; only the correct marker
+    // follows the explicit selected label. This lets selecting an existing generated option update
+    // the matching table without the save path synthesizing a different A–D arrangement.
+    return {
+      ...state,
+      match,
+      answer: selectedExisting.label,
+      options: state.options.map((option) => ({
+        ...option,
+        isCorrect: option.label === selectedExisting.label,
+      })),
+    };
+  }
+  const replaceableChoices = state.options.length === 0 || hasOnlyGeneratedMatrixChoices(state.options);
+  if (replaceableChoices) {
+    const synthesis = synthesizeMatrixChoiceOptions(match);
+    if (synthesis.status === 'generated') {
+      return { ...state, match, options: synthesis.options, answer: synthesis.answer };
+    }
+    // `C` from a previous generated set is no longer meaningful after an incomplete/ambiguous manual
+    // table edit. Preserve a typed mapping if one exists; otherwise mirror the currently known table.
+    const hasDirectMap = Object.keys(parseMatchKey(state.answer)).length > 0;
+    return {
+      ...state,
+      match,
+      options: hasOnlyGeneratedMatrixChoices(state.options) ? [] : state.options,
+      answer: hasDirectMap ? state.answer : matrixChoiceMappingText(match.key),
+    };
+  }
+
+  // A source answer key may return a raw `A→p; …` map while this row keeps source-printed choices.
+  // When one printed body encodes that exact complete map, canonicalize the answer to its label and
+  // make the correct marker agree — without touching bodies/provenance/order.
+  const selected = findMatrixChoiceForMatch(state.options, match);
+  if (!selected) {
+    const synthesis = synthesizeMatrixChoiceOptions(match);
+    if (synthesis.status !== 'generated') return { ...state, match };
+    const ensured = refreshOrAppendGeneratedMatrixChoice(state.options, synthesis);
+    return { ...state, match, ...ensured };
+  }
+  return {
+    ...state,
+    match,
+    answer: selected,
+    // Once a source/manual body represents the exact key, stale generated helpers are unnecessary
+    // and could describe a previous key. Remove only those generated rows; preserve every source/custom
+    // choice and set its one canonical selection.
+    options: state.options
+      .filter((option) => option.generated !== true)
+      .map((option) => ({ ...option, isCorrect: option.label === selected })),
+  };
+}
+
+/** Return only fields whose post-patch normalized value differs from the candidate state. */
+function matrixNormalizationPatch(candidate: MatrixDraftState): Pick<UpdateQuestion, 'match' | 'options' | 'answer'> {
+  const normalized = normalizeMatrixState(candidate);
+  return {
+    ...(sameJson(candidate.match, normalized.match) ? {} : { match: normalized.match }),
+    ...(sameJson(candidate.options, normalized.options) ? {} : { options: normalized.options }),
+    ...(candidate.answer === normalized.answer ? {} : { answer: normalized.answer }),
+  };
+}
+
+/** Normalize a source-specific matrix re-read against the persisted table/choice set when needed. */
+function normalizeMatrixReExtract(
+  question: Question,
+  fresh: ReExtractedQuestion,
+  expectedType: string | null,
+  sourceKind: ReExtractSourceKind,
+): ReExtractedQuestion {
+  if (expectedType !== 'matrix') return fresh;
+  const fieldSource = sourceKind !== 'question';
+  const candidate: MatrixDraftState = {
+    questionType: 'matrix',
+    match: fresh.match ?? (fieldSource ? question.match : null),
+    options: fresh.options.length > 0 ? fresh.options : (fieldSource ? question.options : []),
+    answer: fresh.answer.trim() ? fresh.answer : (fieldSource ? question.answer : ''),
+  };
+  const normalized = normalizeMatrixState(candidate);
+  return {
+    ...fresh,
+    match: normalized.match,
+    options: normalized.options,
+    answer: normalized.answer,
+  };
+}
 
 /**
  * Read + verify side of the extracted questions: load a document's questions, apply verify-screen
@@ -69,8 +498,13 @@ export class QuestionsService {
   }
 
   /** Apply verify-screen edits (image flags/urls, stem, options, answer) to a question. */
-  update(id: string, patch: UpdateQuestion): Promise<Question> {
-    return this.questions.update(id, patch);
+  async update(id: string, patch: UpdateQuestion): Promise<Question> {
+    const current = await this.questions.findById(id);
+    if (!current) throw errors.questionNotFound(id);
+    // Normalize before the one repository write, so batch and ordinary PATCH share exactly the same
+    // table/choice invariant and a concurrent edit cannot be overwritten by a second repair write.
+    const normalized = matrixNormalizationPatch(matrixStateAfterPatch(current, patch));
+    return this.questions.update(id, { ...patch, ...normalized });
   }
 
   /**
@@ -102,7 +536,11 @@ export class QuestionsService {
    * operator then re-extracts the group to read the passage off the page.
    */
   groupQuestions(documentId: string, questionIds: string[]): Promise<Passage> {
-    return this.questions.groupQuestions(documentId, makePassageId(documentId, questionIds), questionIds);
+    return this.questions.groupQuestions(
+      documentId,
+      makePassageId(documentId, questionIds),
+      questionIds,
+    );
   }
 
   /** Dissolve a comprehension group back into standalone questions (the verify "ungroup" action). */
@@ -121,7 +559,7 @@ export class QuestionsService {
     const failed: BatchUpdateQuestionsResult['failed'] = [];
     for (const { id, patch } of updates) {
       try {
-        updated.push(await this.questions.update(id, patch));
+        updated.push(await this.update(id, patch));
       } catch (caught) {
         failed.push({ id, message: caught instanceof Error ? caught.message : String(caught) });
       }
@@ -140,37 +578,62 @@ export class QuestionsService {
    * Detection only — the client crops the returned bboxes out of the same page image and uploads
    * them via {@link uploadImage}, so cropping stays in exactly one place (the browser canvas). Each
    * figure is attached by printed number, then by text snippet ({@link matchFiguresToQuestions}); a
-   * figure whose question is not on this page is dropped.
+   * A figure on the immediately following page may still map to the question that began on this page.
+   * `source` renders the unit's validated sibling Answer/Solution file, but still maps its printed
+   * question numbers back to this question document.
    */
-  async detectFigures(documentId: string, page: number): Promise<DetectedFigures> {
+  async detectFigures(
+    documentId: string,
+    page: number,
+    source?: DetectFiguresSource,
+  ): Promise<DetectedFigures> {
     const questions = await this.questions.findByDocument(documentId);
-    return this.detectOnPage(documentId, page, questions);
+    const figureSource = await this.resolveFigureSource(documentId, source);
+    return this.detectOnPage(documentId, page, questions, figureSource);
   }
 
   /**
    * The whole-document detect: run {@link detectFigures}'s pipeline over several pages in one
-   * request. Only pages that actually have extracted questions are detected (a figure on any other
-   * page has nothing to attach to), and the vision calls run with bounded concurrency. The first
+   * request. Question sources include each extracted question page plus its immediately following
+   * continuation page; sibling Answer/Solution sources accept every requested page because their
+   * printed numbers map back to this document. Vision calls run with bounded concurrency. The first
    * page is rendered up front so the rasterizer warms its per-document cache once instead of every
    * worker re-rasterizing the PDF on a cold start. One page's failure (a transient provider 429/500)
    * is returned as that page's `ok: false` entry, never as a failure of the whole request — the
    * other pages' detections are already paid for and must reach the client.
    */
-  async detectFiguresBatch(documentId: string, pages: number[]): Promise<DetectedFiguresBatch> {
+  async detectFiguresBatch(
+    documentId: string,
+    pages: number[],
+    source?: DetectFiguresSource,
+  ): Promise<DetectedFiguresBatch> {
     const questions = await this.questions.findByDocument(documentId);
+    const figureSource = await this.resolveFigureSource(documentId, source);
     const questionPages = new Set(questions.map((question) => question.sourceRegion.page));
-    const wanted = [...new Set(pages)].sort((a, b) => a - b).filter((page) => questionPages.has(page));
+    const wanted = [...new Set(pages)]
+      .sort((a, b) => a - b)
+      .filter(
+        (page) =>
+          figureSource.target !== null || questionPages.has(page) || questionPages.has(page - 1),
+      );
     const first = wanted[0];
-    if (first !== undefined) await this.pages.renderPage(documentId, first);
+    if (first !== undefined) await this.pages.renderPage(figureSource.documentId, first);
     const results = await mapWithConcurrency(
       wanted,
       DETECT_PAGE_CONCURRENCY,
       async (page): Promise<DetectedFiguresPage> => {
         try {
-          return { ok: true, page, ...(await this.detectOnPage(documentId, page, questions)) };
+          return {
+            ok: true,
+            page,
+            ...(await this.detectOnPage(documentId, page, questions, figureSource)),
+          };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          logger.warn({ documentId, page, err: message }, 'figure detection failed for one page of a batch');
+          logger.warn(
+            { documentId, sourceDocumentId: figureSource.documentId, page, err: message },
+            'figure detection failed for one page of a batch',
+          );
           return { ok: false, page, error: message };
         }
       },
@@ -178,29 +641,195 @@ export class QuestionsService {
     return { pages: results };
   }
 
+  /** Resolve and validate an optional sibling PDF before it can be rendered for figure detection. */
+  private async resolveFigureSource(
+    documentId: string,
+    source?: DetectFiguresSource,
+  ): Promise<FigureDetectionSource> {
+    if (!source) {
+      const owner = await this.documents.findById(documentId);
+      if (!owner || owner.deletedAt !== null) throw errors.documentNotFound(documentId);
+      if (owner.kind !== 'question') {
+        throw errors.validation({
+          message: 'Figures can only be detected for a question document.',
+        });
+      }
+      return {
+        documentId: owner.id,
+        target: null,
+        inlineAnswerFields: owner.answerLayout === 'inline',
+        sourceKind: 'question',
+        owner,
+      };
+    }
+    const [owner, sibling] = await Promise.all([
+      this.documents.findById(documentId),
+      this.documents.findById(source.documentId),
+    ]);
+    if (!owner) throw errors.documentNotFound(documentId);
+    if (!sibling || sibling.deletedAt !== null) throw errors.documentNotFound(source.documentId);
+    if (!isSiblingFigureSource(owner, sibling, source.target)) {
+      throw errors.validation({
+        message:
+          'Figure source must be the matching Answer or Solution upload for this question document.',
+      });
+    }
+    const sourceKind: Exclude<TopicSourceKind, 'question'> =
+      sibling.kind === 'companion'
+        ? 'companion'
+        : sibling.kind === 'solution'
+          ? 'solution'
+          : 'answer';
+    return {
+      documentId: sibling.id,
+      target: source.target,
+      inlineAnswerFields: false,
+      sourceKind,
+      owner,
+    };
+  }
+
   /** Detect + match one page's figures against the document's already-loaded questions. */
   private async detectOnPage(
     documentId: string,
     page: number,
     questions: Question[],
+    source: FigureDetectionSource,
   ): Promise<DetectedFigures> {
-    const png = await this.pages.renderPage(documentId, page);
+    // Resolve the topic before spending a vision call. On a page from an Answer/Solution/companion
+    // source this excludes same-number rows from every other topic in the question document.
+    const siblingQuestions =
+      source.target === null
+        ? null
+        : questionsForSiblingSourcePage(
+            source.owner,
+            questions,
+            source.sourceKind as Exclude<TopicSourceKind, 'question'>,
+            page,
+          );
+    const png = await this.pages.renderPage(source.documentId, page);
     const { width, height } = readPngSize(png);
-    const { detections, questionTops, usage } = await this.detector.detect({ png, width, height });
+    const { detections, questionTops, usage } = await this.detector.detect({
+      png,
+      width,
+      height,
+      inlineAnswerFields: source.inlineAnswerFields,
+    });
     try {
       await this.usage.recordUsage({ source: 'detection', documentId, ...usage });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn({ err: message }, 'Failed to record figure-detection token usage');
     }
-
-    const onPage = questions.filter((question) => question.sourceRegion.page === page);
-    const figures = matchFiguresToQuestions(detections, questionTops, onPage, width);
+    const onPage =
+      source.target === null ? questionsForQuestionSourcePage(source.owner, questions, page) : [];
+    const continuationQuestions =
+      source.target === null
+        ? questionsForQuestionSourcePage(source.owner, questions, page - 1)
+        : (siblingQuestions ?? []);
+    // The question/option labels emitted by a detector are meaningful only on a question page.
+    // A sibling Answer/Solution sheet can show a worked graph beside an answer, so attach every
+    // matched graphic to the selected field instead of accidentally dropping it as an option crop.
+    const matchableDetections =
+      source.target === null
+        ? detections
+        : detections.map((detection) => ({
+            ...detection,
+            target: 'question' as const,
+            optionLabel: null,
+          }));
+    const matched = matchFiguresToQuestions(matchableDetections, questionTops, onPage, width, {
+      continuationQuestions,
+      // A grouped answer/solution source and an explicitly labelled inline field can both contain
+      // several distinct figures for a single printed number. Regular question pages retain their
+      // conservative one-stem/one-option claim behavior.
+      allowMultipleQuestionFigures: source.target !== null || source.inlineAnswerFields,
+    });
+    // The detector's question/option distinction belongs to a question paper. On sibling sheets all
+    // matched graphics are answer or explanation evidence, while their question id still comes from
+    // the owner document's number/text ledger.
+    const figures = source.target === null ? matched : asSiblingFigures(matched, source.target);
     logger.info(
-      { documentId, page, detected: detections.length, matched: figures.length },
+      {
+        documentId,
+        sourceDocumentId: source.documentId,
+        target: source.target,
+        page,
+        detected: detections.length,
+        matched: figures.length,
+      },
       'figure detection matched to questions',
     );
     return { imageWidth: width, imageHeight: height, figures };
+  }
+
+  /**
+   * Resolve the only documents an interactive re-read may render: the question PDF itself, or a
+   * live matching Answer/Solution sibling. This prevents a caller from supplying an arbitrary
+   * document id and, crucially, tells the AI which source grammar it is looking at.
+   */
+  private async resolveReExtractSource(
+    documentId: string,
+    source: ReExtractSource | undefined,
+    fallbackPage: number,
+    questionPages: readonly number[] = [fallbackPage],
+  ): Promise<ReExtractPageSource> {
+    const owner = await this.documents.findById(documentId);
+    if (!owner || owner.deletedAt !== null) throw errors.documentNotFound(documentId);
+    if (owner.kind !== 'question') {
+      throw errors.validation({
+        message: 'Questions can only be re-extracted from a question document.',
+      });
+    }
+    if (!source || source.documentId === owner.id) {
+      if (source?.target) {
+        throw errors.validation({
+          message: 'An Answer or Solution target is only valid for a grouped companion PDF.',
+        });
+      }
+      const page = source?.page ?? fallbackPage;
+      if (source) assertReExtractPageOwnsQuestions(owner, 'question', page, questionPages);
+      return {
+        documentId: owner.id,
+        page,
+        sourceKind: 'question',
+        inlineAnswers: owner.answerLayout === 'inline',
+      };
+    }
+    const candidate = await this.documents.findById(source.documentId);
+    if (!candidate || candidate.deletedAt !== null)
+      throw errors.documentNotFound(source.documentId);
+    if (!isSiblingReExtractSource(owner, candidate)) {
+      throw errors.validation({
+        message:
+          'Re-extract source must be this question PDF or its matching Answer/Solution upload.',
+      });
+    }
+    if (candidate.kind === 'companion' && !source.target) {
+      throw errors.validation({
+        message:
+          'Choose whether this combined companion page should re-extract the Answer or the Solution.',
+      });
+    }
+    if (candidate.kind !== 'companion' && source.target) {
+      throw errors.validation({
+        message: 'Only a grouped companion PDF accepts an Answer or Solution target.',
+      });
+    }
+    const sourceKind: ReExtractSourceKind =
+      candidate.kind === 'companion'
+        ? 'companion'
+        : candidate.kind === 'solution'
+          ? 'solution'
+          : 'answer';
+    assertReExtractPageOwnsQuestions(owner, sourceKind, source.page, questionPages);
+    return {
+      documentId: candidate.id,
+      page: source.page,
+      sourceKind,
+      ...(candidate.kind === 'companion' && source.target ? { fieldTarget: source.target } : {}),
+      inlineAnswers: false,
+    };
   }
 
   /**
@@ -220,9 +849,13 @@ export class QuestionsService {
     const questions = await this.questions.findByDocument(documentId);
     const question = questions.find((candidate) => candidate.id === questionId);
     if (!question) throw errors.questionNotFound(questionId);
-    const sourceDocumentId = source?.documentId ?? documentId;
-    const sourcePage = source?.page ?? question.sourceRegion.page;
-    const png = await this.pages.renderPage(sourceDocumentId, sourcePage);
+    const resolvedSource = await this.resolveReExtractSource(
+      documentId,
+      source,
+      question.sourceRegion.page,
+      [question.sourceRegion.page],
+    );
+    const png = await this.pages.renderPage(resolvedSource.documentId, resolvedSource.page);
     // When the operator has changed the type in verify (not yet saved), honour that choice so the
     // model extracts the right shape for it; otherwise fall back to the question's stored type.
     const questionType = questionTypeOverride ?? question.questionType;
@@ -231,6 +864,9 @@ export class QuestionsService {
       questionNumber: question.questionNumber,
       stemHint: question.stem,
       questionType,
+      sourceKind: resolvedSource.sourceKind,
+      ...(resolvedSource.fieldTarget ? { fieldTarget: resolvedSource.fieldTarget } : {}),
+      ...(resolvedSource.inlineAnswers ? { inlineAnswers: true } : {}),
     });
     try {
       await this.usage.recordUsage({ source: 'reextract', documentId, ...usage });
@@ -238,23 +874,29 @@ export class QuestionsService {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn({ err: message }, 'Failed to record question re-extract token usage');
     }
-    return { stem, options, answer, explanation, match };
+    return normalizeMatrixReExtract(
+      question,
+      { stem, options, answer, explanation, match },
+      questionType,
+      resolvedSource.sourceKind,
+    );
   }
 
   /**
-   * Re-read a whole COMPREHENSION GROUP off its source page (BLA-125): the shared passage plus every
-   * sub-question at once. The group is resolved from its `groupId` within the document (its rows,
-   * their source page, and their printed numbers). Each re-extracted sub-question is matched back to
-   * the existing row it should update — by printed number, then by position — so the client can drop
-   * each straight onto the right card's draft; the passage applies to every row. `source` redirects
-   * the page read exactly as {@link reExtractQuestion} (e.g. read the sibling solution PDF); best-effort
-   * answer/explanation, since a question paper rarely prints them.
+   * Re-read a COMPREHENSION GROUP off its source page(s) (BLA-125). The user can update just the
+   * shared passage, or the passage plus its sub-questions. The group is resolved from its `passageId`
+   * within the document (its rows, source pages, and per-child types). Each re-extracted child is
+   * matched back to the existing row by the model's stable member index, then printed number, then
+   * position, so a duplicate/absent number never shifts another child's draft. `source` redirects the
+   * read exactly as {@link reExtractQuestion} (e.g. a sibling answer/solution page); otherwise every
+   * distinct question-source page that contains a member is supplied in reading order.
    */
   async reExtractGroup(
     documentId: string,
     passageId: string,
     source?: ReExtractSource,
     questionTypeOverride?: string | null,
+    mode: ReExtractGroupMode = 'passage_and_questions',
   ): Promise<ReExtractedGroup> {
     const [questions, passages] = await Promise.all([
       this.questions.findByDocument(documentId),
@@ -266,14 +908,45 @@ export class QuestionsService {
     const first = group[0];
     if (!first) throw errors.comprehensionGroupNotFound(passageId);
     const passageRow = passages.find((candidate) => candidate.id === passageId);
-    const sourceDocumentId = source?.documentId ?? documentId;
-    const sourcePage = source?.page ?? first.sourceRegion.page;
-    const png = await this.pages.renderPage(sourceDocumentId, sourcePage);
+    const resolvedSource = await this.resolveReExtractSource(
+      documentId,
+      source,
+      first.sourceRegion.page,
+      group.map((question) => question.sourceRegion.page),
+    );
+    if (mode === 'passage_only' && resolvedSource.sourceKind !== 'question') {
+      throw errors.validation({
+        message:
+          'Passage-only re-extraction must read the question PDF, where the passage is printed.',
+      });
+    }
+    // A source override names one explicit sibling page. Without one, a comprehension may span
+    // multiple question-PDF pages, so send each member page in reading order rather than silently
+    // re-reading only the first page and losing later sub-questions.
+    const sourcePages = source
+      ? [resolvedSource.page]
+      : mode === 'passage_only'
+        ? [first.sourceRegion.page]
+        : [...new Set(group.map((question) => question.sourceRegion.page))].sort((a, b) => a - b);
+    const pngs = await Promise.all(
+      sourcePages.map((sourcePage) => this.pages.renderPage(resolvedSource.documentId, sourcePage)),
+    );
     const { passage, subQuestions, usage } = await this.reExtractor.reExtractGroup({
-      png,
-      questionNumbers: group.map((question) => question.questionNumber),
-      passageHint: passageRow?.text ?? first.stem,
-      questionType: questionTypeOverride ?? first.questionType,
+      pngs,
+      mode,
+      members: group.map((question) => ({
+        questionNumber: question.questionNumber,
+        stemHint: question.stem,
+        // A legacy group request sent one `questionType`; only use it when an old row has no type.
+        // Never let a first-child type incorrectly force every mixed child into that shape.
+        questionType: question.questionType ?? questionTypeOverride ?? null,
+      })),
+      // A manually-created group has an empty passage until this first read. Do not falsely anchor
+      // the prompt to the first question stem; the prompt instead targets the passage before it.
+      passageHint: passageRow?.text.trim() ?? '',
+      sourceKind: resolvedSource.sourceKind,
+      ...(resolvedSource.fieldTarget ? { fieldTarget: resolvedSource.fieldTarget } : {}),
+      ...(resolvedSource.inlineAnswers ? { inlineAnswers: true } : {}),
     });
     try {
       await this.usage.recordUsage({ source: 'reextract', documentId, ...usage });
@@ -285,8 +958,12 @@ export class QuestionsService {
     // applies this passage to the group's Passage record (a single PATCH), not to every sub-question.
     const resolvedPassage = passage || (passageRow?.text ?? '');
     return {
+      mode,
       passage: resolvedPassage,
-      subQuestions: matchGroupSubQuestions(group, subQuestions),
+      // Defend the passage-only contract even if a future adapter ignores the requested mode.
+      subQuestions: mode === 'passage_only'
+        ? []
+        : matchGroupSubQuestions(group, subQuestions, resolvedSource.sourceKind),
     };
   }
 
@@ -321,14 +998,6 @@ export class QuestionsService {
 }
 
 /**
- * Match a group's freshly re-extracted sub-questions back to the existing rows they should update. A
- * row is paired with the re-read entry that carries its printed number; failing that (an unnumbered
- * sub-question, or a number the model did not return) it takes the entry at the same position. Each
- * pairing is consumed once, so two rows never claim the same entry. Rows with no matching entry are
- * omitted — the client keeps their current draft rather than wiping it. The shared passage is applied
- * separately to the group's Passage record, so sub-questions no longer each carry a passage copy.
- */
-/**
  * A stable id for a manually-created comprehension passage, derived from the document + its member
  * question ids (sorted, so it is order-independent and re-grouping the same set is idempotent). Distinct
  * from the extraction path's text-derived id — a manual group has no passage text until it is re-read.
@@ -338,30 +1007,49 @@ function makePassageId(documentId: string, questionIds: string[]): string {
   return createHash('sha1').update(`${documentId}\n${seed}`).digest('hex').slice(0, 24);
 }
 
+/**
+ * Match a group's freshly re-extracted children back to their existing rows. The prompt's `member_index`
+ * is the primary key; printed number and source order remain compatibility fallbacks for an older or
+ * partial model reply. Each draft is consumed once, so duplicate question numbers cannot shift another
+ * child. Rows with no matching entry are omitted and keep their current Verify draft.
+ */
 function matchGroupSubQuestions(
   group: Question[],
   drafts: ReExtractedSubDraft[],
+  sourceKind: ReExtractSourceKind,
 ): ReExtractedSubQuestion[] {
   const used = new Set<number>();
   const result: ReExtractedSubQuestion[] = [];
   group.forEach((row, index) => {
-    let draftIndex = -1;
+    let draftIndex = drafts.findIndex((draft, i) => !used.has(i) && draft.memberIndex === index);
     if (row.questionNumber !== null) {
-      draftIndex = drafts.findIndex(
-        (draft, i) => !used.has(i) && draft.questionNumber === row.questionNumber,
-      );
+      if (draftIndex === -1) {
+        draftIndex = drafts.findIndex(
+          (draft, i) => !used.has(i) && draft.questionNumber === row.questionNumber,
+        );
+      }
     }
     if (draftIndex === -1 && index < drafts.length && !used.has(index)) draftIndex = index;
     const draft = draftIndex === -1 ? undefined : drafts[draftIndex];
     if (!draft) return;
     used.add(draftIndex);
+    const normalized = normalizeMatrixReExtract(
+      row,
+      {
+        stem: draft.stem,
+        options: draft.options,
+        answer: draft.answer,
+        explanation: draft.explanation,
+        // Only a matrix member may receive a rebuilt match table. A malformed/misclassified reply
+        // must never attach matrix columns to another child merely because it shared a passage.
+        match: row.questionType === 'matrix' ? draft.match : null,
+      },
+      row.questionType,
+      sourceKind,
+    );
     result.push({
       questionId: row.id,
-      stem: draft.stem,
-      options: draft.options,
-      answer: draft.answer,
-      explanation: draft.explanation,
-      match: draft.match,
+      ...normalized,
     });
   });
   return result;

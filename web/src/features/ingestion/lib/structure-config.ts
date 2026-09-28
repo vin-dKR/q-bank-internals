@@ -48,7 +48,10 @@ const CONFIG_VERSION = 1;
 // The string-valued metadata fields, copied verbatim on import. The non-string fields (`pyq` boolean,
 // `paper` object, `answerLayout` union) are handled separately below, while `serializeConfig` exports
 // every field via a spread.
-const METADATA_KEYS: readonly Exclude<keyof ChapterMetadataDraft, 'pyq' | 'paper' | 'answerLayout'>[] = [
+const METADATA_KEYS: readonly Exclude<
+  keyof ChapterMetadataDraft,
+  'pyq' | 'paper' | 'answerLayout'
+>[] = [
   'source',
   'exam',
   'subject',
@@ -60,7 +63,7 @@ const METADATA_KEYS: readonly Exclude<keyof ChapterMetadataDraft, 'pyq' | 'paper
   'pyqYear',
 ];
 
-const PAGE_KINDS: readonly ChapterKind[] = ['question', 'answer', 'solution'];
+const PAGE_KINDS: readonly ChapterKind[] = ['question', 'answer', 'solution', 'companion'];
 
 /** The exportable page numbers of a leaf's bindings, or undefined when nothing is bound. */
 function pagesFromBindings(bindings: LeafBindings | undefined): ConfigPages | undefined {
@@ -128,7 +131,8 @@ function parsePages(value: unknown): ConfigPages | undefined {
   for (const kind of PAGE_KINDS) {
     const list = value[kind];
     if (!Array.isArray(list) || list.length === 0) continue;
-    if (!list.every((page) => typeof page === 'number' && Number.isInteger(page) && page >= 1)) continue;
+    if (!list.every((page) => typeof page === 'number' && Number.isInteger(page) && page >= 1))
+      continue;
     pages[kind] = list as number[];
   }
   return Object.keys(pages).length > 0 ? pages : undefined;
@@ -166,7 +170,11 @@ function parseMetadata(value: unknown): ChapterMetadataDraft {
     if (typeof field === 'string') draft[key] = field;
   }
   if (typeof value.pyq === 'boolean') draft.pyq = value.pyq;
-  if (value.answerLayout === 'inline' || value.answerLayout === 'separate') {
+  if (
+    value.answerLayout === 'inline' ||
+    value.answerLayout === 'separate' ||
+    value.answerLayout === 'combined'
+  ) {
     draft.answerLayout = value.answerLayout;
   }
   if (isRecord(value.paper)) {

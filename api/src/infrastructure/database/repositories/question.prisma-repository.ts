@@ -8,6 +8,7 @@ import {
   MatchDataSchema,
   type Passage,
   type Question,
+  type QuestionOption,
   type UpdatePassage,
   type UpdateQuestion,
 } from '@ingest/contracts';
@@ -28,7 +29,7 @@ type QuestionRow = {
   questionNumber: number | null;
   path: { module: string; chapter: string; section: string };
   stem: string;
-  options: { label: string; body: string; isCorrect: boolean }[];
+  options: { label: string; body: string; isCorrect: boolean; generated?: boolean | null }[];
   answer: string;
   // Prisma `Json?`: the structured match data, validated back into shape by `toMatch`.
   match: unknown;
@@ -95,6 +96,21 @@ function toImageCrops(value: unknown): ImageCrop[] {
   return parsed.success ? parsed.data : [];
 }
 
+/** Prisma optional composite scalars use `null`; the contract uses an omitted optional boolean. */
+function toPrismaOptions(options: QuestionOption[]): Array<{
+  label: string;
+  body: string;
+  isCorrect: boolean;
+  generated: boolean | null;
+}> {
+  return options.map((option) => ({
+    label: option.label,
+    body: option.body,
+    isCorrect: option.isCorrect,
+    generated: option.generated ?? null,
+  }));
+}
+
 function toQuestion(row: QuestionRow): Question {
   const [x0, y0, x1, y1] = row.sourceRegion.bbox;
   return {
@@ -103,7 +119,12 @@ function toQuestion(row: QuestionRow): Question {
     questionNumber: row.questionNumber,
     path: row.path,
     stem: row.stem,
-    options: row.options,
+    options: row.options.map((option) => ({
+      label: option.label,
+      body: option.body,
+      isCorrect: option.isCorrect,
+      ...(typeof option.generated === 'boolean' ? { generated: option.generated } : {}),
+    })),
     answer: row.answer,
     match: toMatch(row.match),
     passageId: row.passageId,
@@ -183,7 +204,7 @@ export class PrismaQuestionRepository implements QuestionRepository {
         questionNumber: question.questionNumber,
         path: question.path,
         stem: question.stem,
-        options: question.options,
+        options: toPrismaOptions(question.options),
         answer: question.answer,
         match: question.match,
         passageId: question.passageId,
@@ -212,6 +233,11 @@ export class PrismaQuestionRepository implements QuestionRepository {
       orderBy: { createdAt: 'asc' },
     });
     return sortByPdfOrder(rows.map(toQuestion));
+  }
+
+  async findById(id: string): Promise<Question | null> {
+    const row = await this.prisma.question.findUnique({ where: { id } });
+    return row ? toQuestion(row) : null;
   }
 
   async findPassagesByDocument(documentId: string): Promise<Passage[]> {
@@ -256,7 +282,7 @@ export class PrismaQuestionRepository implements QuestionRepository {
       data: {
         ...(aiFilled !== undefined ? { aiFilled } : {}),
         ...(patch.stem !== undefined ? { stem: patch.stem } : {}),
-        ...(patch.options !== undefined ? { options: patch.options } : {}),
+        ...(patch.options !== undefined ? { options: toPrismaOptions(patch.options) } : {}),
         ...(patch.answer !== undefined ? { answer: patch.answer } : {}),
         ...(patch.match !== undefined ? { match: patch.match } : {}),
         ...(patch.explanation !== undefined ? { explanation: patch.explanation } : {}),

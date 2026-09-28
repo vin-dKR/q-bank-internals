@@ -26,8 +26,13 @@ export const KNOWN_MODULES = ['Allen', 'Motion', 'Resonance', 'PW', 'Unacademy']
 export const ModuleSchema = z.union([z.enum(KNOWN_MODULES), z.string().min(1)]);
 export type Module = z.infer<typeof ModuleSchema>;
 
-/** Whether a chapter PDF holds the questions, the answers, or the worked solutions. */
-export const ChapterKindSchema = z.enum(['question', 'answer', 'solution']);
+/**
+ * Which role a chapter PDF has within one upload group.
+ *
+ * `companion` is a deliberately distinct role for a grouped Answer + Solution PDF: unlike the
+ * historical `answer` and `solution` siblings, both are read from the same source document.
+ */
+export const ChapterKindSchema = z.enum(['question', 'answer', 'solution', 'companion']);
 export type ChapterKind = z.infer<typeof ChapterKindSchema>;
 
 /**

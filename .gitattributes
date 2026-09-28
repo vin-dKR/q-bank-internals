@@ -1,0 +1,2 @@
+# This legacy source previously contained an accidental NUL delimiter. Keep its maintenance diffs textual.
+api/src/modules/quality/quality.service.ts diff

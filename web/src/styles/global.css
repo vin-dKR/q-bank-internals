@@ -335,6 +335,11 @@
     background: color-mix(in srgb, var(--color-s) 14%, transparent);
     color: var(--color-s);
   }
+  .chip.is-companion {
+    @apply border-transparent;
+    background: color-mix(in srgb, var(--color-brand) 12%, transparent);
+    color: var(--color-brand);
+  }
 
   .req-badge {
     @apply rounded-full bg-surface-2 px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-ink-3;
@@ -1164,12 +1169,18 @@
       linear-gradient(45deg, transparent 75%, var(--color-line) 75%),
       linear-gradient(-45deg, transparent 75%, var(--color-line) 75%);
     background-size: 14px 14px;
-    background-position: 0 0, 0 7px, 7px -7px, -7px 0;
+    background-position:
+      0 0,
+      0 7px,
+      7px -7px,
+      -7px 0;
   }
   /* The crop itself: filled edge-to-edge, ringed in the accent colour, lifted with a shadow. */
   .verify__magnifier-crop {
     @apply flex-none rounded-[2px] bg-no-repeat;
-    box-shadow: 0 0 0 2px var(--color-brand), 0 4px 12px rgb(0 0 0 / 0.28);
+    box-shadow:
+      0 0 0 2px var(--color-brand),
+      0 4px 12px rgb(0 0 0 / 0.28);
   }
   .verify__panel {
     @apply flex min-w-0 flex-col gap-3.5;
@@ -1213,8 +1224,13 @@
     @apply absolute -top-6 left-0 whitespace-nowrap rounded-t-md bg-q px-2 py-0.5 text-[11px] font-semibold text-white;
   }
   @keyframes source-focus-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.45; }
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.45;
+    }
   }
   /* Draw mode: a floating hint names the armed target; a full-frame overlay captures the rubber band. */
   .crop-canvas__hint {
@@ -1505,7 +1521,9 @@
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6);
 }
 .reflow-crop.is-selected {
-  box-shadow: 0 0 0 1px #fff, 0 0 0 3px rgba(0, 0, 0, 0.35);
+  box-shadow:
+    0 0 0 1px #fff,
+    0 0 0 3px rgba(0, 0, 0, 0.35);
 }
 .reflow-crop__tag {
   position: absolute;
@@ -1570,6 +1588,9 @@
 .slice-band.is-solution {
   background: color-mix(in srgb, var(--color-s) 14%, transparent);
 }
+.slice-band.is-companion {
+  background: color-mix(in srgb, var(--color-brand) 12%, transparent);
+}
 .slice-band.is-loose {
   background: rgba(90, 98, 116, 0.09);
 }
@@ -1615,6 +1636,11 @@
   border-color: var(--color-s);
   color: #fff;
 }
+.slice-band__chip.is-companion {
+  background: var(--color-brand);
+  border-color: var(--color-brand);
+  color: #fff;
+}
 .slice-band__chip:disabled {
   cursor: not-allowed;
   opacity: 0.7;
@@ -1632,6 +1658,11 @@
 .btn--pill.is-solution.is-active {
   background: var(--color-s);
   border-color: var(--color-s);
+  color: #fff;
+}
+.btn--pill.is-companion.is-active {
+  background: var(--color-brand);
+  border-color: var(--color-brand);
   color: #fff;
 }
 .cropbox {
@@ -1717,7 +1748,6 @@
     overflow: visible;
   }
 }
-
 
 /* ============================================================================
    Auto-crop review (AI-suggested boxes, review list) — from #9, adapted to the
