@@ -13,6 +13,7 @@ import {
   RefineLatexSchema,
   UpdatePassageSchema,
   UpdateQuestionSchema,
+  TranscribeQuestionRegionRequestSchema,
 } from '@ingest/contracts';
 import { asyncHandler } from '../../shared/http/async-handler.js';
 import { ok } from '../../shared/http/api-response.js';
@@ -40,6 +41,7 @@ export function createQuestionsController(service: QuestionsService): {
   detectFigures: RequestHandler;
   detectFiguresBatch: RequestHandler;
   extractPaperMetadata: RequestHandler;
+  transcribeRegion: RequestHandler;
 } {
   return {
     list: asyncHandler(async (req, res) => {
@@ -87,6 +89,11 @@ export function createQuestionsController(service: QuestionsService): {
     reExtractGroup: asyncHandler(async (req, res) => {
       const { documentId, passageId, source, questionType, mode } = parseOrThrow(ReExtractGroupSchema, req.body);
       ok(res, await service.reExtractGroup(documentId, passageId, source, questionType, mode));
+    }),
+
+    transcribeRegion: asyncHandler(async (req, res) => {
+      const input = parseOrThrow(TranscribeQuestionRegionRequestSchema, req.body);
+      ok(res, await service.transcribeQuestionRegion({ questionId: requiredParam(req, 'id'), ...input }));
     }),
 
     update: asyncHandler(async (req, res) => {

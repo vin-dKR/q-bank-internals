@@ -607,10 +607,19 @@
   .combobox__pop {
     @apply absolute left-0 right-0 z-[60] m-0 max-h-60 overflow-y-auto rounded-lg border border-line bg-surface p-1 shadow-lg;
     top: calc(100% + 4px);
+    right: auto;
+    width: max-content;
+    min-width: 100%;
+    max-width: calc(100vw - 2rem);
     list-style: none;
   }
   .combobox__option {
     @apply flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-sm text-ink;
+    overflow: hidden;
+    min-width: 0;
+    max-width: 100%;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
   .combobox__option svg {
     @apply size-4;

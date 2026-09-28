@@ -32,6 +32,7 @@ import {
   synthesizeMatrixChoiceOptions,
 } from '@ingest/contracts';
 import { createHash } from 'node:crypto';
+import sharp from 'sharp';
 import type { ReExtractedSubDraft } from './question-reextractor.js';
 import { mapWithConcurrency } from '../../shared/async/map-with-concurrency.js';
 import { errors } from '../../shared/errors/error-catalog.js';
@@ -521,6 +522,64 @@ export class QuestionsService {
   /** Check an unsaved Verify draft field with the exact same rules as the document scan. */
   checkLatexField(field: string, text: string): LatexFieldCheckResult {
     return { field, issues: detectLatexInField(field, text) };
+  }
+
+  /** Transcribe a user-selected question/answer/solution PDF region into reviewable draft text. */
+  async transcribeQuestionRegion(input: {
+    questionId: string;
+    documentId: string;
+    page: number;
+    bbox: [number, number, number, number];
+    destination: 'stem' | 'answer' | 'solution';
+    source?: ReExtractSource | undefined;
+  }): Promise<{ text: string }> {
+    const [question, document] = await Promise.all([
+      this.questions.findById(input.questionId),
+      this.documents.findById(input.documentId),
+    ]);
+    if (!question || question.documentId !== input.documentId) {
+      throw errors.validation({ message: 'This question does not belong to the selected document.' });
+    }
+    if (!document || document.kind !== 'question') {
+      throw errors.validation({ message: 'Text selection requires the question PDF as its owner document.' });
+    }
+    const source = await this.resolveReExtractSource(
+      input.documentId,
+      input.source,
+      question.sourceRegion.page,
+      [question.sourceRegion.page],
+    );
+    const sourceMatchesDestination =
+      source.sourceKind === 'question' ||
+      (input.destination === 'answer' && (source.sourceKind === 'answer' || source.fieldTarget === 'answer')) ||
+      (input.destination === 'solution' && (source.sourceKind === 'solution' || source.fieldTarget === 'solution'));
+    if (!sourceMatchesDestination || (input.destination === 'stem' && source.sourceKind !== 'question')) {
+      throw errors.validation({ message: 'Choose a source PDF that matches the text field you are transcribing.' });
+    }
+    if (source.page !== input.page) {
+      throw errors.validation({ message: 'The selected PDF page changed. Select the area again.' });
+    }
+    const png = await this.pages.renderPage(source.documentId, source.page);
+    const { width, height } = readPngSize(png);
+    const [x0, y0, x1, y1] = input.bbox;
+    const left = Math.max(0, Math.floor(x0 * width));
+    const top = Math.max(0, Math.floor(y0 * height));
+    const right = Math.min(width, Math.ceil(x1 * width));
+    const bottom = Math.min(height, Math.ceil(y1 * height));
+    const cropWidth = right - left;
+    const cropHeight = bottom - top;
+    if (cropWidth < 20 || cropHeight < 20) {
+      throw errors.validation({ message: 'Select a larger area of the page and try again.' });
+    }
+    const crop = await sharp(png).extract({ left, top, width: cropWidth, height: cropHeight }).png().toBuffer();
+    const { text, usage } = await this.reExtractor.transcribeRegion({ png: crop, destination: input.destination });
+    try {
+      await this.usage.recordUsage({ source: 'reextract', documentId: input.documentId, ...usage });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn({ err: message }, 'Failed to record selected-region transcription usage');
+    }
+    return { text };
   }
 
   /** Apply only mechanical repairs shared with Data Quality, skipping prose that needs judgment. */

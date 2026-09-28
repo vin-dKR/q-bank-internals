@@ -247,6 +247,15 @@ export function IconScan(props: IconProps): JSX.Element {
   );
 }
 
+export function IconTextSelect(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 7V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-2" />
+      <path d="M8 9h8M8 12h8M8 15h5" />
+    </svg>
+  );
+}
+
 export function IconHelp(props: IconProps): JSX.Element {
   return (
     <svg {...base(props)}>

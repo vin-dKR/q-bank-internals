@@ -57,6 +57,7 @@ export {
   IconHelp,
   IconLayers,
   IconScan,
+  IconTextSelect,
   IconGrid,
   IconList,
   IconSigma,

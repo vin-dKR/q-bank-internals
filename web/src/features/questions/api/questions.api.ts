@@ -6,6 +6,7 @@ import type {
   LatexFixResult,
   LatexFieldCheckResult,
   LatexScan,
+  PublishIssues,
   ReExtractGroupMode,
   DetectFiguresSource,
   Passage,
@@ -25,12 +26,14 @@ import {
   LatexFixResultSchema,
   LatexFieldCheckResultSchema,
   LatexScanSchema,
+  PublishIssuesSchema,
   PassageSchema,
   PublishResultSchema,
   QuestionListResponseSchema,
   QuestionSchema,
   ReExtractedGroupSchema,
   ReExtractedQuestionSchema,
+  TranscribeQuestionRegionResponseSchema,
 } from '@ingest/contracts';
 import { request } from '../../../shared/api/http-client.js';
 import { uploadCrop } from '../../../shared/api/upload-crop.js';
@@ -204,6 +207,24 @@ export const questionsApi = {
       schema: PublishResultSchema,
     });
   },
+
+  /** Transcribe the exact region selected on a question PDF; returned text stays a local draft. */
+  transcribeRegion: (
+    questionId: string,
+    input: {
+      documentId: string;
+      page: number;
+      bbox: [number, number, number, number];
+      destination: 'stem' | 'answer' | 'solution';
+      source?: ReExtractSource;
+    },
+  ): Promise<{ text: string }> => request(`/questions/${questionId}/transcribe-region`, {
+    method: 'POST', body: input, schema: TranscribeQuestionRegionResponseSchema,
+  }),
+
+  /** Lists question-level validation blockers before publishing or updating the bank. */
+  publishIssues: (documentId: string): Promise<PublishIssues> =>
+    request(`/publish/documents/${documentId}/issues`, { schema: PublishIssuesSchema }),
 
   pageCount: (documentId: string): Promise<number> => fetchPageCount(documentId),
 

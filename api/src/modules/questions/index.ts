@@ -22,6 +22,7 @@ export type {
   QuestionReExtractor,
   ReExtractedSubDraft,
   ReExtractInput,
+  TranscribeRegionInput,
 } from './question-reextractor.js';
 export type {
   PaperMetadataExtraction,

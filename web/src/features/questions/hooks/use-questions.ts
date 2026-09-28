@@ -12,6 +12,7 @@ import type {
   Question,
   QuestionBatchUpdate,
   QuestionListResponse,
+  PublishIssues,
   UpdatePassage,
   UpdateQuestion,
 } from '@ingest/contracts';
@@ -36,6 +37,15 @@ export function useQuestions(documentId: string | null): UseQueryResult<Question
     queryFn: () => questionsApi.listByDocument(documentId ?? ''),
     enabled: documentId !== null,
     select: (response: QuestionListResponse) => response.questions,
+  });
+}
+
+/** Loads server-validated publish blockers for the active Verify document. */
+export function usePublishIssues(documentId: string | null): UseQueryResult<PublishIssues> {
+  return useQuery({
+    queryKey: ['publish-issues', documentId],
+    queryFn: () => questionsApi.publishIssues(documentId ?? ''),
+    enabled: documentId !== null,
   });
 }
 
@@ -74,6 +84,7 @@ export function usePublishDocument(): UseMutationResult<{ published: number }, E
       void queryClient.invalidateQueries({ queryKey: ['catalog'] });
       void queryClient.invalidateQueries({ queryKey: ['bank-search'] });
       void queryClient.invalidateQueries({ queryKey: ['catalog-filter-options'] });
+      void queryClient.invalidateQueries({ queryKey: ['publish-issues', documentId] });
       void queryClient.invalidateQueries({ queryKey: ['documents'] });
       void queryClient.invalidateQueries({ queryKey: ['sessions'] });
       void queryClient.invalidateQueries({ queryKey: ['session'] });
@@ -105,6 +116,7 @@ export function useBatchUpdateQuestions(
       );
       void queryClient.invalidateQueries({ queryKey: questionsQueryKey(documentId) });
       void queryClient.invalidateQueries({ queryKey: ['latex-scan', documentId] });
+      void queryClient.invalidateQueries({ queryKey: ['publish-issues', documentId] });
     },
   });
 }
@@ -130,6 +142,7 @@ export function useUpdateQuestion(): UseMutationResult<
       );
       void queryClient.invalidateQueries({ queryKey: questionsQueryKey(question.documentId) });
       void queryClient.invalidateQueries({ queryKey: ['latex-scan', question.documentId] });
+      void queryClient.invalidateQueries({ queryKey: ['publish-issues', question.documentId] });
     },
   });
 }

@@ -5,7 +5,7 @@ import { DETECT_FIGURES_MAX_PAGES } from '@ingest/contracts';
 import { getCroppedBlob } from '../../../shared/lib/crop-image.js';
 import { useDocument } from '../../documents/index.js';
 import { questionsApi } from '../api/questions.api.js';
-import { questionsQueryKey, useDeleteQuestion, useGroupQuestions, usePageCount, usePassages, useQuestions, useUngroupPassage, useUpdatePassage, useUpdateQuestion } from '../hooks/use-questions.js';
+import { questionsQueryKey, useDeleteQuestion, useGroupQuestions, usePageCount, usePassages, usePublishIssues, useQuestions, useUngroupPassage, useUpdatePassage, useUpdateQuestion } from '../hooks/use-questions.js';
 import { useQuestionDrafts } from '../hooks/use-question-drafts.js';
 import { usePassageDrafts } from '../hooks/use-passage-drafts.js';
 import {
@@ -31,6 +31,7 @@ import {
   LoadingState,
   Spinner,
   ToolbarHelp,
+  useToast,
   useConfirm,
 } from '../../../shared/ui/index.js';
 import {
@@ -42,6 +43,7 @@ import { ComprehensionGroupPanel } from './comprehension-group.js';
 import { SourcePreviewPane, type SourcePreviewMagnifier } from './source-preview-pane.js';
 import { useVerifySources } from '../hooks/use-verify-sources.js';
 import type { VerifySibling } from '../lib/verify-sources.js';
+import { PublishIssueActions } from './publish-issue-actions.js';
 
 /** Which source PDFs sit beside the question page: question only, + answer, or + answer & solution. */
 type ViewMode = 'question' | 'answer' | 'solution';
@@ -117,6 +119,14 @@ type CropRequest = {
   target?: 'answer' | 'solution';
   sourceDocumentId?: string;
   resolve: (url: string | null) => void;
+};
+
+/** One question whose next drag on the question PDF should be sent for text transcription. */
+type RegionTranscriptionTarget = {
+  questionId: string;
+  page: number;
+  destination: 'stem' | 'answer' | 'solution';
+  source?: ReExtractSource;
 };
 
 /** A durable Answer/Solution crop, paired with the question field it must replace on release. */
@@ -597,6 +607,7 @@ export function VerifyWorkspace({
   focusQuestionId?: string;
 }): JSX.Element {
   const questions = useQuestions(documentId);
+  const publishIssues = usePublishIssues(documentId);
   const pageCount = usePageCount(documentId);
   const document = useDocument(documentId);
   const { mutateAsync: patchQuestion } = useUpdateQuestion();
@@ -632,6 +643,7 @@ export function VerifyWorkspace({
   const ungroupMutation = useUngroupPassage(documentId);
   const deleteQuestion = useDeleteQuestion(documentId);
   const [confirm, confirmDialog] = useConfirm();
+  const toast = useToast();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   useEffect(() => { setSelectedIds(new Set()); }, [documentId]);
   const toggleSelect = useCallback((id: string): void => {
@@ -738,6 +750,22 @@ export function VerifyWorkspace({
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [drawTarget, setDrawTarget] = useState<DrawTarget | null>(null);
+  const [regionTranscriptionTarget, setRegionTranscriptionTarget] = useState<RegionTranscriptionTarget | null>(null);
+  const regionTranscriptionTargetRef = useRef<RegionTranscriptionTarget | null>(null);
+  const [regionTranscriptionBusy, setRegionTranscriptionBusy] = useState(false);
+  useEffect(() => {
+    regionTranscriptionTargetRef.current = null;
+    setRegionTranscriptionTarget(null);
+  }, [documentId]);
+  useEffect(() => {
+    if (
+      !regionTranscriptionTarget ||
+      (regionTranscriptionTarget.source && regionTranscriptionTarget.source.documentId !== documentId) ||
+      page === regionTranscriptionTarget.page
+    ) return;
+    regionTranscriptionTargetRef.current = null;
+    setRegionTranscriptionTarget(null);
+  }, [documentId, page, regionTranscriptionTarget]);
   // A pending one-shot field crop (answer/explanation/match image); mirrored in a ref so the async draw +
   // upload path reads the live request without stale closures. Only one is armed at a time.
   const [cropRequest, setCropRequest] = useState<CropRequest | null>(null);
@@ -1811,7 +1839,74 @@ export function VerifyWorkspace({
   // The main canvas' draw handler serves a pending question-source crop first, else the box pipeline.
   // (A solution-source request is fulfilled from the preview pane, so it falls through to handleDraw
   // here — but handleDraw no-ops without a drawTarget, and none is armed while a crop request is.)
+  const transcribeSelectedRegion = (
+    target: RegionTranscriptionTarget,
+    bbox: [number, number, number, number],
+    selectedPage: number,
+  ): void => {
+    regionTranscriptionTargetRef.current = null;
+    setRegionTranscriptionTarget(null);
+    if (selectedPage !== target.page) {
+      toast.error('PDF page changed', 'Select the region again on the correct source page.');
+      return;
+    }
+    setRegionTranscriptionBusy(true);
+    toast.toast({ tone: 'info', title: 'Reading selected area…', description: 'The text will appear in the draft when the transcription finishes.' });
+    void questionsApi.transcribeRegion(target.questionId, {
+      documentId,
+      page: target.page,
+      bbox,
+      destination: target.destination,
+      ...(target.source ? { source: target.source } : {}),
+    }).then(({ text }) => {
+      const fieldKey = target.destination === 'solution'
+        ? 'explanation'
+        : target.destination;
+      const currentQuestion = questionById.get(target.questionId);
+      const currentText = currentQuestion ? drafts.draftFor(currentQuestion)[fieldKey] : '';
+      const reviewedText = currentText.trim() ? `${currentText.trim()}\n${text}` : text;
+      drafts.updateDraft(target.questionId, (previous) => ({
+        ...previous,
+        ...(target.destination === 'stem'
+          ? { stem: previous.stem.trim() ? `${previous.stem.trim()}\n${text}` : text }
+          : target.destination === 'answer'
+            ? { answer: previous.answer.trim() ? `${previous.answer.trim()}\n${text}` : text }
+              : { explanation: previous.explanation.trim() ? `${previous.explanation.trim()}\n${text}` : text }),
+      }));
+      void questionsApi.checkLatexField(fieldKey, reviewedText).then(({ issues }) => {
+        const field = target.destination === 'stem' ? 'question' : target.destination;
+        if (issues.length > 0) {
+          toast.toast({
+            tone: 'info',
+            title: `${String(issues.length)} LaTeX issue(s) need review`,
+            description: `Transcribed text was added to the ${field} draft. Review it, then Update to save; the source image is unchanged.`,
+          });
+        } else {
+          toast.success(`Text added to the ${field} draft`, `LaTeX check passed. Review it, then select Update to save. The source image is unchanged.`);
+        }
+      }).catch(() => {
+        const field = target.destination === 'stem' ? 'question' : target.destination;
+        toast.success(`Text added to the ${field} draft`, 'Review it, then select Update to save. The source image is unchanged.');
+      });
+    }).catch((caught: unknown) => {
+      toast.error('Could not read the selected area', caught instanceof Error ? caught.message : 'Your question was left unchanged.');
+    }).finally(() => { setRegionTranscriptionBusy(false); });
+  };
+
   const handleCanvasDraw = (rect: BoxRect): void => {
+    const transcriptionTarget = regionTranscriptionTargetRef.current;
+    if (transcriptionTarget) {
+      const pageSize = sizeRef.current;
+      if (!pageSize || pageSize.displayWidth === 0 || pageSize.displayHeight === 0) return;
+      const bbox: [number, number, number, number] = [
+        Math.max(0, rect.x / pageSize.displayWidth),
+        Math.max(0, rect.y / pageSize.displayHeight),
+        Math.min(1, (rect.x + rect.width) / pageSize.displayWidth),
+        Math.min(1, (rect.y + rect.height) / pageSize.displayHeight),
+      ];
+      transcribeSelectedRegion(transcriptionTarget, bbox, page);
+      return;
+    }
     const req = cropRequestRef.current;
     if (req && req.source === 'question') {
       const pageSize = sizeRef.current;
@@ -1829,15 +1924,70 @@ export function VerifyWorkspace({
     handleDraw(rect);
   };
 
+  const armRegionTranscription = (
+    question: Question,
+    destination: 'stem' | 'answer' | 'solution',
+    source?: ReExtractSource,
+  ): void => {
+    cancelCropRequest();
+    setDrawTarget(null);
+    const target = {
+      questionId: question.id,
+      page: source?.page ?? question.sourceRegion.page,
+      destination,
+      ...(source ? { source } : {}),
+    };
+    regionTranscriptionTargetRef.current = target;
+    setRegionTranscriptionTarget(target);
+    const fromQuestionPage = !source || source.documentId === documentId;
+    if (fromQuestionPage) {
+      setVisibleViews((previous) => new Set([...previous, 'question']));
+      if (page !== target.page) goToPage(target.page);
+    } else {
+      const view: ViewMode = destination === 'answer' ? 'answer' : 'solution';
+      setVisibleViews((previous) => new Set([...previous, view]));
+    }
+    toast.toast({
+      tone: 'info',
+      title: `Select the ${destination === 'stem' ? 'question' : destination} area on the PDF`,
+      description: 'Drag a box around the exact region. Press Escape to cancel.',
+    });
+  };
+
+  const cancelRegionTranscription = (): void => {
+    regionTranscriptionTargetRef.current = null;
+    setRegionTranscriptionTarget(null);
+  };
+
+  const transcriptionForSource = (source: VerifySibling) => {
+    const target = regionTranscriptionTarget;
+    if (!target || (target.source?.documentId ?? documentId) !== source.document.id) return undefined;
+    return {
+      armed: !regionTranscriptionBusy && target.page === sourcePageFor(source),
+      page: target.page,
+      onSelect: (bbox: [number, number, number, number], selectedPage: number): void => {
+        const activeTarget = regionTranscriptionTargetRef.current;
+        if (activeTarget?.questionId === target.questionId) {
+          transcribeSelectedRegion(activeTarget, bbox, selectedPage);
+        }
+      },
+      onCancel: cancelRegionTranscription,
+    };
+  };
+
   // Esc also cancels a pending field crop.
   useEffect(() => {
-    if (!cropRequest) return undefined;
+    if (!cropRequest && !regionTranscriptionTarget) return undefined;
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') cancelCropRequest();
+      if (event.key === 'Escape') {
+        cancelCropRequest();
+        regionTranscriptionTargetRef.current = null;
+        setRegionTranscriptionTarget(null);
+      }
     };
     window.document.addEventListener('keydown', onKey);
     return () => { window.document.removeEventListener('keydown', onKey); };
-  }, [cropRequest]);
+  }, [cropRequest, regionTranscriptionTarget]);
 
   // --- Adjust-to-resave: one history entry per grab, one (coalesced) save per release. ---
   const grabbed = useRef<Box[] | null>(null);
@@ -2399,7 +2549,11 @@ export function VerifyWorkspace({
     cropRequest && cropRequest.source === 'question'
       ? `Crop image · Q${String(questionNumberById.get(cropRequest.questionId) ?? '?')}`
       : null;
-  const activeDrawLabel = drawLabel ?? cropDrawLabel;
+  const mainPageTranscriptionTarget = regionTranscriptionTarget &&
+    (!regionTranscriptionTarget.source || regionTranscriptionTarget.source.documentId === documentId)
+    ? regionTranscriptionTarget
+    : null;
+  const activeDrawLabel = drawLabel ?? cropDrawLabel ?? (mainPageTranscriptionTarget ? 'Select text to transcribe' : null);
   // Cards list only the not-yet-saved manual regions (saving or needing a retry); a saved region's
   // presence in the card is its attached image, and adjustments happen on the canvas box itself.
   const cardBoxesFor = (questionId: string): CardBox[] =>
@@ -2470,6 +2624,8 @@ export function VerifyWorkspace({
         onDrawRegion={toggleDrawTarget}
         onSaveBox={(boxId) => { void requestSave(boxId); }}
         onDeleteBox={deleteBox}
+        onTranscribeRegion={armRegionTranscription}
+        transcribingRegion={regionTranscriptionBusy || regionTranscriptionTarget !== null}
       />
     </div>
   );
@@ -2578,7 +2734,12 @@ export function VerifyWorkspace({
             draw={activeDrawLabel !== null ? { label: activeDrawLabel } : null}
             onDraw={handleCanvasDraw}
             onDrawProgress={setDrawPreview}
-            onDrawCancel={() => { setDrawTarget(null); cancelCropRequest(); }}
+            onDrawCancel={() => {
+              setDrawTarget(null);
+              cancelCropRequest();
+              regionTranscriptionTargetRef.current = null;
+              setRegionTranscriptionTarget(null);
+            }}
             onBoxGrab={handleBoxGrab}
             onBoxRelease={handleBoxRelease}
             focus={sourceFocus}
@@ -2593,6 +2754,7 @@ export function VerifyWorkspace({
             documentId={companionSource.document.id}
             fileName={companionSource.document.fileName}
             defaultPage={companionSource.defaultPage}
+            transcription={transcriptionForSource(companionSource)}
             crop={{
               armed: cropRequest?.source === 'answer' || cropRequest?.source === 'solution',
               onCrop: (imageUrl, natural, sourcePage) => { void fulfilCrop(imageUrl, natural, sourcePage); },
@@ -2638,6 +2800,7 @@ export function VerifyWorkspace({
             documentId={sources.answer.document.id}
             fileName={sources.answer.document.fileName}
             defaultPage={sources.answer.defaultPage}
+            transcription={transcriptionForSource(sources.answer)}
             crop={{
               armed: cropRequest?.source === 'answer',
               onCrop: (imageUrl, natural, sourcePage) => { void fulfilCrop(imageUrl, natural, sourcePage); },
@@ -2682,6 +2845,7 @@ export function VerifyWorkspace({
             documentId={sources.solution.document.id}
             fileName={sources.solution.document.fileName}
             defaultPage={sources.solution.defaultPage}
+            transcription={transcriptionForSource(sources.solution)}
             crop={{
               armed: cropRequest?.source === 'solution',
               onCrop: (imageUrl, natural, sourcePage) => { void fulfilCrop(imageUrl, natural, sourcePage); },
@@ -2739,30 +2903,38 @@ export function VerifyWorkspace({
             {sessionBar ? <div className="verify__session-row">{typeof sessionBar === 'function'
               ? sessionBar(drafts.dirtyIds.size + passageDrafts.dirtyIds.size > 0, drafts.isSaving || passageDrafts.isSaving, focusQuestionInWorkspace)
               : sessionBar}</div> : null}
-            <div className="verify__session-row" hidden={viewModes.length <= 1}>
-              <span className="text-sm text-ink-2">View</span>
-              <div className="ml-auto flex flex-wrap justify-end gap-x-3 gap-y-1.5" role="group" aria-label="Visible source previews">
-                {viewModes.map((option) => {
-                  const missing =
-                    (option.needs === 'answer' && !sources.answer) ||
-                    (option.needs === 'solution' && !sources.solution);
-                  return (
-                    <label
-                      key={option.mode}
-                      className={`inline-flex items-center gap-1.5 text-sm ${missing ? 'cursor-not-allowed text-ink-3' : 'cursor-pointer text-ink'}`}
-                      title={missing ? `No ${option.needs ?? ''} PDF attached to this unit` : undefined}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={visibleViews.has(option.mode)}
-                        disabled={missing || (visibleViews.has(option.mode) && visibleViews.size === 1)}
-                        onChange={() => { toggleView(option.mode); }}
-                      />
-                      {option.label}
-                    </label>
-                  );
-                })}
-              </div>
+            <div className="verify__session-row" hidden={viewModes.length <= 1 && !(publishIssues.data?.issues.length)}>
+              {viewModes.length > 1 ? (
+                <>
+                  <span className="text-sm text-ink-2">View</span>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1.5" role="group" aria-label="Visible source previews">
+                    {viewModes.map((option) => {
+                      const missing =
+                        (option.needs === 'answer' && !sources.answer) ||
+                        (option.needs === 'solution' && !sources.solution);
+                      return (
+                        <label
+                          key={option.mode}
+                          className={`inline-flex items-center gap-1.5 text-sm ${missing ? 'cursor-not-allowed text-ink-3' : 'cursor-pointer text-ink'}`}
+                          title={missing ? `No ${option.needs ?? ''} PDF attached to this unit` : undefined}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={visibleViews.has(option.mode)}
+                            disabled={missing || (visibleViews.has(option.mode) && visibleViews.size === 1)}
+                            onChange={() => { toggleView(option.mode); }}
+                          />
+                          {option.label}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : null}
+              <PublishIssueActions
+                issues={publishIssues.data?.issues ?? []}
+                onNavigateToQuestion={focusQuestionInWorkspace}
+              />
             </div>
             <div className="verify__session-row">
               <span className="text-sm text-ink-2">

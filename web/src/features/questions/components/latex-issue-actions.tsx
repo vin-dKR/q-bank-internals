@@ -18,6 +18,7 @@ export function LatexIssueActions({
   onReextract,
   reextractDisabled = false,
   reextractPending = false,
+  reextractTitle,
   onNavigateToQuestion,
 }: {
   documentId: string;
@@ -28,6 +29,7 @@ export function LatexIssueActions({
   onReextract?: () => void;
   reextractDisabled?: boolean;
   reextractPending?: boolean;
+  reextractTitle?: string;
   /** Navigate from an affected field to its question card in Verify. */
   onNavigateToQuestion?: (questionId: string) => void;
 }): JSX.Element | null {
@@ -188,7 +190,8 @@ export function LatexIssueActions({
           {onReextract ? (
             <div className={count > 0 || scanError ? 'mt-1 border-t border-line pt-1' : ''}>
               <button type="button" className="w-full rounded-md px-2 py-2 text-left text-sm text-ink hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={reextractDisabled} onClick={() => { if (menuRef.current) menuRef.current.open = false; onReextract(); }}>
+                disabled={reextractDisabled} title={reextractTitle}
+                onClick={() => { if (menuRef.current) menuRef.current.open = false; onReextract(); }}>
                 {reextractPending ? <><Spinner /> Re-extracting…</> : 'Re-extract document'}
               </button>
             </div>

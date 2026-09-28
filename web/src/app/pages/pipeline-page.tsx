@@ -122,22 +122,30 @@ export function PipelinePage(): JSX.Element {
 
   const latexScanReady = document.data?.kind === 'question'
     && ['extracted', 'needs_review', 'approved', 'completed', 'published'].includes(document.data.status);
+  const reextractUnavailable = reextract.isPending
+    || document.data?.status === 'published'
+    || document.data?.status === 'queued'
+    || document.data?.status === 'extracting';
+  const reextractTitle = document.data?.status === 'published'
+    ? 'Published documents must be revised through the published-question workflow'
+    : reextractUnavailable ? 'Wait for the current extraction to finish' : undefined;
   // Keep the picker and primary action visible; secondary actions live in one dropdown.
   const sessionBar = (hasUnsavedEdits: boolean, isSaving: boolean, onFocusQuestion: (questionId: string) => void): JSX.Element => (
-    <div className="relative flex w-full min-w-0 flex-wrap items-center gap-2">
-      <div className="min-w-[140px] flex-1">
+    <div className="relative flex w-full min-w-0 flex-nowrap items-center gap-2">
+      <div className="min-w-0 flex-1">
         <DocumentPicker value={documentId} onChange={selectUnit} />
       </div>
-      <div className="ml-auto flex max-w-full flex-none flex-wrap items-center justify-end gap-2">
+      <div className="ml-auto flex flex-none flex-nowrap items-center justify-end gap-2">
         {document.data?.kind === 'question' ? (
           <LatexIssueActions
             documentId={documentId}
             disabled={hasUnsavedEdits || isSaving}
             layout="dropdown"
             scanEnabled={latexScanReady}
-            {...(isPublished ? {} : { onReextract })}
-            reextractDisabled={reextract.isPending || document.data.status === 'queued' || document.data.status === 'extracting'}
+            onReextract={onReextract}
+            reextractDisabled={reextractUnavailable}
             reextractPending={reextract.isPending}
+            {...(reextractTitle ? { reextractTitle } : {})}
             onNavigateToQuestion={onFocusQuestion}
           />
         ) : null}

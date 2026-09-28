@@ -31,6 +31,7 @@ export function createQuestionsRouter(service: QuestionsService): Router {
   router.post('/paper-metadata', upload.single('file'), controller.extractPaperMetadata);
   router.post('/re-extract', controller.reExtract);
   router.post('/re-extract-group', controller.reExtractGroup);
+  router.post('/:id/transcribe-region', controller.transcribeRegion);
   router.post('/group', controller.group);
   router.post('/detect-figures', controller.detectFigures);
   router.post('/detect-figures/batch', controller.detectFiguresBatch);
