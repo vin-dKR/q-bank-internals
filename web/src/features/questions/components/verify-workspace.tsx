@@ -47,6 +47,7 @@ import { PublishIssueActions } from './publish-issue-actions.js';
 
 /** Which source PDFs sit beside the question page: question only, + answer, or + answer & solution. */
 type ViewMode = 'question' | 'answer' | 'solution';
+type SourcePaneId = ViewMode;
 /** Destinations whose crop boundary is drawn on the main question-PDF canvas. */
 type CanvasCropTarget = 'question' | 'option' | 'answer' | 'solution';
 
@@ -785,7 +786,11 @@ export function VerifyWorkspace({
   // The scrolling question panel (scrolled back to the top on every page change) and the draggable
   // split between it and the source page.
   const panelRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
   const [panelWidth, setPanelWidth] = useState<number>(readVerifyPanelWidth);
+  // Each source pane gets its own flex weight after its splitter is used. Unset weights preserve
+  // the current equal-width layout; resizing one boundary only changes its two adjacent panes.
+  const [sourcePaneWeights, setSourcePaneWeights] = useState<Partial<Record<SourcePaneId, number>> | null>(null);
   const panelWidthRef = useRef(panelWidth);
   const setPanel = useCallback((width: number): void => {
     const clamped = Math.min(MAX_PANEL, Math.max(MIN_PANEL, width));
@@ -809,6 +814,55 @@ export function VerifyWorkspace({
     window.addEventListener('mouseup', up);
     window.document.body.classList.add('is-col-resizing');
   }, [setPanel]);
+
+  const applySourcePaneWidths = useCallback((
+    leftId: SourcePaneId,
+    rightId: SourcePaneId,
+    leftWidth: number,
+    rightWidth: number,
+  ): void => {
+    const panes = canvasRef.current?.querySelectorAll<HTMLElement>('[data-verify-source-pane]');
+    if (!panes) return;
+    const measured: Partial<Record<SourcePaneId, number>> = {};
+    panes.forEach((pane) => {
+      const id = pane.dataset.verifySourcePane;
+      if (id === 'question' || id === 'answer' || id === 'solution') {
+        measured[id] = Math.max(1, pane.getBoundingClientRect().width);
+      }
+    });
+    setSourcePaneWeights({ ...measured, [leftId]: leftWidth, [rightId]: rightWidth });
+  }, []);
+
+  const onSourcePaneResizeStart = useCallback((
+    leftId: SourcePaneId,
+    rightId: SourcePaneId,
+    event: ReactMouseEvent,
+  ): void => {
+    event.preventDefault();
+    const left = canvasRef.current?.querySelector<HTMLElement>(`[data-verify-source-pane="${leftId}"]`);
+    const right = canvasRef.current?.querySelector<HTMLElement>(`[data-verify-source-pane="${rightId}"]`);
+    if (!left || !right) return;
+    const startX = event.clientX;
+    const startLeftWidth = left.getBoundingClientRect().width;
+    const startRightWidth = right.getBoundingClientRect().width;
+    const combinedWidth = startLeftWidth + startRightWidth;
+    const minWidth = Math.min(160, combinedWidth / 3);
+    const move = (moveEvent: MouseEvent): void => {
+      const nextLeft = Math.min(
+        combinedWidth - minWidth,
+        Math.max(minWidth, startLeftWidth + moveEvent.clientX - startX),
+      );
+      applySourcePaneWidths(leftId, rightId, nextLeft, combinedWidth - nextLeft);
+    };
+    const up = (): void => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      window.document.body.classList.remove('is-col-resizing');
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+    window.document.body.classList.add('is-col-resizing');
+  }, [applySourcePaneWidths]);
 
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -2655,10 +2709,61 @@ export function VerifyWorkspace({
   }
 
   const totalPages = pageCount.data ?? 1;
+  const showCompanionPreview = Boolean(
+    companionSource && (visibleViews.has('answer') || visibleViews.has('solution')),
+  );
+  const showAnswerPreview = Boolean(
+    !companionSource && visibleViews.has('answer') && sources.answer,
+  );
+  const showSolutionPreview = Boolean(
+    !companionSource && visibleViews.has('solution') && sources.solution,
+  );
+  const sourcePaneOrder: SourcePaneId[] = [
+    ...(visibleViews.has('question') ? ['question' as const] : []),
+    ...(showCompanionPreview || showAnswerPreview ? ['answer' as const] : []),
+    ...(showSolutionPreview ? ['solution' as const] : []),
+  ];
+  const sourcePaneFlex = (id: SourcePaneId): CSSProperties | undefined =>
+    sourcePaneWeights ? { flex: `${String(sourcePaneWeights[id] ?? 1)} 1 0px` } : undefined;
+  const sourcePaneResizerAfter = (leftId: SourcePaneId): JSX.Element | null => {
+    const index = sourcePaneOrder.indexOf(leftId);
+    const rightId = sourcePaneOrder[index + 1];
+    if (!rightId) return null;
+    return (
+      <div
+        key={`source-resizer-${leftId}-${rightId}`}
+        className="verify__pane-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={`Resize ${leftId} and ${rightId} preview panes`}
+        aria-valuemin={160}
+        title="Drag to resize · double-click to reset · use arrow keys when focused"
+        tabIndex={0}
+        onMouseDown={(event) => { onSourcePaneResizeStart(leftId, rightId, event); }}
+        onDoubleClick={() => { setSourcePaneWeights(null); }}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+          event.preventDefault();
+          const left = canvasRef.current?.querySelector<HTMLElement>(`[data-verify-source-pane="${leftId}"]`);
+          const right = canvasRef.current?.querySelector<HTMLElement>(`[data-verify-source-pane="${rightId}"]`);
+          if (!left || !right) return;
+          const leftWidth = left.getBoundingClientRect().width;
+          const rightWidth = right.getBoundingClientRect().width;
+          const total = leftWidth + rightWidth;
+          const minWidth = Math.min(160, total / 3);
+          const delta = event.key === 'ArrowRight' ? 24 : -24;
+          const nextLeft = Math.min(total - minWidth, Math.max(minWidth, leftWidth + delta));
+          applySourcePaneWidths(leftId, rightId, nextLeft, total - nextLeft);
+        }}
+      >
+        <span className="verify__pane-grip" aria-hidden="true" />
+      </div>
+    );
+  };
 
   return (
     <div className="verify" style={{ '--verify-panel-w': `${String(panelWidth)}px` } as CSSProperties}>
-      <div className="verify__canvas">
+      <div className="verify__canvas" ref={canvasRef}>
           {visibleViews.has('question') ? (
           <div className="verify__rail" role="toolbar" aria-label="Source page tools">
           <div className="verify__rail-group">
@@ -2724,7 +2829,11 @@ export function VerifyWorkspace({
           ) : null}
 
         {visibleViews.has('question') ? (
-          <div className="verify__stage">
+          <div
+            className="verify__stage"
+            data-verify-source-pane="question"
+            style={sourcePaneFlex('question')}
+          >
           <CropCanvas
             imageSrc={imageSrc}
             boxes={canvasBoxes}
@@ -2746,9 +2855,12 @@ export function VerifyWorkspace({
           />
           </div>
         ) : null}
+        {visibleViews.has('question') ? sourcePaneResizerAfter('question') : null}
 
-        {companionSource && (visibleViews.has('answer') || visibleViews.has('solution')) ? (
+        {showCompanionPreview && companionSource ? (
           <SourcePreviewPane
+            paneId="answer"
+            flexWeight={sourcePaneWeights?.answer}
             title="Answer + Explanation"
             tone={companionTarget === 'answer' ? 'answer' : 'solution'}
             documentId={companionSource.document.id}
@@ -2793,8 +2905,11 @@ export function VerifyWorkspace({
             onMagnifierChange={setSiblingMagnifier}
           />
         ) : null}
-        {!companionSource && visibleViews.has('answer') && sources.answer ? (
+        {showCompanionPreview ? sourcePaneResizerAfter('answer') : null}
+        {showAnswerPreview && sources.answer ? (
           <SourcePreviewPane
+            paneId="answer"
+            flexWeight={sourcePaneWeights?.answer}
             title="Answer"
             tone="answer"
             documentId={sources.answer.document.id}
@@ -2838,8 +2953,11 @@ export function VerifyWorkspace({
             onMagnifierChange={setSiblingMagnifier}
           />
         ) : null}
-        {!companionSource && visibleViews.has('solution') && sources.solution ? (
+        {showAnswerPreview ? sourcePaneResizerAfter('answer') : null}
+        {showSolutionPreview && sources.solution ? (
           <SourcePreviewPane
+            paneId="solution"
+            flexWeight={sourcePaneWeights?.solution}
             title="Solution"
             tone="solution"
             documentId={sources.solution.document.id}

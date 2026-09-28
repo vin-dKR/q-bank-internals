@@ -1067,6 +1067,22 @@
   .verify__resizer:active .verify__grip {
     @apply bg-brand;
   }
+  /* Independent source-PDF splits let Question, Answer, and Solution previews be resized separately. */
+  .verify__pane-resizer {
+    @apply relative flex w-3.5 flex-none cursor-col-resize items-stretch justify-center;
+    touch-action: none;
+  }
+  .verify__pane-grip {
+    @apply my-auto h-10 w-0.5 rounded-full bg-line transition-colors;
+  }
+  .verify__pane-resizer:hover .verify__pane-grip,
+  .verify__pane-resizer:active .verify__pane-grip,
+  .verify__pane-resizer:focus-visible .verify__pane-grip {
+    @apply bg-brand;
+  }
+  .verify__pane-resizer:focus-visible {
+    @apply outline-none ring-2 ring-inset ring-indigo-500/40;
+  }
   /* AI-crop review lives in the pinned top block: cap its height so a long list scrolls inside the
      card instead of pushing the question cards off-screen. */
   .verify__ai-review-list {

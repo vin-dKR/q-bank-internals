@@ -93,6 +93,8 @@ export function SourcePreviewPane({
   destination,
   onPageChange,
   onMagnifierChange,
+  paneId,
+  flexWeight,
 }: {
   title: string;
   tone: 'answer' | 'solution';
@@ -109,6 +111,9 @@ export function SourcePreviewPane({
   onPageChange?: (page: number) => void;
   /** Receives a live sibling crop while it is drawn or adjusted; null clears the shared magnifier. */
   onMagnifierChange?: (value: SourcePreviewMagnifier | null) => void;
+  /** Identifies this preview in the Verify source-pane splitters. */
+  paneId: 'answer' | 'solution';
+  flexWeight?: number | undefined;
 }): JSX.Element {
   const [page, setPage] = useState(defaultPage);
   useEffect(() => { setPage(defaultPage); }, [defaultPage]);
@@ -477,7 +482,11 @@ export function SourcePreviewPane({
   const drawingNewCrop = armed;
 
   return (
-    <div className="verify__source">
+    <div
+      className="verify__source"
+      data-verify-source-pane={paneId}
+      style={flexWeight === undefined ? undefined : { flex: `${String(flexWeight)} 1 0px` }}
+    >
       <div className="verify__source-head">
         <span className={`chip ${tone === 'answer' ? 'is-answer' : 'is-solution'}`}>{title}</span>
         <span className="verify__source-name" title={fileName}>{fileName}</span>
