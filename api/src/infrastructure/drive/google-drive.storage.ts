@@ -53,7 +53,9 @@ export class GoogleDriveStorage implements DriveStorage {
     try {
       const response = await this.drive.files.create({
         requestBody: { name: input.name, parents: [input.folderId] },
-        media: { mimeType: PDF_MIME, body: Readable.from(input.bytes) },
+        // Emit one exact Buffer chunk. Drive stores these bytes verbatim; no conversion, rasterising,
+        // or recompression is performed in the ingestion path.
+        media: { mimeType: PDF_MIME, body: Readable.from([input.bytes]) },
         fields: 'id,name,mimeType,modifiedTime,size',
         supportsAllDrives: true,
       });

@@ -1,7 +1,7 @@
 import { PDFDocument } from 'pdf-lib';
 import type { ReadingOrder } from '../types/cut-mode.js';
 import type { SplitPoint, SplitPointsByPage } from '../types/split-point.js';
-import { type PdfInput, type Slice, drawCellOnA4, embedCell } from './cut-pdf.js';
+import { type PdfInput, type Slice, drawCellOnA4, embedCells } from './cut-pdf.js';
 
 /** Interior cut fractions of one axis, wrapped in the page edges, sorted, de-duplicated to bounds. */
 function boundaries(positions: number[]): number[] {
@@ -20,15 +20,20 @@ export function cellsForPage(
   splits: SplitPoint[],
   order: ReadingOrder = 'column',
 ): Slice[] {
-  const cols = boundaries(splits.filter((s) => s.orientation === 'vertical').map((s) => s.position));
-  const rows = boundaries(splits.filter((s) => s.orientation === 'horizontal').map((s) => s.position));
+  const cols = boundaries(
+    splits.filter((s) => s.orientation === 'vertical').map((s) => s.position),
+  );
+  const rows = boundaries(
+    splits.filter((s) => s.orientation === 'horizontal').map((s) => s.position),
+  );
 
   const cell = (c: number, r: number): Slice | null => {
     const x0 = cols[c];
     const x1 = cols[c + 1];
     const start = rows[r];
     const end = rows[r + 1];
-    if (x0 === undefined || x1 === undefined || start === undefined || end === undefined) return null;
+    if (x0 === undefined || x1 === undefined || start === undefined || end === undefined)
+      return null;
     return { pageNumber, x0, x1, start, end };
   };
 
@@ -78,8 +83,10 @@ export async function applyGridSplit(
       if (copied) out.addPage(copied);
       continue;
     }
-    for (const cell of cellsForPage(pageNumber, splits, order)) {
-      const embedded = await embedCell(out, origPdf, cell);
+    // Batch every cell from this source page. It shares original fonts/images between the output
+    // pages instead of copying a high-resolution scan once per cell.
+    const embeddedCells = await embedCells(out, origPdf, cellsForPage(pageNumber, splits, order));
+    for (const embedded of embeddedCells) {
       if (embedded) drawCellOnA4(out, embedded, 0);
     }
   }
