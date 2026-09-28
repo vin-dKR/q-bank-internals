@@ -80,6 +80,15 @@ export const ANOMALY_KINDS = {
   latex_unclosed_delimiter: { group: 'latex', severity: 'high', label: 'Unclosed math delimiter' },
   latex_outside_delimiters: { group: 'latex', severity: 'medium', label: 'LaTeX outside \\( \\) (shown raw)' },
   matrix_missing_columns: { group: 'structure', severity: 'low', label: 'Matrix type without match columns' },
+  // A matrix table is only publishable as selectable choices when every Column-I row has an
+  // unambiguous, complete mapping. Keep ambiguity distinct from incompleteness so Verify can tell
+  // the operator whether to fill a relationship or rename a duplicate label.
+  matrix_match_key_incomplete: { group: 'structure', severity: 'high', label: 'Matrix matching is incomplete or invalid' },
+  matrix_match_key_ambiguous: { group: 'structure', severity: 'high', label: 'Matrix target labels are ambiguous' },
+  // A matrix with a printed or generated answer-choice panel must select exactly one of those
+  // choices. Direct-response legacy rows with no panel are exempt when their complete key can be
+  // deterministically normalised into generated choices.
+  matrix_choice_selection_invalid: { group: 'answer', severity: 'high', label: 'Matrix has no single selected answer choice' },
   group_missing_passage: { group: 'structure', severity: 'high', label: 'Comprehension member without passage' },
   duplicate_question: { group: 'duplicates', severity: 'medium', label: 'Duplicate question (same subject)' },
   duplicate_across_subjects: { group: 'duplicates', severity: 'medium', label: 'Duplicate across subjects' },

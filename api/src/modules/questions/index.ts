@@ -16,6 +16,7 @@ export type {
 } from './diagram-detector.js';
 export type {
   GroupReExtractInput,
+  GroupReExtractMember,
   GroupReExtraction,
   QuestionReExtraction,
   QuestionReExtractor,

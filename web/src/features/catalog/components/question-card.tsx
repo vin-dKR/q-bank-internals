@@ -2,7 +2,7 @@ import type { JSX } from 'react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { CatalogQuestion, MatchData, UpdateBankText } from '@ingest/contracts';
-import { aiFilledFields, matchKeyToAnswer } from '@ingest/contracts';
+import { aiFilledFields } from '@ingest/contracts';
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { refineLatex } from '../../../shared/api/refine.js';
 import {
@@ -154,9 +154,9 @@ export function QuestionCard({
   const saveEdit = (): void => {
     const patch: UpdateBankText = {};
     if (draft.questionText !== question.questionText) patch.questionText = draft.questionText;
-    // A matrix edits through the match table, not the flat options (which the read view hides for it),
-    // so only send options for a non-matrix question — leaving a matrix's printed options untouched.
-    if (!draft.match && JSON.stringify(draft.options) !== JSON.stringify(question.options)) {
+    // Matrix questions may include printed A/B/C/D answer choices alongside their table. Preserve
+    // those choices just like any other options instead of silently dropping their edits.
+    if (JSON.stringify(draft.options) !== JSON.stringify(question.options)) {
       patch.options = draft.options;
     }
     if (draft.answer !== (question.answer ?? '')) patch.answer = draft.answer;
@@ -170,15 +170,9 @@ export function QuestionCard({
   const setOption = (index: number, value: string): void => {
     setDraft((prev) => ({ ...prev, options: prev.options.map((o, j) => (j === index ? value : o)) }));
   };
-  /**
-   * A matrix edits through the structured table; the flat answer here is read-only (derived), so it
-   * ALWAYS mirrors the key — including when the key is emptied, which clears the answer too. (Verify
-   * keeps a stale answer on an empty key because there the answer is separately hand-editable and an
-   * empty AI re-read must not wipe it; the catalog has no such field, so mirroring unconditionally is
-   * what keeps the saved answer and the match table from contradicting each other.)
-   */
+  /** A matrix table is supporting structure; do not overwrite its selected printed answer option. */
   const setMatch = (next: MatchData): void => {
-    setDraft((prev) => ({ ...prev, match: next, answer: matchKeyToAnswer(next.key) }));
+    setDraft((prev) => ({ ...prev, match: next }));
   };
   const addOption = (): void => { setDraft((prev) => ({ ...prev, options: [...prev.options, ''] })); };
   const removeOption = (index: number): void => {
@@ -254,12 +248,12 @@ export function QuestionCard({
         {draft.match ? (
           <>
             {/* A matrix edits its columns/entries/matching through the shared table (images stay in
-                Verify — no source page to crop from here). The answer key mirrors the matching. */}
+                Verify — no source page to crop from here). The selected answer remains independent. */}
             <MatchTableEditor value={draft.match} onChange={setMatch} disabled={fixPending} allowImages={false} />
             <div className="flex flex-col gap-1.5">
               <span className={FIELD_LABEL}>Answer key</span>
               <div className="min-h-[38px] rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm text-ink-2">
-                {draft.answer.trim() ? draft.answer : <span className="text-ink-3">Set the matching above to build the key</span>}
+                {draft.answer.trim() ? draft.answer : <span className="text-ink-3">No selected answer option</span>}
               </div>
             </div>
           </>

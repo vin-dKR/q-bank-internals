@@ -1,7 +1,7 @@
 import type { ChapterKind } from '@ingest/contracts';
 import type { SplitPoint, SplitPointsByPage } from '../types/split-point.js';
 
-/** A single cut region of a page, identified so it can be tagged question vs answer. */
+/** A single cut region of a page, identified so it can be tagged as a question or supporting source. */
 export type SliceRef = {
   id: string; // `${pageNumber}:${index}`
   pageNumber: number;
@@ -48,9 +48,9 @@ export type SliceTags = Record<string, ChapterKind>;
 
 /**
  * A page → default kind map. In the separate-files flow the aggregated PDF interleaves each chapter's
- * question / answer / explanation source pages, so a slice's *default* kind follows the page it was
- * cut from (answer pages → answer, explanation pages → solution) instead of always `question`. Empty
- * (the single-PDF flow) leaves every default at `question`.
+ * question / answer / explanation / grouped-companion source pages, so a slice's *default* kind follows
+ * the page it was cut from instead of always `question`. Empty (the single-PDF flow) leaves every
+ * default at `question`.
  */
 export type PageKinds = Record<number, ChapterKind>;
 

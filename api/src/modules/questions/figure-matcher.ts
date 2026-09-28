@@ -125,16 +125,17 @@ function byReadingOrder(a: DiagramDetection, b: DiagramDetection): number {
 
 /**
  * Attach each detected figure to the extracted question it belongs to, returning one
- * {@link DetectedFigure} per successful match. Each question destination (stem or individual option)
- * is claimed at most once, while allowing a question to have both a stem figure and option figures.
+ * {@link DetectedFigure} per successful match. Each question destination (stem, option, or an
+ * explicitly-labelled inline answer/solution field) is claimed at most once, while allowing a
+ * question to have figures in several fields.
  *
  * Four strategies, tried in order per detection, because the extractor and the detector are separate
  * passes whose only shared anchor is the question itself:
  *   1. Strong text — a near-complete verbatim first-line snippet. This is direct evidence and beats
  *      position when a page layout is irregular.
  *   2. Printed number — exact `questionNumber === q_no` the model tagged onto the figure itself.
- *      This is constrained to a number already extracted from the current page, so it is a stronger
- *      owner signal than proximity on a dense two-column page.
+ *      Current-page rows win; callers can supply preceding-page continuation rows as a fallback for a
+ *      figure printed after a question crosses a page boundary.
  *   3. Geometric — the printed number of the question whose first line sits directly above the figure
  *      in the same column ({@link questionNumberAboveFigure}), resolved to an extracted question by
  *      `questionNumber`. This is the strongest signal: it derives the owner from raw page positions
@@ -146,6 +147,9 @@ function byReadingOrder(a: DiagramDetection, b: DiagramDetection): number {
  *      fallback for legacy questions extracted before numbers were persisted (`questionNumber` null),
  *      whose extraction order does not track the printed order either.
  * A detection that matches nothing (e.g. a figure whose question was never extracted) is dropped.
+ * On an Answer/Solution source — and on a question PDF that explicitly prints fields inline — callers
+ * may permit several figures for one question; their bboxes remain distinct claims, while normal
+ * question pages preserve their one-stem-destination behavior.
  *
  * Option figures resolve their option position from the detector's printed label
  * ({@link resolveOptionIndex}); when the label is missing or unreadable, the question's remaining
@@ -158,7 +162,17 @@ export function matchFiguresToQuestions(
   questionTops: QuestionTop[],
   questions: Question[],
   pageWidth: number,
+  options: {
+    /** Questions that began on the immediately preceding page and may continue onto this page. */
+    continuationQuestions?: readonly Question[];
+    /** Answer/solution pages can contain more than one figure for one question. */
+    allowMultipleQuestionFigures?: boolean;
+  } = {},
 ): DetectedFigure[] {
+  const continuationQuestions = options.continuationQuestions ?? [];
+  // Current-page questions always win when a paper restarts numbering or the detector reports an
+  // ambiguous label. Continuation rows are deliberately a fallback, not a second source of geometry.
+  const candidates = [...questions, ...continuationQuestions];
   const claimed = new Set<string>();
   const figures: DetectedFigure[] = [];
   const sortedTops = [...questionTops].sort((a, b) => a.yTop - b.yTop);
@@ -183,8 +197,18 @@ export function matchFiguresToQuestions(
     }
   }
 
-  const claim = (question: Question, target: 'question' | 'option', optionIndex: number, detection: DiagramDetection): void => {
-    const targetKey = `${question.id}:${target}:${String(optionIndex)}`;
+  const claim = (
+    question: Question,
+    target: 'question' | 'option' | 'answer' | 'solution',
+    optionIndex: number,
+    detection: DiagramDetection,
+  ): void => {
+    // A question paper normally has one image per destination, so preserve the existing rule.
+    // Answer and solution sheets can legitimately show several worked figures for the same number;
+    // their caller opts in and the full bbox keeps duplicate detector rows collapsed.
+    const targetKey = options.allowMultipleQuestionFigures
+      ? `${question.id}:${target}:${String(optionIndex)}:${detection.bbox.join(':')}`
+      : `${question.id}:${target}:${String(optionIndex)}`;
     if (claimed.has(targetKey)) return;
     claimed.add(targetKey);
     figures.push({
@@ -201,7 +225,7 @@ export function matchFiguresToQuestions(
     let textMatch: Question | null = null;
     let textScore = 0;
     if (detection.questionText.trim().length > 0) {
-      for (const question of questions) {
+      for (const question of candidates) {
         const score = overlap(detection.questionText, question.stem);
         if (score > textScore) {
           textScore = score;
@@ -239,8 +263,14 @@ export function matchFiguresToQuestions(
     // A long verbatim OCR snippet is the most direct proof of ownership. For less certain snippets,
     // retain the page-layout anchor: it is what separates two questions in adjacent columns.
     let match = textScore >= STRONG_TEXT_OVERLAP ? textMatch : null;
-    match ??= questions.find((question) => question.questionNumber === detection.qNo) ?? null;
+    // Prefer a number on this page over a continuation row. A question number is a reliable
+    // cross-page anchor, but paper sections sometimes restart numbering on the new page.
+    match ??= questions.find((question) => question.questionNumber === detection.qNo) ??
+      continuationQuestions.find((question) => question.questionNumber === detection.qNo) ??
+      null;
 
+    // Geometric anchors are only meaningful for questions physically printed on this page. Never
+    // resolve one against a previous-page row with a duplicated printed number.
     match ??= ownerQNo === null
       ? null
       : (questions.find((question) => question.questionNumber === ownerQNo) ?? null);
@@ -251,8 +281,8 @@ export function matchFiguresToQuestions(
 
     if (!match) continue;
 
-    if (detection.target === 'question') {
-      claim(match, 'question', 0, detection);
+    if (detection.target === 'question' || detection.target === 'answer' || detection.target === 'solution') {
+      claim(match, detection.target, 0, detection);
       continue;
     }
     if (match.options.length === 0) continue; // an option figure needs an option to land on

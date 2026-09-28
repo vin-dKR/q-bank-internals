@@ -35,9 +35,10 @@ export type MaterializedArtifact = {
 };
 
 /**
- * The parts bound to a leaf. Only `question` is required to extract; `answer` and `solution` are
- * bound context the extractor reads alongside it. The operator asserts this association explicitly
- * (drops each part onto the same leaf), replacing the old match-by-section-and-number heuristic.
+ * The parts bound to a leaf. Only `question` is required to extract; the selected supporting source is
+ * either separate `answer` / `solution` PDFs or one grouped `companion` PDF. The operator asserts this
+ * association explicitly (drops each part onto the same leaf), replacing the old
+ * match-by-section-and-number heuristic.
  */
 export type LeafBindings = Partial<Record<ChapterKind, MaterializedArtifact>>;
 

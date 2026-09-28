@@ -134,6 +134,7 @@ function parseReply(
   content: string,
   width: number,
   height: number,
+  inlineAnswerFields: boolean,
 ): { detections: DiagramDetection[]; questionTops: QuestionTop[] } {
   const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
   const start = content.indexOf('{');
@@ -149,12 +150,22 @@ function parseReply(
   }
 
   return {
-    detections: parseDetections((parsed as { detections?: unknown }).detections, width, height),
+    detections: parseDetections(
+      (parsed as { detections?: unknown }).detections,
+      width,
+      height,
+      inlineAnswerFields,
+    ),
     questionTops: parseQuestionTops((parsed as { questions?: unknown }).questions, width, height),
   };
 }
 
-function parseDetections(raw: unknown, width: number, height: number): DiagramDetection[] {
+function parseDetections(
+  raw: unknown,
+  width: number,
+  height: number,
+  inlineAnswerFields: boolean,
+): DiagramDetection[] {
   if (!Array.isArray(raw)) return [];
   const out: DiagramDetection[] = [];
   for (const item of raw as RawDetection[]) {
@@ -166,10 +177,15 @@ function parseDetections(raw: unknown, width: number, height: number): DiagramDe
       const optionLabel = typeof item.option_label === 'string' && item.option_label.trim()
         ? item.option_label.trim().replace(/^[\s[(]+/, '').replace(/[\s)\].]+$/, '').toUpperCase()
         : null;
-      // A labelled entry is an option figure even when the model forgot `target`; an explicit
-      // `target: "question"` still wins so a stray label can never hijack a stem figure.
-      const target =
-        item.target === 'option' || (optionLabel !== null && item.target !== 'question')
+      const rawTarget = typeof item.target === 'string' ? item.target.trim().toLowerCase() : '';
+      // An answer/solution destination is deliberately accepted only for a question PDF that the
+      // server has already identified as inline. A model reply from an ordinary source can never
+      // silently redirect a crop out of the stem/option fields.
+      const target = inlineAnswerFields && (rawTarget === 'answer' || rawTarget === 'solution')
+        ? rawTarget
+        // A labelled entry is an option figure even when the model forgot `target`; an explicit
+        // `target: "question"` still wins so a stray label can never hijack a stem figure.
+        : rawTarget === 'option' || (optionLabel !== null && rawTarget !== 'question')
           ? 'option'
           : 'question';
       out.push({ qNo, questionText, target, optionLabel, bbox });
@@ -229,7 +245,12 @@ export class OpenAiDiagramDetector implements DiagramDetector {
     // service, matcher, and browser crop are all unaffected by this being an internal optimisation.
     const preview = await toPreview(page.png, page.width, page.height);
     const imageUrl = `data:image/png;base64,${preview.png.toString('base64')}`;
-    const prompt = detectorPrompt(preview.width, preview.height, await this.loadPromptOverrides());
+    const prompt = detectorPrompt(
+      preview.width,
+      preview.height,
+      await this.loadPromptOverrides(),
+      { inlineAnswerFields: page.inlineAnswerFields === true },
+    );
 
     // Accumulate token usage across every attempt so a retry is billed honestly, not just the last call.
     let promptTokens = 0;
@@ -281,7 +302,7 @@ export class OpenAiDiagramDetector implements DiagramDetector {
     const usage: AiTokenUsage = { model: this.model, promptTokens, completionTokens, totalTokens, callCount };
     // parseReply throws UnparseableReplyError on a non-JSON reply (another truncation shape); let it
     // propagate so the page is reported failed rather than silently returning zero figures.
-    const parsed = parseReply(content, preview.width, preview.height);
+    const parsed = parseReply(content, preview.width, preview.height, page.inlineAnswerFields === true);
     const detections = parsed.detections.map((detection) => ({
       ...detection,
       bbox: upscaleBox(detection.bbox, preview.width, preview.height, page.width, page.height),

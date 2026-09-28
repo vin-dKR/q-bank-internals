@@ -24,9 +24,9 @@ export type ChapterMetadataDraft = {
    */
   paper: PaperMetadata;
   /**
-   * How this paper's answers are laid out: `separate` (answer key grouped elsewhere / a sibling PDF —
-   * the default) or `inline` (each question followed by its own answer in one combined PDF). Drives
-   * the inline extraction prompt and hides the answer/solution drop-slots + Verify panes.
+   * How this paper's answers are laid out: `separate` answer/solution siblings (the default), one
+   * grouped Answer + Solution `combined` companion PDF, or `inline` beside each question. Drives the
+   * active structure-tree slots and the extraction source contract.
    */
   answerLayout: AnswerLayout;
 };
@@ -64,7 +64,20 @@ export type ChapterGroup = {
 };
 
 export function emptyMetadata(): ChapterMetadataDraft {
-  return { source: '', exam: '', subject: '', module: '', chapter: '', sectionName: '', questionType: '', pyq: false, pyqExam: '', pyqYear: '', paper: { ...EMPTY_PAPER_METADATA }, answerLayout: 'separate' };
+  return {
+    source: '',
+    exam: '',
+    subject: '',
+    module: '',
+    chapter: '',
+    sectionName: '',
+    questionType: '',
+    pyq: false,
+    pyqExam: '',
+    pyqYear: '',
+    paper: { ...EMPTY_PAPER_METADATA },
+    answerLayout: 'separate',
+  };
 }
 
 /** The chapter (if any) that owns a given page, resolved for the on-page slice overlay. */
@@ -76,9 +89,7 @@ export type PageChapterInfo = {
 
 /** The chapter owning `pageNumber`, or null when the page is in no chapter range. */
 export function chapterForPage(groups: ChapterGroup[], pageNumber: number): PageChapterInfo {
-  const index = groups.findIndex(
-    (group) => pageNumber >= group.from && pageNumber <= group.to,
-  );
+  const index = groups.findIndex((group) => pageNumber >= group.from && pageNumber <= group.to);
   const group = groups[index];
   if (!group) return null;
   return { chapterId: group.id, chapterIndex: index, tags: group.tags };

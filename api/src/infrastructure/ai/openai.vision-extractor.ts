@@ -3,6 +3,7 @@ import type { Document, MatchData } from '@ingest/contracts';
 import { KNOWN_LEVELS } from '@ingest/contracts';
 import type {
   AnswerExtraction,
+  AnswerExtractionScope,
   AnswerSheet,
   ExtractedQuestion,
   ExtractionProgress,
@@ -11,10 +12,12 @@ import type {
   QuestionExtraction,
   VisionExtractor,
 } from '../../modules/extraction/index.js';
+import { topicBindingForPage } from '../../modules/extraction/index.js';
+import { mergeAnswerEntries, type AnswerSource } from '../../modules/extraction/vision-extractor.js';
 import type { AiTokenUsage } from '../../modules/usage/index.js';
 import { errors } from '../../shared/errors/error-catalog.js';
 import { logger } from '../../shared/logger/logger.js';
-import { answerPrompt, questionPrompt, solutionPrompt } from './prompts/extraction-prompts.js';
+import { answerPrompt, companionPrompt, questionPrompt, solutionPrompt } from './prompts/extraction-prompts.js';
 import { sanitizeExtractedLatex } from './latex-sanitizer.js';
 import type { PromptOverrides } from '../../modules/prompts/index.js';
 
@@ -48,7 +51,12 @@ type RawQuestion = {
 };
 
 function asString(value: unknown): string {
-  return typeof value === 'string' ? value : '';
+  if (typeof value === 'string') return value;
+  // Vision models naturally emit bare JSON numbers for numerical answers. Coercing finite scalar
+  // values here keeps a correct `42` from becoming an empty answer before the merge stage.
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value === 'boolean') return String(value);
+  return '';
 }
 
 /** A model string with its mhchem `\ce{…}` JSON-escape corruption repaired (see {@link sanitizeExtractedLatex}). */
@@ -103,12 +111,16 @@ function toMatchData(rawColumns: unknown, rawMatch: unknown): MatchData | null {
 }
 
 function toQuestionNumber(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string') {
-    const parsed = Number.parseInt(value, 10);
-    return Number.isNaN(parsed) ? null : parsed;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const number = Math.trunc(value);
+    return number > 0 ? number : null;
   }
-  return null;
+  // Answer papers and question pages commonly write `Q1`, `Question 1`, or `1.`. Treat the
+  // printed ordinal as the identity, rather than requiring the model to strip that decoration.
+  const match = /\d+/.exec(asString(value));
+  if (!match) return null;
+  const number = Number(match[0]);
+  return Number.isSafeInteger(number) && number > 0 ? number : null;
 }
 
 function parseQuestions(content: string): RawQuestion[] {
@@ -127,20 +139,105 @@ function asStringOrNull(value: unknown): string | null {
   return text.length > 0 ? text : null;
 }
 
-/** Parse an answer-sheet response: `answers` is a flat number→letter/value map (no explanation). */
+/**
+ * Preserve either batch prompt option shape. The primary extraction prompt uses strings, while an
+ * edited/custom prompt may return the object shape used by interactive re-extraction. Converting an
+ * object to the one canonical `(label) body` representation keeps the worker parser and answer
+ * matching identical in both paths instead of silently erasing every option.
+ */
+function normaliseOption(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const text = cleanString(value).trim();
+    return text || null;
+  }
+  if (!value || typeof value !== 'object') return null;
+  const record = value as { label?: unknown; body?: unknown };
+  const label = cleanString(record.label).trim();
+  const body = cleanString(record.body).trim();
+  if (!label) return body || null;
+  return body ? `(${label}) ${body}` : `(${label})`;
+}
+
+/**
+ * Custom extraction prompts sometimes emit the interactive option-object shape and mark the right
+ * choice with `is_correct`, but omit the separate `answer` scalar. Preserve that explicit signal
+ * before the worker flattens the option objects; otherwise a perfectly readable matrix/MCQ arrives
+ * in Verify with its choices but no answer.
+ */
+function answerFromMarkedOptions(raw: unknown, questionType: unknown): string | null {
+  if (!Array.isArray(raw)) return null;
+  const labels = raw.flatMap((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+    const record = value as { label?: unknown; is_correct?: unknown };
+    const label = cleanString(record.label).trim();
+    return record.is_correct === true && label ? [label] : [];
+  });
+  if (labels.length === 0) return null;
+  if (labels.length === 1) return labels[0] ?? null;
+  if (asString(questionType).trim().toLowerCase() !== 'multi_correct') return null;
+  return labels.every((label) => /^[A-Za-z0-9]$/.test(label))
+    ? labels.join('')
+    : labels.join(', ');
+}
+
+/** Normalise a printed answer-map key (`Q1`, `Question 1`, `1.`) to the question ledger key. */
+function normaliseAnswerMapKey(value: string): string | null {
+  const match = /\d+/.exec(value);
+  if (!match) return null;
+  const number = Number(match[0]);
+  return Number.isSafeInteger(number) && number > 0 ? String(number) : null;
+}
+
+function toAnswerEntry(value: unknown, answerSource: AnswerSource): AnswerSheet['entries'][string] {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const record = value as { answer?: unknown; explanation?: unknown };
+    return {
+      answer: cleanStringOrNull(record.answer),
+      explanation: cleanStringOrNull(record.explanation),
+      answerSource,
+    };
+  }
+  return { answer: cleanStringOrNull(value), explanation: null, answerSource };
+}
+
+/** Fold a response map into one section, preserving source priority and page-break continuations. */
+function appendEntries(
+  entries: AnswerSheet['entries'],
+  values: unknown,
+  answerSource: AnswerSource,
+): void {
+  if (!values || typeof values !== 'object' || Array.isArray(values)) return;
+  for (const [key, value] of Object.entries(values as Record<string, unknown>)) {
+    const questionNumber = normaliseAnswerMapKey(key);
+    if (!questionNumber) continue;
+    entries[questionNumber] = mergeAnswerEntries(
+      entries[questionNumber],
+      toAnswerEntry(value, answerSource),
+    );
+  }
+}
+
+/** True when one map is a worked-solution page rather than a terse answer-key page. */
+function containsWorking(values: unknown): boolean {
+  if (!values || typeof values !== 'object' || Array.isArray(values)) return false;
+  return Object.values(values as Record<string, unknown>).some(
+    (value) => toAnswerEntry(value, 'solution').explanation !== null,
+  );
+}
+
+/** Parse an answer-sheet response, accepting compact values and a combined `{answer, explanation}` entry. */
 function parseAnswerSheets(content: string, fallbackSection: string | null): AnswerSheet[] {
   try {
     const parsed: unknown = JSON.parse(content);
     const sections = (parsed as { sections?: unknown }).sections;
     if (!Array.isArray(sections)) return [];
     return sections.map((section) => {
-      const record = section as { section_name?: unknown; answers?: unknown };
+      const record = section as { section_name?: unknown; answers?: unknown; solutions?: unknown };
       const entries: AnswerSheet['entries'] = {};
-      if (record.answers && typeof record.answers === 'object') {
-        for (const [key, value] of Object.entries(record.answers as Record<string, unknown>)) {
-          entries[key] = { answer: cleanStringOrNull(value), explanation: null };
-        }
-      }
+      // The source document itself is an answer key, so it stays canonical even if an operator
+      // override calls the map `solutions` by mistake.
+      appendEntries(entries, record.answers, 'answer_key');
+      appendEntries(entries, record.solutions, 'answer_key');
       return { sectionName: asString(record.section_name) || fallbackSection, entries };
     });
   } catch {
@@ -148,24 +245,42 @@ function parseAnswerSheets(content: string, fallbackSection: string | null): Ans
   }
 }
 
-/** Parse a solution response: `solutions` is a number→{ answer, explanation } map. */
+/** Parse a solution response, accepting either map name without dropping one when both are present. */
 function parseSolutionSheets(content: string, fallbackSection: string | null): AnswerSheet[] {
   try {
     const parsed: unknown = JSON.parse(content);
     const sections = (parsed as { sections?: unknown }).sections;
     if (!Array.isArray(sections)) return [];
     return sections.map((section) => {
-      const record = section as { section_name?: unknown; solutions?: unknown };
+      const record = section as { section_name?: unknown; solutions?: unknown; answers?: unknown };
       const entries: AnswerSheet['entries'] = {};
-      if (record.solutions && typeof record.solutions === 'object') {
-        for (const [key, value] of Object.entries(record.solutions as Record<string, unknown>)) {
-          const entry = (value ?? {}) as { answer?: unknown; explanation?: unknown };
-          entries[key] = {
-            answer: cleanStringOrNull(entry.answer),
-            explanation: cleanStringOrNull(entry.explanation),
-          };
-        }
-      }
+      appendEntries(entries, record.solutions, 'solution');
+      appendEntries(entries, record.answers, 'solution');
+      return { sectionName: asString(record.section_name) || fallbackSection, entries };
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Parse a grouped companion. The companion prompt uses a `solutions` map for both terse answer-key
+ * pages and full worked-solution pages, so classify the whole rendered page by whether any entry
+ * contains working. This means an answer-key page wins regardless of whether it appears before or
+ * after a solution page, while a solution-only companion still supplies a usable final answer.
+ */
+function parseCompanionSheets(content: string, fallbackSection: string | null): AnswerSheet[] {
+  try {
+    const parsed: unknown = JSON.parse(content);
+    const sections = (parsed as { sections?: unknown }).sections;
+    if (!Array.isArray(sections)) return [];
+    return sections.map((section) => {
+      const record = section as { section_name?: unknown; solutions?: unknown; answers?: unknown };
+      const entries: AnswerSheet['entries'] = {};
+      // Be tolerant of an override that returns the intuitive `answers` map: it is explicitly an
+      // answer-key source. The documented companion `solutions` map is classified by page content.
+      appendEntries(entries, record.answers, 'answer_key');
+      appendEntries(entries, record.solutions, containsWorking(record.solutions) ? 'solution' : 'answer_key');
       return { sectionName: asString(record.section_name) || fallbackSection, entries };
     });
   } catch {
@@ -212,17 +327,28 @@ export class OpenAiVisionExtractor implements VisionExtractor {
       // Per page: the topic config can bind different pages to different fixed question types.
       const prompt = questionPrompt(input.document, page.pageNumber, overrides, masters);
       const raws = await this.readPageQuestions(prompt, page, input.document, usage, input.signal);
+      const boundType = topicBindingForPage(input.document.topics, page.pageNumber)?.questionType
+        ?? input.document.questionType;
       for (const raw of raws) {
+        const questionType = asStringOrNull(raw.question_type);
+        // A model occasionally preserves the documented `is_correct` flags but omits question_type.
+        // On an operator-locked multi-correct page, that used to discard every marked answer because
+        // `answerFromMarkedOptions` did not know that several labels were valid. The fixed cut-time
+        // type is safe as a fallback; a comprehension container deliberately remains unbound because
+        // each child has its own type.
+        const answerType = questionType ?? (boundType === 'comprehension' ? null : boundType);
         results.push({
           questionNumber: toQuestionNumber(raw.question_number),
           questionText: cleanString(raw.question_text),
-          options: Array.isArray(raw.options) ? raw.options.map(cleanString).filter(Boolean) : [],
-          answer: cleanStringOrNull(raw.answer),
+          options: Array.isArray(raw.options)
+            ? raw.options.map(normaliseOption).filter((option): option is string => option !== null)
+            : [],
+          answer: cleanStringOrNull(raw.answer) ?? answerFromMarkedOptions(raw.options, answerType),
           explanation: cleanStringOrNull(raw.explanation),
           sectionName: input.document.sectionName,
           // The model now classifies each question's own type (and difficulty). Null when it returned
           // nothing usable — toNewQuestion falls back to the operator's binding for the type.
-          questionType: asStringOrNull(raw.question_type),
+          questionType,
           level: normalizeDifficulty(raw.difficulty),
           sourcePage: page.pageNumber,
           pyqExam: asStringOrNull(raw.pyq_exam),
@@ -249,17 +375,19 @@ export class OpenAiVisionExtractor implements VisionExtractor {
   async extractAnswers(input: {
     pages: PageImage[];
     document: Document;
+    scope?: AnswerExtractionScope;
     signal?: AbortSignal;
   }): Promise<AnswerExtraction> {
     const sheets: AnswerExtraction['sheets'] = [];
     const usage = this.emptyUsage();
     const overrides = await this.loadPromptOverrides();
     for (const page of input.pages) {
-      // Per page: the topic config can bind different pages to different fixed question types, so the
-      // answer-value format is resolved per page (mirrors extractQuestions).
-      const prompt = answerPrompt(input.document, page.pageNumber, overrides);
+      // A sibling answer PDF's page numbers and document-level fallback type are unrelated to the
+      // question PDF once a chapter contains several leaves. A bound scope therefore wins over the
+      // sibling document when selecting the answer grammar and fallback section name.
+      const prompt = answerPrompt(input.document, page.pageNumber, overrides, input.scope);
       const { content } = await this.call(prompt, page.png, usage, input.signal);
-      sheets.push(...parseAnswerSheets(content, input.document.sectionName));
+      sheets.push(...parseAnswerSheets(content, input.scope?.sectionName ?? input.document.sectionName));
     }
     return { sheets, usage };
   }
@@ -267,15 +395,33 @@ export class OpenAiVisionExtractor implements VisionExtractor {
   async extractSolutions(input: {
     pages: PageImage[];
     document: Document;
+    scope?: AnswerExtractionScope;
     signal?: AbortSignal;
   }): Promise<AnswerExtraction> {
     const sheets: AnswerExtraction['sheets'] = [];
     const usage = this.emptyUsage();
     const overrides = await this.loadPromptOverrides();
     for (const page of input.pages) {
-      const prompt = solutionPrompt(input.document, page.pageNumber, overrides);
+      const prompt = solutionPrompt(input.document, page.pageNumber, overrides, input.scope);
       const { content } = await this.call(prompt, page.png, usage, input.signal);
-      sheets.push(...parseSolutionSheets(content, input.document.sectionName));
+      sheets.push(...parseSolutionSheets(content, input.scope?.sectionName ?? input.document.sectionName));
+    }
+    return { sheets, usage };
+  }
+
+  async extractCompanion(input: {
+    pages: PageImage[];
+    document: Document;
+    scope?: AnswerExtractionScope;
+    signal?: AbortSignal;
+  }): Promise<AnswerExtraction> {
+    const sheets: AnswerExtraction['sheets'] = [];
+    const usage = this.emptyUsage();
+    const overrides = await this.loadPromptOverrides();
+    for (const page of input.pages) {
+      const prompt = companionPrompt(input.document, page.pageNumber, overrides, input.scope);
+      const { content } = await this.call(prompt, page.png, usage, input.signal);
+      sheets.push(...parseCompanionSheets(content, input.scope?.sectionName ?? input.document.sectionName));
     }
     return { sheets, usage };
   }

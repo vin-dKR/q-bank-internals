@@ -21,6 +21,7 @@ type TopicTypeRow = {
   pageRange: PageRangeRow;
   answerPageRange?: PageRangeRow | null;
   solutionPageRange?: PageRangeRow | null;
+  companionPageRange?: PageRangeRow | null;
   pyq?: boolean | null;
 };
 type TopicRow = {
@@ -73,6 +74,7 @@ function toContractTopics(rows: TopicRow[]): ChapterTopic[] {
       pageRange: block.pageRange,
       ...(block.answerPageRange ? { answerPageRange: block.answerPageRange } : {}),
       ...(block.solutionPageRange ? { solutionPageRange: block.solutionPageRange } : {}),
+      ...(block.companionPageRange ? { companionPageRange: block.companionPageRange } : {}),
       ...(block.pyq ? { pyq: block.pyq } : {}),
     })),
     ...(topic.sectionName ? { sectionName: topic.sectionName } : {}),
@@ -90,6 +92,7 @@ function toPrismaTopics(topics: ChapterTopic[]): TopicRow[] {
       pageRange: block.pageRange,
       answerPageRange: block.answerPageRange ?? null,
       solutionPageRange: block.solutionPageRange ?? null,
+      companionPageRange: block.companionPageRange ?? null,
       pyq: block.pyq ?? null,
     })),
     sectionName: topic.sectionName ?? null,
@@ -269,7 +272,10 @@ export class PrismaDocumentRepository implements DocumentRepository {
   }
 
   async deleteBySession(sessionId: string): Promise<void> {
-    await this.prisma.document.updateMany({ where: { sessionId }, data: { deletedAt: new Date() } });
+    await this.prisma.document.updateMany({
+      where: { sessionId },
+      data: { deletedAt: new Date() },
+    });
   }
 
   async restore(id: string): Promise<Document> {

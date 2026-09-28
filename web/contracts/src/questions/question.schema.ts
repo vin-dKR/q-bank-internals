@@ -15,6 +15,12 @@ export const QuestionOptionSchema = z.object({
   label: z.string().min(1), // "A", "B", ...
   body: z.string(),
   isCorrect: z.boolean(),
+  /**
+   * True only for a deterministic matrix-answer choice generated from a complete matching key.
+   * Printed choices leave this absent; a teacher edit/add may set it to false. Both are protected
+   * from generated-set regeneration after a table edit.
+   */
+  generated: z.boolean().optional(),
 });
 export type QuestionOption = z.infer<typeof QuestionOptionSchema>;
 
@@ -40,8 +46,9 @@ export type MatchColumn = z.infer<typeof MatchColumnSchema>;
  * with its own labelled entries. `key` is the correct matching FROM the first column's labels to the
  * labels they match in the later columns, e.g. `{ A: ['p','t'], B: ['q','u'] }`; it may be empty when
  * the question sheet does not print the answer (filled from the answer key, or by the operator in
- * verify). The flat `answer` string mirrors this map ("A-p,t; B-q,u") so a plain renderer still shows
- * the matching. Null on every non-match question.
+ * verify). When a matrix prints A–D answer choices, the canonical flat `answer` is the selected choice
+ * label (for example `"C"`); only a direct-response matrix with no choices mirrors this map as
+ * `"A-p,t; B-q,u"`. Null on every non-match question.
  */
 export const MatchDataSchema = z.object({
   columns: z.array(MatchColumnSchema).min(2),
@@ -61,17 +68,78 @@ export function matchKeyToAnswer(key: Record<string, readonly string[]>): string
  * Best-effort parse of a flat match-answer string ("A-p,t; B-q,u", "A→pt", "A - p, t") back into the
  * structured key. Segments split on ';' or newlines; each is "<label><sep><targets>" where the
  * targets split on commas/whitespace, or — when run together as single characters ("pt") — per
- * character. Unparseable input yields `{}` so the operator can fill the matching in verify.
+ * character. Pass the optional printed target labels when reading a particular match table: an exact
+ * multi-character label (for example `T31`) then remains one target, while legacy compact `pt` still
+ * resolves to `p`, `t` when those are the known labels. Unparseable input yields `{}` so the operator
+ * can fill the matching in verify.
  */
-export function parseMatchKey(answer: string): Record<string, string[]> {
+function parseCompactMatchTargets(rest: string, knownTargetLabels: readonly string[] | undefined): string[] {
+  if (!knownTargetLabels || knownTargetLabels.length === 0) {
+    // Preserve obvious scalar identifiers even without table context. Otherwise `II` and `T31`
+    // would be corrupted into individual characters, while the established compact `A→pt` dialect
+    // remains character-wise. When table labels are available below, they always decide instead.
+    if (/\d/.test(rest) || /^(?=.{2,}$)[ivxlcdm]+$/i.test(rest)) return [rest];
+    return Array.from(rest);
+  }
+
+  const labels = [...new Map(
+    knownTargetLabels
+      .map((label) => label.trim())
+      .filter(Boolean)
+      .map((label) => [label.toLocaleLowerCase(), label]),
+  ).entries()].map(([key, label]) => ({ key, label }));
+  const compact = rest.toLocaleLowerCase();
+  const exact = labels.find((candidate) => candidate.key === compact);
+  if (exact) return [exact.label];
+
+  // Keep at most two parses: one is a safe unique interpretation, two means the compact notation is
+  // ambiguous and falls back to the legacy character split rather than silently choosing a mapping.
+  const memo = new Map<number, string[][]>();
+  const parseFrom = (offset: number): string[][] => {
+    if (offset === compact.length) return [[]];
+    const cached = memo.get(offset);
+    if (cached) return cached;
+    const parsed: string[][] = [];
+    for (const candidate of labels) {
+      if (!compact.startsWith(candidate.key, offset)) continue;
+      for (const tail of parseFrom(offset + candidate.key.length)) {
+        parsed.push([candidate.label, ...tail]);
+        if (parsed.length >= 2) {
+          memo.set(offset, parsed);
+          return parsed;
+        }
+      }
+    }
+    memo.set(offset, parsed);
+    return parsed;
+  };
+  const parses = parseFrom(0);
+  return parses.length === 1 ? (parses[0] ?? []) : Array.from(rest);
+}
+
+/**
+ * Semicolons/newlines always separate source rows. A comma does too only when the following text
+ * visibly starts another `source → target` pair; otherwise it remains the one-to-many delimiter in
+ * `A-p,t`. This admits ordinary printed options such as `A-i, B-ii, C-iii` without breaking a
+ * source row that genuinely maps to several targets.
+ */
+function splitMatchAnswerSegments(answer: string): string[] {
+  return answer
+    .split(/[;\n]+/)
+    .flatMap((segment) => segment.split(/,\s*(?=[A-Za-z0-9]+\s*[-–—>:→=]+)/));
+}
+
+export function parseMatchKey(answer: string, knownTargetLabels?: readonly string[]): Record<string, string[]> {
   const key: Record<string, string[]> = {};
-  for (const segment of answer.split(/[;\n]+/)) {
+  for (const segment of splitMatchAnswerSegments(answer)) {
     const match = /^\s*([A-Za-z0-9]+)\s*(?:[-–—>:→=]+|\s)\s*(.+)$/.exec(segment.trim());
     if (!match) continue;
     const label = (match[1] ?? '').trim();
     const rest = (match[2] ?? '').trim();
     if (!label || !rest) continue;
-    const targets = /[,\s]/.test(rest) ? rest.split(/[,\s]+/).filter(Boolean) : [...rest];
+    const targets = /[,\s]/.test(rest)
+      ? rest.split(/[,\s]+/).filter(Boolean)
+      : parseCompactMatchTargets(rest, knownTargetLabels);
     if (targets.length > 0) key[label] = targets;
   }
   return key;
@@ -81,7 +149,9 @@ export function parseMatchKey(answer: string): Record<string, string[]> {
  * One persisted crop rectangle, in the source page image's NATURAL pixels (the same numbers the
  * verify canvas records). Stored on the question so a saved crop re-materialises as an adjustable box
  * on any device/reload — not just a flat thumbnail. `url` ties it to the attached image; `type` +
- * `optionIndex` say which destination it filled. The page is the question's `sourceRegion.page`.
+ * `optionIndex` say which destination it filled. Main-question crops normally use the question's
+ * `sourceRegion.page`; `sourcePage` is also persisted when a figure continues onto a later page or
+ * when it came from a sibling answer/solution PDF.
  */
 export const ImageCropSchema = z.object({
   url: z.string(),
@@ -116,7 +186,8 @@ export const QuestionSchema = z.object({
   explanation: z.string().nullable(),
   images: z.array(QuestionImageSchema),
   // Structured match-the-column data (columns + correct matching) when this is a MATRIX MATCH
-  // question; null for every other type. The flat `answer` above mirrors `match.key` as text.
+  // question; null for every other type. For a choice-based matrix the flat `answer` is the selected
+  // A–D option; a direct-response matrix may mirror `match.key` as text.
   match: MatchDataSchema.nullable(),
   // Comprehension grouping (BLA-125, v2). A comprehension prints one shared passage followed by several
   // sub-questions; each sub-question is its OWN row carrying its OWN real questionType, and the shared
@@ -309,6 +380,12 @@ export type RefinedLatex = z.infer<typeof RefinedLatexSchema>;
 export const ReExtractSourceSchema = z.object({
   documentId: z.string().min(1),
   page: z.number().int().positive(),
+  /**
+   * A grouped Answer + Solution companion has one source document but two field destinations. The
+   * server still validates its kind from `documentId`; this only tells it which field the user asked
+   * to re-read so the compact prompt can focus on the correct material.
+   */
+  target: z.enum(['answer', 'solution']).optional(),
 });
 export type ReExtractSource = z.infer<typeof ReExtractSourceSchema>;
 
@@ -341,19 +418,26 @@ export const ReExtractedQuestionSchema = z.object({
 });
 export type ReExtractedQuestion = z.infer<typeof ReExtractedQuestionSchema>;
 
+/** What a comprehension re-read is allowed to replace in Verify. */
+export const ReExtractGroupModeSchema = z.enum(['passage_only', 'passage_and_questions']);
+export type ReExtractGroupMode = z.infer<typeof ReExtractGroupModeSchema>;
+
 /**
- * Ask the AI to re-read a whole COMPREHENSION GROUP off its source page (BLA-125): the shared passage
- * plus every sub-question at once. Addressed by the group's stable `passageId` within its document; the
- * service resolves the group's Passage record + member rows (and their source pages) from it. `source`
- * redirects the page read exactly as {@link ReExtractQuestionSchema} does (e.g. re-read
- * answers/explanations from the sibling solution PDF). `questionType` is carried for symmetry. This is
- * the group companion to the single-question re-read.
+ * Ask the AI to re-read a whole COMPREHENSION GROUP off its source page(s) (BLA-125). A passage-only
+ * pass is deliberately non-destructive for the member questions; a full pass returns the passage plus
+ * every sub-question. Addressed by the group's stable `passageId` within its document; the service
+ * resolves the group's Passage record + member rows (and their source pages) from it. `source`
+ * redirects the read exactly as {@link ReExtractQuestionSchema} does (e.g. re-read
+ * answers/explanations from the sibling solution PDF). `questionType` is retained as a legacy fallback
+ * only; the server uses each member row's own persisted type for structural extraction.
  */
 export const ReExtractGroupSchema = z.object({
   documentId: z.string().min(1),
   passageId: z.string().min(1),
   source: ReExtractSourceSchema.optional(),
   questionType: z.string().min(1).nullable().optional(),
+  // Defaults to the previous whole-group behaviour for API callers that have not sent a mode yet.
+  mode: ReExtractGroupModeSchema.default('passage_and_questions'),
 });
 export type ReExtractGroup = z.infer<typeof ReExtractGroupSchema>;
 
@@ -368,13 +452,16 @@ export const ReExtractedSubQuestionSchema = ReExtractedQuestionSchema.extend({
 export type ReExtractedSubQuestion = z.infer<typeof ReExtractedSubQuestionSchema>;
 
 /**
- * The result of a whole-group re-read: the freshly-read shared `passage` (applied ONCE to the group's
- * {@link PassageSchema} record by the client) and the per-sub-question fields, each carrying the
+ * The result of a comprehension re-read: the freshly-read shared `passage` (applied ONCE to the group's
+ * {@link PassageSchema} record by the client) and, for a full re-read, the per-sub-question fields. A
+ * passage-only response always has an empty `subQuestions` array. Each returned child carries the
  * `questionId` of the existing row it maps to. Sub-questions the model did not return keep their
  * current draft; extras it invented (no matching row) are dropped server-side, so the array only ever
  * addresses real rows.
  */
 export const ReExtractedGroupSchema = z.object({
+  // Default accepts a response from an older API during a rolling deploy.
+  mode: ReExtractGroupModeSchema.default('passage_and_questions'),
   passage: z.string(),
   subQuestions: z.array(ReExtractedSubQuestionSchema),
 });
@@ -404,10 +491,19 @@ export const PublishSessionResultSchema = z.object({
 });
 export type PublishSessionResult = z.infer<typeof PublishSessionResultSchema>;
 
+/** A sibling PDF source for figure detection while the request stays addressed to its question document. */
+export const DetectFiguresSourceSchema = z.object({
+  documentId: z.string().min(1),
+  target: z.enum(['answer', 'solution']),
+});
+export type DetectFiguresSource = z.infer<typeof DetectFiguresSourceSchema>;
+
 /** Ask the AI to locate the figures on one rendered page of a document (the Verify auto-crop). */
 export const DetectFiguresRequestSchema = z.object({
   documentId: z.string().min(1),
   page: z.number().int().positive(),
+  /** The matching sibling Answer/Solution PDF to scan while `documentId` remains the question owner. */
+  source: DetectFiguresSourceSchema.optional(),
 });
 export type DetectFiguresRequest = z.infer<typeof DetectFiguresRequestSchema>;
 
@@ -416,7 +512,7 @@ export const DetectedFigureSchema = z.object({
   // The extracted question this figure attaches to (its stem or an option). Empty string when `target`
   // is `passage` — a shared comprehension figure attaches to `passageId` instead of a question.
   questionId: z.string(),
-  target: z.enum(['question', 'option', 'passage']).default('question'),
+  target: z.enum(['question', 'option', 'answer', 'solution', 'passage']).default('question'),
   /** Zero-based option position when `target` is `option`. */
   optionIndex: z.number().int().nonnegative().default(0),
   // The comprehension passage this figure attaches to, when `target` is `passage`; null otherwise.
@@ -456,6 +552,8 @@ export const DETECT_FIGURES_MAX_PAGES = 10;
 export const DetectFiguresBatchRequestSchema = z.object({
   documentId: z.string().min(1),
   pages: z.array(z.number().int().positive()).min(1).max(DETECT_FIGURES_MAX_PAGES),
+  /** The matching sibling Answer/Solution PDF to scan while `documentId` remains the question owner. */
+  source: DetectFiguresSourceSchema.optional(),
 });
 export type DetectFiguresBatchRequest = z.infer<typeof DetectFiguresBatchRequestSchema>;
 
@@ -471,8 +569,9 @@ export const DetectedFiguresPageSchema = z.discriminatedUnion('ok', [
 export type DetectedFiguresPage = z.infer<typeof DetectedFiguresPageSchema>;
 
 /**
- * Whole-document detection result: one entry per requested page that has extracted questions.
- * Requested pages without questions are skipped server-side (nothing to attach a figure to).
+ * Whole-document detection result: one entry per eligible requested page. A question source permits
+ * its own question pages plus their immediately following page; Answer/Solution sources permit every
+ * requested source page because their printed numbers map back to the owner document.
  */
 export const DetectedFiguresBatchSchema = z.object({
   pages: z.array(DetectedFiguresPageSchema),

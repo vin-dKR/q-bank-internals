@@ -1,13 +1,12 @@
-import { QUESTION_LEVELS } from '@ingest/contracts';
+import { QUESTION_LEVELS, synthesizeMatrixChoiceOptions } from '@ingest/contracts';
 import { canonicalQuestionType } from './canonical-question-type.js';
 import {
   CHOICE_TYPES,
-  LETTER_LABEL_TYPES,
-  answerLabels,
-  hasNumberedLabels,
-  letterAt,
+  answerOptionLabels,
+  labelsOf,
   optionBody,
   optionLabel,
+  optionLabelKey,
 } from './option-labels.js';
 import type { AuditQuestion, RuleFinding } from './quality.types.js';
 
@@ -48,6 +47,15 @@ function answerRules(question: AuditQuestion, type: string | null): RuleFinding[
   const findings: RuleFinding[] = [];
   const { answer } = question;
   if (answer === null || answer.trim() === '') {
+    // A historic direct-response matrix may have persisted its complete key but no flat answer
+    // string. That is still publishable: the shared planner deterministically creates its choices
+    // and selected answer from the key. Do not mark a recoverable legacy row as answer-less.
+    if (
+      type === 'matrix'
+      && question.options.length === 0
+      && question.match !== null
+      && synthesizeMatrixChoiceOptions(question.match).status === 'generated'
+    ) return findings;
     findings.push({
       kind: type === 'subjective' ? 'answer_missing_subjective' : 'answer_missing',
       field: 'answer',
@@ -64,15 +72,15 @@ function answerRules(question: AuditQuestion, type: string | null): RuleFinding[
   }
   if (type === null || !OPTION_ANSWER_TYPES.has(type) || question.options.length === 0) return findings;
 
-  const labels = question.options.map(optionLabel).filter((label): label is string => label !== null);
-  if (labels.length === 0) return findings;
-  const known = new Set(labels);
-  const given = answerLabels(answer);
+  const labels = labelsOf(question.options);
+  if (!labels) return findings;
+  const known = new Set(labels.map(optionLabelKey));
+  const given = answerOptionLabels(answer, question.options);
   if (given.length === 0 || given.some((label) => !known.has(label))) {
     findings.push({
       kind: 'answer_not_in_options',
       field: 'answer',
-      detail: `Answer "${answer.trim()}" but options are labelled ${labels.map((l) => l.toUpperCase()).join(', ')}.`,
+      detail: `Answer "${answer.trim()}" but options are labelled ${labels.join(', ')}.`,
     });
   } else if (type === 'single_correct' && given.length > 1) {
     findings.push({
@@ -139,17 +147,9 @@ function contentRules(question: AuditQuestion, type: string | null): RuleFinding
       detail: `Only ${String(options.length)} options; a choice question normally offers at least 4.`,
     });
   }
-  if (type !== null && LETTER_LABEL_TYPES.has(type) && options.length >= 2 && hasNumberedLabels(options)) {
-    findings.push({
-      kind: 'option_labels_not_letters',
-      field: 'options',
-      detail: `Options are labelled (1)–(${String(options.length)}); choices are labelled A–${letterAt(options.length - 1)}.`,
-    });
-  }
-  // A label appearing twice means two questions were extracted into one row: parts (a) and (b) of a printed
-  // question, each with its own A–D. The answer is then meaningless ("A,B,C,D") and no reader can tell which
-  // set it refers to, so this is a high-severity split job, not a labelling quirk.
-  const labels = options.map(optionLabel).filter((label): label is string => label !== null);
+  // Numeric, Roman, and custom printed labels are all valid. Only a repeated *actual* label signals
+  // that separate questions may have been folded into one row.
+  const labels = options.map(optionLabel).filter((label): label is string => label !== null).map(optionLabelKey);
   const repeated = [...new Set(labels.filter((label, index) => labels.indexOf(label) !== index))];
   if (repeated.length > 0) {
     findings.push({
@@ -192,8 +192,48 @@ function imageRules(question: AuditQuestion): RuleFinding[] {
 
 function structureRules(question: AuditQuestion, type: string | null): RuleFinding[] {
   const findings: RuleFinding[] = [];
-  if (type === 'matrix' && question.matchColumns === null) {
-    findings.push({ kind: 'matrix_missing_columns', field: 'match_columns', detail: 'Matching is stored only as answer text.' });
+  // A structural table itself is also a matrix signal: legacy rows sometimes lost or misspelled the
+  // type string, but a `match_columns` payload must still obey the same invariant before it can be
+  // presented as selectable answer choices.
+  const isMatrix = type === 'matrix' || question.match !== null || question.matchColumns !== null;
+  if (isMatrix) {
+    if (question.matchColumns === null) {
+      findings.push({ kind: 'matrix_missing_columns', field: 'match_columns', detail: 'Matching is stored only as answer text.' });
+    }
+
+    // The shared synthesis planner is the authority for whether a key is safe to turn into choices.
+    // It rejects dangling rows, duplicate later-column labels, missing mappings, and non-round-trippable
+    // labels — precisely the states that otherwise let a matrix look complete while selecting nonsense.
+    const synthesis = question.match ? synthesizeMatrixChoiceOptions(question.match) : null;
+    if (!synthesis || synthesis.status === 'blocked') {
+      const ambiguous = synthesis?.reason === 'ambiguous_labels';
+      findings.push({
+        kind: ambiguous ? 'matrix_match_key_ambiguous' : 'matrix_match_key_incomplete',
+        field: ambiguous ? 'match_columns' : 'match_key',
+        detail: ambiguous
+          ? 'A later-column label appears more than once, so a matching target is ambiguous. Rename the duplicate label.'
+          : `The matrix cannot produce a complete answer-choice mapping${synthesis ? ` (${synthesis.reason.replace(/_/g, ' ')})` : ''}. Fill every Column-I mapping and remove invalid references.`,
+      });
+    }
+
+    // A no-choice legacy/direct-response matrix is valid when its complete key can be normalised by
+    // the planner above. Once any printed/generated panel exists, though, the answer must name exactly
+    // one real option — a mapping string or two selected labels is not a selectable matrix answer.
+    if (question.options.length > 0) {
+      const labels = labelsOf(question.options);
+      const selected = question.answer ? answerOptionLabels(question.answer, question.options) : [];
+      const known = new Set((labels ?? []).map(optionLabelKey));
+      const oneKnownSelection = selected.length === 1 && known.has(selected[0] ?? '');
+      if (!oneKnownSelection) {
+        findings.push({
+          kind: 'matrix_choice_selection_invalid',
+          field: 'answer',
+          detail: question.answer?.trim()
+            ? `Answer "${question.answer.trim()}" must select exactly one printed matrix option${labels ? ` (${labels.join(', ')})` : ''}.`
+            : 'A matrix answer-choice panel has no selected option.',
+        });
+      }
+    }
   }
   if (!isBlank(question.groupId) && isBlank(question.passage)) {
     findings.push({ kind: 'group_missing_passage', field: 'passage', detail: `In comprehension group ${question.groupId ?? ''} but has no passage text.` });

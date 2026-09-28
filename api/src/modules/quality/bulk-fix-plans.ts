@@ -3,12 +3,9 @@ import { canonicalQuestionType } from './canonical-question-type.js';
 import { repairCorruptedEscapes } from './latex-rules.js';
 import { wrapLooseMath } from './latex-wrap.js';
 import {
-  LETTER_LABEL_TYPES,
-  answerInLetters,
-  answerLabels,
-  hasNumberedLabels,
+  CHOICE_TYPES,
+  answerInOptionLabels,
   labelsOf,
-  relabelToLetters,
 } from './option-labels.js';
 import type { AuditQuestion } from './quality.types.js';
 
@@ -21,13 +18,6 @@ type PlanDefinition = {
   /** The change this plan would make to `question`, or null when it does not apply. */
   change(question: AuditQuestion): { fix: QuestionFix; field: string; before: string; after: string } | null;
 };
-
-/** The alphabet a set of option labels uses, when they are all letters or all numbers. */
-function labelAlphabet(labels: readonly string[]): 'letters' | 'numbers' | 'mixed' {
-  if (labels.every((label) => /^[a-z]$/.test(label))) return 'letters';
-  if (labels.every((label) => /^\d+$/.test(label))) return 'numbers';
-  return 'mixed';
-}
 
 /**
  * The corrections a rule can make on its own, with nothing to decide. Each rewrites exactly one field and
@@ -137,49 +127,24 @@ export const BULK_FIX_DEFINITIONS: Record<BulkFixPlanId, PlanDefinition> = {
   },
 
   option_labels_to_letters: {
-    label: 'Label choice options A–D',
+    label: 'Keep printed option labels',
     description:
-      'Choice questions (single-correct, multi-correct, assertion-reason) whose options are numbered (1)–(4) are relabelled (A)–(D), keeping their order and text, and their answer is rewritten in the same letters. Integer, subjective and other types are untouched, so numeric answers stay numeric.',
-    change: (question) => {
-      const canonical = canonicalQuestionType(question.questionType);
-      if (canonical.status !== 'known' || !LETTER_LABEL_TYPES.has(canonical.type)) return null;
-      if (question.options.length < 2 || !hasNumberedLabels(question.options)) return null;
-
-      const options = relabelToLetters(question.options);
-      const fix: QuestionFix = { options };
-      // The answer travels with the options: leaving "3" behind would point at a label that no longer
-      // exists. An answer that is not a position (free text, a matrix key) is left exactly as it is.
-      const answer = question.answer?.trim() ?? '';
-      const inLetters = answer === '' ? null : answerInLetters(answer, options.length);
-      const rewritten = inLetters !== null && inLetters !== answer ? inLetters : null;
-      if (rewritten !== null) fix.answer = rewritten;
-      // Every option is shown: the whole set is being relabelled, so one of them proves nothing.
-      const withAnswer = (list: readonly string[], value: string): string =>
-        `${list.join('   ')}${value === '' ? '' : `   →  answer "${value}"`}`;
-      return {
-        fix,
-        field: 'options + answer',
-        before: withAnswer(question.options, answer),
-        after: withAnswer(options, rewritten ?? answer),
-      };
-    },
+      'Numeric, Roman, and custom markers are valid source labels. This legacy plan deliberately makes no automatic rewrite, so a paper’s printed choices are never silently changed to A–D.',
+    change: () => null,
   },
 
   answer_option_label: {
     label: 'Match answer labels to the options',
     description:
-      'Where the answer names a label its options do not use — answer "3" with options (A)–(D) — it is rewritten to the label at the same position, here "C". Only applied when every label in the answer maps cleanly; questions whose options are still numbered are handled by "Label choice options A–D".',
+      'Where an answer is an unambiguous positional alias rather than one of the source labels — for example "3" for options (A)–(D), or "A" for options (I)–(IV) — rewrite it to the actual printed label. Numeric, Roman, and custom labels already present in the options are preserved.',
     change: (question) => {
       const answer = question.answer?.trim() ?? '';
       if (answer === '' || question.options.length < 2) return null;
+      const canonical = canonicalQuestionType(question.questionType);
+      if (canonical.status !== 'known' || !CHOICE_TYPES.has(canonical.type)) return null;
       const labels = labelsOf(question.options);
       if (!labels) return null;
-      // Numbered options are the other plan's job — converting the answer to a number would entrench them.
-      if (labelAlphabet(labels) !== 'letters') return null;
-      const known = new Set(labels);
-      const given = answerLabels(answer);
-      if (given.length === 0 || given.every((label) => known.has(label))) return null;
-      const after = answerInLetters(answer, question.options.length);
+      const after = answerInOptionLabels(answer, labels);
       if (after === null || after === answer) return null;
       return { fix: { answer: after }, field: 'answer', before: answer, after };
     },

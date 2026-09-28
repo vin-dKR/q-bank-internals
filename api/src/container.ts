@@ -262,10 +262,10 @@ function buildDiagramDetector(loadPromptOverrides: () => Promise<PromptOverrides
 }
 
 /** OpenAI vision re-extractor for the Verify "read the page again" button; otherwise a null-object. */
-function buildQuestionReExtractor(): QuestionReExtractor {
+function buildQuestionReExtractor(loadPromptOverrides: () => Promise<PromptOverrides>): QuestionReExtractor {
   if (env.OPENAI_API_KEY) {
     logger.info(`Re-extractor: OpenAI ${env.EXTRACTION_MODEL}`);
-    return new OpenAiQuestionReExtractor(env.OPENAI_API_KEY, env.EXTRACTION_MODEL);
+    return new OpenAiQuestionReExtractor(env.OPENAI_API_KEY, env.EXTRACTION_MODEL, loadPromptOverrides);
   }
   logger.info('Re-extractor: unconfigured. Set OPENAI_API_KEY to re-extract questions.');
   return new UnconfiguredQuestionReExtractor();
@@ -342,7 +342,7 @@ export function createContainer(): Container {
     usageService,
     buildDiagramDetector(loadPromptOverrides),
     pagesService,
-    buildQuestionReExtractor(),
+    buildQuestionReExtractor(loadPromptOverrides),
     buildPaperMetadataExtractor(),
   );
   const bankPublisher =

@@ -70,6 +70,14 @@ export class InMemoryQuestionRepository implements QuestionRepository {
     return Promise.resolve(sortByPdfOrder(this.byDocument.get(documentId) ?? []));
   }
 
+  findById(id: string): Promise<Question | null> {
+    for (const rows of this.byDocument.values()) {
+      const question = rows.find((row) => row.id === id);
+      if (question) return Promise.resolve(question);
+    }
+    return Promise.resolve(null);
+  }
+
   findPassagesByDocument(documentId: string): Promise<Passage[]> {
     return Promise.resolve([...(this.passagesByDocument.get(documentId) ?? [])]);
   }

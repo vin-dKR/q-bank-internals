@@ -1,8 +1,8 @@
 import {
   type Document,
-  KNOWN_QUESTION_TYPES,
   matchKeyToAnswer,
-  parseMatchKey,
+  mergeMatrixKeyWithAnswer,
+  synthesizeMatrixChoiceOptions,
   type QuestionOption,
 } from '@ingest/contracts';
 import { logger } from '../../shared/logger/logger.js';
@@ -15,12 +15,14 @@ import type { ExtractionJobPatch, ExtractionJobStore } from './extraction.reposi
 import type { ExtractionRunRegistry } from './extraction-run-registry.js';
 import type { ExtractionJobPayload } from './job-queue.js';
 import type { PdfRasterizer } from './pdf-rasterizer.js';
-import type {
-  AnswerEntry,
-  AnswerExtraction,
-  AnswerSheet,
-  ExtractedQuestion,
-  VisionExtractor,
+import {
+  mergeAnswerEntries,
+  type AnswerEntry,
+  type AnswerExtraction,
+  type AnswerExtractionScope,
+  type AnswerSheet,
+  type ExtractedQuestion,
+  type VisionExtractor,
 } from './vision-extractor.js';
 import { materializePassages } from './group-comprehension.js';
 import { mergeAnswers } from './merge-answers.js';
@@ -29,54 +31,126 @@ import { topicBindingForPage } from './topic-lookup.js';
 /** Statuses that mean "don't touch it" — the guard that makes re-running a job idempotent/resumable. */
 const TERMINAL_OR_ACTIVE = new Set<Document['status']>(['extracting', 'extracted', 'completed']);
 
-const OPTION_RE = /^\s*\(?([A-Da-d1-4])\)?[.)]?\s*([\s\S]*)$/;
+const OPTION_RE = /^\s*(?:\(\s*([^()]+?)\s*\)|([A-Za-z0-9]+)\s*[.)])\s*([\s\S]*)$/;
 const TRUE_KEY_RE = /^\s*t(?:rue)?\s*$/i;
 const FALSE_KEY_RE = /^\s*f(?:alse)?\s*$/i;
 
-/** Parse "(A) body" (or "1. body") into its label + body, labelling by position as a fallback. */
+function fallbackOptionLabel(index: number): string {
+  return index < 26 ? String.fromCharCode(65 + index) : `Option${String(index + 1)}`;
+}
+
+/** Keep a short printed choice marker (A/E, 1/5, I/IV); reject OCR prose as a label. */
+function normalizeOptionLabel(raw: string, index: number): string {
+  const token = raw.trim().replace(/^[([{\s]+|[)\]}\s.:]+$/g, '');
+  return /^[A-Za-z0-9]{1,12}$/.test(token) ? token : fallbackOptionLabel(index);
+}
+
+/** Parse a labelled option while preserving the page's actual count and labels. */
 function parseOption(raw: string, index: number): Pick<QuestionOption, 'label' | 'body'> {
   const match = OPTION_RE.exec(raw);
-  let label = String.fromCharCode(65 + index); // A, B, C, D fallback by position
+  let label = fallbackOptionLabel(index);
   let body = raw.trim();
   if (match) {
-    const token = (match[1] ?? '').toUpperCase();
-    label = /[1-4]/.test(token) ? String.fromCharCode(64 + Number(token)) : token;
-    body = (match[2] ?? '').trim();
+    label = normalizeOptionLabel(match[1] ?? match[2] ?? '', index);
+    body = (match[3] ?? '').trim();
   }
   return { label, body };
 }
 
 /**
- * Resolve a raw answer-key value ("A", "(A)", "1", "AC", "True") to the label of the option it
+ * Resolve a raw answer-key value ("A", "(A)", "1", "AC", "True") to the option labels it
  * selects. True/false keys are matched against the option bodies BEFORE the letter scan — the
  * answer sheet carries them verbatim, and a bare letter scan would pluck the 'a' out of "False"
  * and mark the wrong option. The letter scan itself only accepts answers made entirely of option
  * letters/digits (punctuation aside), so it can never pull a letter out of a longer word.
  */
-function normalizeAnswerLabel(
+function normalizeAnswerLabels(
   answer: string | null,
   options: ReadonlyArray<Pick<QuestionOption, 'label' | 'body'>>,
-): string | null {
-  if (!answer) return null;
+): Set<string> {
+  if (!answer) return new Set();
   const boolKey = TRUE_KEY_RE.test(answer) ? TRUE_KEY_RE : FALSE_KEY_RE.test(answer) ? FALSE_KEY_RE : null;
-  if (boolKey) return options.find((option) => boolKey.test(option.body))?.label ?? null;
-  const compact = answer.replace(/[^A-Za-z0-9]/g, '');
-  if (!/^[A-Da-d1-4]+$/.test(compact)) return null;
-  const token = compact.charAt(0).toUpperCase(); // multi-correct keys like "AC": first letter, as before
-  return /[1-4]/.test(token) ? String.fromCharCode(64 + Number(token)) : token;
+  if (boolKey) {
+    const label = options.find((option) => boolKey.test(option.body))?.label;
+    return label ? new Set([label]) : new Set();
+  }
+  // A matrix mapping is a direct-response answer, never an instruction to mark ordinary choices.
+  if (/(?:→|->|=)/.test(answer)) return new Set();
+  const available = new Map(options.map((option) => [option.label.trim().toUpperCase(), option.label]));
+  const resolve = (token: string): string | null => {
+    const clean = token.trim().replace(/^[([{\s]+|[)\]}\s.:]+$/g, '').toUpperCase();
+    if (!clean) return null;
+    const exact = available.get(clean);
+    if (exact) return exact;
+    // `1` ↔ first option and `A` ↔ first option are compatibility aliases only when the printed
+    // label itself does not already match. This keeps a five-option `1…5` paper intact.
+    if (/^\d+$/.test(clean)) {
+      const index = Number(clean) - 1;
+      return Number.isSafeInteger(index) && index >= 0 ? options[index]?.label ?? null : null;
+    }
+    if (/^[A-Z]$/.test(clean)) {
+      const index = clean.charCodeAt(0) - 65;
+      return index >= 0 ? options[index]?.label ?? null : null;
+    }
+    return null;
+  };
+  const raw = answer.trim();
+  const direct = resolve(raw);
+  if (direct) return new Set([direct]);
+  const tokens = raw.split(/[\s,;/&+]+/).filter(Boolean);
+  const labels = new Set<string>();
+  for (const token of tokens) {
+    const resolved = resolve(token);
+    if (resolved) {
+      labels.add(resolved);
+      continue;
+    }
+    // A compact multi-correct value (`AC`) means two labels only when every character maps to an
+    // actual choice. This avoids breaking Roman or multi-character labels such as `III`.
+    if (/^[A-Za-z0-9]{2,}$/.test(token)) {
+      const characters = Array.from(token);
+      const expanded = characters.map(resolve);
+      if (expanded.every((label): label is string => label !== null)) {
+        expanded.forEach((label) => labels.add(label));
+      }
+    }
+  }
+  return labels;
 }
 
-/** The model's classified type, kept only when it is one of the known categories — else null. */
+/**
+ * Keep the stored scalar answer in the same vocabulary as the actual option labels. This prevents
+ * an answer sheet's `2` from disagreeing with a question whose selected stored option is `B`, and
+ * avoids the old ambiguous `IIII` serialization for Roman/numeric multiple-correct choices. True/
+ * false intentionally remains human-readable because it is a valid direct answer, not merely a
+ * label alias.
+ */
+function canonicalOptionAnswer(
+  rawAnswer: string | null,
+  selected: ReadonlySet<string>,
+  questionType: string | null,
+): string {
+  const raw = rawAnswer?.trim() ?? '';
+  if (!raw || selected.size === 0) return raw;
+  if (questionType === 'true_false' && (TRUE_KEY_RE.test(raw) || FALSE_KEY_RE.test(raw))) return raw;
+  const labels = [...selected];
+  return labels.every((label) => /^[A-Za-z0-9]$/.test(label))
+    ? labels.join('')
+    : labels.join(', ');
+}
+
+/** A prompt-validated question-type key (including an operator's live custom master), or null. */
 function normalizeQuestionType(raw: string | null): string | null {
   if (!raw) return null;
   const token = raw.trim().toLowerCase();
-  return (KNOWN_QUESTION_TYPES as readonly string[]).includes(token) ? token : null;
+  return /^[a-z][a-z0-9_-]{0,63}$/.test(token) ? token : null;
 }
 
 /**
  * Map a model draft into the persisted Question shape (§6.1: the contract shape is canonical). The
- * model classifies each question's own type + difficulty; topic/section/subject come from the
- * operator's cut-time config, and the operator's type is the fallback when the model is unsure.
+ * model classifies an unbound question's own type + difficulty; topic/section/subject come from the
+ * operator's cut-time config. A concrete cut-time type is authoritative (except the comprehension
+ * container, whose children legitimately carry their own types).
  */
 function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestion {
   const binding = topicBindingForPage(document.topics, draft.sourcePage);
@@ -93,35 +167,47 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
     paper: document.paper,
   };
 
-  // The model classifies each question's own type; the operator's binding (else the document type) is
-  // the fallback when the model returned nothing recognisable. A comprehension MEMBER is never itself
-  // `comprehension` (that is the container) — default it to single_correct. So the AI applies the type,
-  // while a curated coaching section still lands on its known type when the model is unsure.
+  // A leaf type chosen at cut time is not a hint: it is the operator's declared shape. The sole
+  // exception is a comprehension container, where each child has an independently printed type.
+  // For unbound/PYQ pages, retain the prompt-validated live-master key the model classified.
   const boundType = binding?.questionType ?? document.questionType;
   const aiType = normalizeQuestionType(draft.questionType);
-  // Structured match data IS a matrix question regardless of what the model called its type — the row
-  // is persisted with match columns below, so its type must agree (mirrors publish's structural kind).
-  const questionType = draft.match
-    ? 'matrix'
-    : draft.passageId !== null
-      ? aiType && aiType !== 'comprehension'
-        ? aiType
-        : 'single_correct'
-      : aiType ?? boundType;
+  const lockedType = boundType && boundType !== 'comprehension' ? boundType : null;
+  const questionType = draft.passageId !== null
+    ? aiType && aiType !== 'comprehension'
+      ? aiType
+      : 'single_correct'
+    : lockedType ?? (draft.match ? 'matrix' : aiType);
+  // Do not let a hallucinated matrix payload override an operator-selected non-matrix type.
+  const match = questionType === 'matrix' ? draft.match : null;
 
-  // A match-the-column question persists its structured columns AND the printed multiple-choice answer
-  // choices (each a full matching like "A-i, B-ii, …"): the stem is the bare instruction, and the flat
-  // `answer` mirrors the match key. The question page rarely prints the matching, so back-fill an empty
-  // key from the merged answer sheet string. Options let the operator click the correct printed choice to
-  // fill the match grid in verify; correctness is derived from the key there, so isCorrect stays false.
-  if (draft.match) {
-    const key = Object.keys(draft.match.key).length > 0
-      ? draft.match.key
-      : parseMatchKey(draft.answer ?? '');
-    const answer = Object.keys(key).length > 0 ? matchKeyToAnswer(key) : draft.answer ?? '';
-    const options = draft.options
-      .map(parseOption)
-      .map(({ label, body }) => ({ label, body, isCorrect: false }));
+  // A match-the-column question persists both the structured columns and (when printed) its A–D answer
+  // choices. Those are different things: the canonical `answer` for a choice-based matrix is the
+  // selected choice label (for example "C"), while `match.key` retains the underlying mapping when it
+  // is visible. A source table with no printed choice panel receives deterministic generated choices
+  // ONLY after the complete key is known; incomplete/ambiguous tables retain their direct mapping for
+  // Verify instead of gaining an invented correct answer.
+  if (match) {
+    const optionRows = draft.options.map(parseOption);
+    const selectedLabels = normalizeAnswerLabels(draft.answer, optionRows);
+    const hasPrintedChoices = optionRows.length > 0;
+    // A separate answer key often carries the missing rows as `A→p; B→q`. Fold only those missing
+    // rows into the table before validating/synthesizing — it must never overwrite an already-read row.
+    const completedMatch = mergeMatrixKeyWithAnswer(match, draft.answer);
+    const generated = hasPrintedChoices ? null : synthesizeMatrixChoiceOptions(completedMatch);
+    const synthesized = generated?.status === 'generated' ? generated : null;
+    const answer = synthesized
+      ? synthesized.answer
+      : draft.answer?.trim()
+        ? canonicalOptionAnswer(draft.answer, selectedLabels, questionType)
+        : !hasPrintedChoices && Object.keys(completedMatch.key).length > 0
+          ? matchKeyToAnswer(completedMatch.key)
+          : '';
+    const options = synthesized?.options ?? optionRows.map(({ label, body }) => ({
+      label,
+      body,
+      isCorrect: selectedLabels.has(label),
+    }));
     return {
       documentId: document.id,
       questionNumber: draft.questionNumber,
@@ -129,14 +215,17 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
       stem: draft.questionText,
       options,
       answer,
-      match: { columns: draft.match.columns, key },
+      match: completedMatch,
       passageId: draft.passageId,
       groupOrder: draft.groupOrder,
       explanation: draft.explanation,
       images: [],
       questionType,
       level: draft.level,
-      sectionName: document.sectionName ?? document.path.section,
+      // Matrix rows follow the same per-leaf section routing as every other type. Without the
+      // binding here, a mixed assembled chapter published matrices under the unit fallback (for
+      // example "All sections") while its other questions retained their actual section.
+      sectionName: binding?.sectionName ?? document.sectionName ?? document.path.section,
       topic: binding?.topicName ?? null,
       subject: binding?.subject ?? null,
       ...pyq,
@@ -145,7 +234,7 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
   }
 
   const options = draft.options.map(parseOption);
-  const answerLabel = normalizeAnswerLabel(draft.answer, options);
+  const answerLabels = normalizeAnswerLabels(draft.answer, options);
   return {
     documentId: document.id,
     questionNumber: draft.questionNumber,
@@ -154,9 +243,9 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
     options: options.map(({ label, body }) => ({
       label,
       body,
-      isCorrect: answerLabel !== null && label === answerLabel,
+      isCorrect: answerLabels.has(label),
     })),
-    answer: draft.answer ?? '',
+    answer: canonicalOptionAnswer(draft.answer, answerLabels, questionType),
     match: null,
     passageId: draft.passageId,
     groupOrder: draft.groupOrder,
@@ -347,29 +436,54 @@ export class ExtractionWorker {
     drafts: ExtractedQuestion[],
     signal: AbortSignal,
   ): Promise<ExtractedQuestion[]> {
+    // Inline papers carry every answer/solution immediately after its question. They must be a
+    // closed extraction boundary: a stale or accidentally uploaded sibling key from the same session
+    // must never overwrite the inline data the question pass already read.
+    if (document.answerLayout === 'inline') return drafts;
     if (!document.sessionId) return drafts;
     const siblings = await this.documents.listBySession(document.sessionId);
     const answerDocs = siblings.filter((s) => s.kind === 'answer' && sameGroup(s, document));
     const solutionDocs = siblings.filter((s) => s.kind === 'solution' && sameGroup(s, document));
+    const companionDocs = siblings.filter((s) => s.kind === 'companion' && sameGroup(s, document));
+    if (document.answerLayout === 'combined') {
+      if (companionDocs.length === 0) return drafts;
+      const hasCompanionRanges = document.topics.some((topic) =>
+        topic.types.some((block) => block.companionPageRange !== undefined),
+      );
+      const sheets: AnswerSheet[] = [];
+      for (const companionDoc of companionDocs) {
+        if (hasCompanionRanges) {
+          await this.collectTopicSheets(companionDoc, document.topics, 'companion', sheets, (pages, scope) =>
+            this.extractor.extractCompanion({ pages, document: companionDoc, scope, signal }),
+          );
+        } else {
+          await this.collectSheets(companionDoc, sheets, (pages) =>
+            this.extractor.extractCompanion({ pages, document: companionDoc, signal }),
+          );
+        }
+      }
+      return mergeAnswers(drafts, sheets, document.topics);
+    }
     if (answerDocs.length === 0 && solutionDocs.length === 0) return drafts;
 
     // v2 assembled uploads pin each topic's answer/solution pages, so we read every topic's key from
     // exactly its own pages and tag it with the topic name — the drag binding decides the match, not a
     // section-name-and-number guess. Legacy uploads (no ranges) keep the whole-PDF path unchanged.
-    const hasRanges = document.topics.some((topic) =>
-      topic.types.some((block) => block.answerPageRange ?? block.solutionPageRange),
+    // Answer and solution bindings are independent. A chapter can, for example, bind answer-key
+    // ranges while keeping a legacy whole-document solution PDF. Using one combined `hasRanges` flag
+    // used to skip that solution PDF entirely.
+    const hasAnswerRanges = document.topics.some((topic) =>
+      topic.types.some((block) => block.answerPageRange !== undefined),
+    );
+    const hasSolutionRanges = document.topics.some((topic) =>
+      topic.types.some((block) => block.solutionPageRange !== undefined),
     );
 
     const sheets: AnswerSheet[] = [];
-    if (hasRanges) {
+    if (hasAnswerRanges) {
       for (const answerDoc of answerDocs) {
-        await this.collectTopicSheets(answerDoc, document.topics, 'answer', sheets, (pages) =>
-          this.extractor.extractAnswers({ pages, document: answerDoc, signal }),
-        );
-      }
-      for (const solutionDoc of solutionDocs) {
-        await this.collectTopicSheets(solutionDoc, document.topics, 'solution', sheets, (pages) =>
-          this.extractor.extractSolutions({ pages, document: solutionDoc, signal }),
+        await this.collectTopicSheets(answerDoc, document.topics, 'answer', sheets, (pages, scope) =>
+          this.extractor.extractAnswers({ pages, document: answerDoc, scope, signal }),
         );
       }
     } else {
@@ -378,6 +492,14 @@ export class ExtractionWorker {
           this.extractor.extractAnswers({ pages, document: answerDoc, signal }),
         );
       }
+    }
+    if (hasSolutionRanges) {
+      for (const solutionDoc of solutionDocs) {
+        await this.collectTopicSheets(solutionDoc, document.topics, 'solution', sheets, (pages, scope) =>
+          this.extractor.extractSolutions({ pages, document: solutionDoc, scope, signal }),
+        );
+      }
+    } else {
       for (const solutionDoc of solutionDocs) {
         await this.collectSheets(solutionDoc, sheets, (pages) =>
           this.extractor.extractSolutions({ pages, document: solutionDoc, signal }),
@@ -397,26 +519,43 @@ export class ExtractionWorker {
   private async collectTopicSheets(
     source: Document,
     topics: Document['topics'],
-    kind: 'answer' | 'solution',
+    kind: 'answer' | 'solution' | 'companion',
     sink: AnswerSheet[],
-    extract: (pages: Awaited<ReturnType<PdfRasterizer['rasterize']>>) => Promise<AnswerExtraction>,
+    extract: (
+      pages: Awaited<ReturnType<PdfRasterizer['rasterize']>>,
+      scope: AnswerExtractionScope,
+    ) => Promise<AnswerExtraction>,
   ): Promise<void> {
     try {
       const pdf = await this.drive.downloadPdf(source.driveFileId);
       const pages = await this.rasterizer.rasterize(pdf);
       for (const topic of topics) {
         for (const block of topic.types) {
-          const range = kind === 'answer' ? block.answerPageRange : block.solutionPageRange;
+          const range = kind === 'answer'
+            ? block.answerPageRange
+            : kind === 'solution'
+              ? block.solutionPageRange
+              : block.companionPageRange;
           if (!range) continue;
           const slice = pages.filter((page) => page.pageNumber >= range.from && page.pageNumber <= range.to);
           if (slice.length === 0) continue;
-          const result = await extract(slice);
+          // The source sibling carries no topic map and, for an assembled chapter, its document-level
+          // type is merely the first question leaf's type. Carry the matched question leaf explicitly
+          // so its answer/solution pages always receive the correct type-specific prompt grammar.
+          const scope: AnswerExtractionScope = {
+            sectionName: topic.name,
+            questionType: block.questionType ?? null,
+            questionPageRange: block.pageRange,
+            sourcePageRange: range,
+          };
+          const result = await extract(slice, scope);
           await this.recordUsage(source, result.usage);
-          // Fold every entry this range produced under the topic's own name (first write wins).
+          // Fold every entry this range produced under the topic's own name. A solution may cross a
+          // page boundary, so a later non-duplicate explanation is a continuation, not a value to drop.
           const entries: Record<string, AnswerEntry> = {};
           for (const sheet of result.sheets) {
             for (const [number, entry] of Object.entries(sheet.entries)) {
-              if (!(number in entries)) entries[number] = entry;
+              entries[number] = mergeAnswerEntries(entries[number], entry);
             }
           }
           if (Object.keys(entries).length > 0) sink.push({ sectionName: topic.name, entries });

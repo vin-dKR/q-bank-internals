@@ -21,4 +21,8 @@ export class UnconfiguredVisionExtractor implements VisionExtractor {
   extractSolutions(): Promise<AnswerExtraction> {
     return Promise.reject(errors.extractionFailed('OPENAI_API_KEY is not configured.'));
   }
+
+  extractCompanion(): Promise<AnswerExtraction> {
+    return Promise.reject(errors.extractionFailed('OPENAI_API_KEY is not configured.'));
+  }
 }

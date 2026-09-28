@@ -41,13 +41,13 @@ export function createQuestionsController(service: QuestionsService): {
     }),
 
     detectFigures: asyncHandler(async (req, res) => {
-      const { documentId, page } = parseOrThrow(DetectFiguresRequestSchema, req.body);
-      ok(res, await service.detectFigures(documentId, page));
+      const { documentId, page, source } = parseOrThrow(DetectFiguresRequestSchema, req.body);
+      ok(res, await service.detectFigures(documentId, page, source));
     }),
 
     detectFiguresBatch: asyncHandler(async (req, res) => {
-      const { documentId, pages } = parseOrThrow(DetectFiguresBatchRequestSchema, req.body);
-      ok(res, await service.detectFiguresBatch(documentId, pages));
+      const { documentId, pages, source } = parseOrThrow(DetectFiguresBatchRequestSchema, req.body);
+      ok(res, await service.detectFiguresBatch(documentId, pages, source));
     }),
 
     refine: asyncHandler(async (req, res) => {
@@ -61,8 +61,8 @@ export function createQuestionsController(service: QuestionsService): {
     }),
 
     reExtractGroup: asyncHandler(async (req, res) => {
-      const { documentId, passageId, source, questionType } = parseOrThrow(ReExtractGroupSchema, req.body);
-      ok(res, await service.reExtractGroup(documentId, passageId, source, questionType));
+      const { documentId, passageId, source, questionType, mode } = parseOrThrow(ReExtractGroupSchema, req.body);
+      ok(res, await service.reExtractGroup(documentId, passageId, source, questionType, mode));
     }),
 
     update: asyncHandler(async (req, res) => {

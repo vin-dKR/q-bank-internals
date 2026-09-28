@@ -39,7 +39,7 @@ export type QuestionViewModel = {
   stem: string;
   /** Question figures as absolute URLs (a comma-separated field is already split by the caller). */
   questionImages: string[];
-  /** Plain options; ignored when {@link match} is set (a matrix renders its table instead). */
+  /** Printed choices. A matrix can carry these alongside its structured matching table. */
   options: QuestionViewOption[];
   match: QuestionViewMatch | null;
   answer: string | null;
@@ -55,6 +55,17 @@ export type PassageViewModel = {
 };
 
 const FIELD_LABEL = 'flex items-center gap-1.5 text-[13px] font-medium text-ink-2';
+
+/**
+ * A matrix with printed A/B/C/D choices stores the selected choice in `answer`, while its `match`
+ * remains the supporting relationship. Resolve that answer into option highlighting without treating a
+ * direct-match key ("P-1; Q-2") as an option selection.
+ */
+function selectedChoiceLabels(answer: string | null): Set<string> {
+  const value = answer?.trim().toUpperCase() ?? '';
+  if (!/^[A-Z](?:[\s,;/]*[A-Z])*$/.test(value)) return new Set();
+  return new Set(value.match(/[A-Z]/g) ?? []);
+}
 
 /** Trust only absolute-URL images; fix the common double-encoding (`%2520` → `%20`). Others drop out. */
 function safeImageUrl(url: string): string | null {
@@ -255,6 +266,7 @@ export function QuestionView({
   nested = false,
 }: QuestionViewProps): JSX.Element {
   const typeLabel = questionTypeLabel(model.type);
+  const selectedChoices = selectedChoiceLabels(model.answer);
   return (
     <article
       className={
@@ -286,12 +298,19 @@ export function QuestionView({
 
       <FigureGrid urls={model.questionImages} alt="Question figure" />
 
-      {model.match ? (
-        <MatchTableView match={model.match} />
-      ) : model.options.length > 0 ? (
+      {model.match ? <MatchTableView match={model.match} /> : null}
+
+      {model.options.length > 0 ? (
         <ul className="flex flex-col gap-1.5">
           {model.options.map((option, index) => (
-            <OptionRow key={`${option.label}-${String(index)}`} option={option} action={optionAction?.(index)} />
+            <OptionRow
+              key={`${option.label}-${String(index)}`}
+              option={{
+                ...option,
+                isCorrect: option.isCorrect || selectedChoices.has(option.label.trim().toUpperCase()),
+              }}
+              action={optionAction?.(index)}
+            />
           ))}
         </ul>
       ) : null}
