@@ -73,7 +73,10 @@ export function matchKeyToAnswer(key: Record<string, readonly string[]>): string
  * resolves to `p`, `t` when those are the known labels. Unparseable input yields `{}` so the operator
  * can fill the matching in verify.
  */
-function parseCompactMatchTargets(rest: string, knownTargetLabels: readonly string[] | undefined): string[] {
+function parseCompactMatchTargets(
+  rest: string,
+  knownTargetLabels: readonly string[] | undefined,
+): string[] {
   if (!knownTargetLabels || knownTargetLabels.length === 0) {
     // Preserve obvious scalar identifiers even without table context. Otherwise `II` and `T31`
     // would be corrupted into individual characters, while the established compact `A→pt` dialect
@@ -82,12 +85,14 @@ function parseCompactMatchTargets(rest: string, knownTargetLabels: readonly stri
     return Array.from(rest);
   }
 
-  const labels = [...new Map(
-    knownTargetLabels
-      .map((label) => label.trim())
-      .filter(Boolean)
-      .map((label) => [label.toLocaleLowerCase(), label]),
-  ).entries()].map(([key, label]) => ({ key, label }));
+  const labels = [
+    ...new Map(
+      knownTargetLabels
+        .map((label) => label.trim())
+        .filter(Boolean)
+        .map((label) => [label.toLocaleLowerCase(), label]),
+    ).entries(),
+  ].map(([key, label]) => ({ key, label }));
   const compact = rest.toLocaleLowerCase();
   const exact = labels.find((candidate) => candidate.key === compact);
   if (exact) return [exact.label];
@@ -129,7 +134,10 @@ function splitMatchAnswerSegments(answer: string): string[] {
     .flatMap((segment) => segment.split(/,\s*(?=[A-Za-z0-9]+\s*[-–—>:→=]+)/));
 }
 
-export function parseMatchKey(answer: string, knownTargetLabels?: readonly string[]): Record<string, string[]> {
+export function parseMatchKey(
+  answer: string,
+  knownTargetLabels?: readonly string[],
+): Record<string, string[]> {
   const key: Record<string, string[]> = {};
   for (const segment of splitMatchAnswerSegments(answer)) {
     const match = /^\s*([A-Za-z0-9]+)\s*(?:[-–—>:→=]+|\s)\s*(.+)$/.exec(segment.trim());
@@ -223,6 +231,8 @@ export const QuestionSchema = z.object({
   // Which of topic/answer/solution/level hold an AI-written value (see AiFilledSchema). Null or empty when
   // none do; carried to the bank's `ai_filled` on publish so the provenance survives a re-publish.
   aiFilled: AiFilledSchema.nullable().default(null),
+  // CBSE grade copied from the source document at extraction; null for non-CBSE and legacy questions.
+  className: z.string().nullable().default(null),
   // Per-question subject, set per node in the structure tree — for a paper that spans subjects (a PYQ
   // paper) each question publishes under its own subject. Null falls back to the document's subject.
   subject: z.string().nullable(),
@@ -366,6 +376,21 @@ export type RefineLatex = z.infer<typeof RefineLatexSchema>;
 /** The AI-refined text, ready to save back onto the question. */
 export const RefinedLatexSchema = z.object({ text: z.string() });
 export type RefinedLatex = z.infer<typeof RefinedLatexSchema>;
+
+/** Which matrix field receives the text selected from a source-page area. */
+export const TranscribeAreaTargetSchema = z.enum(['matrix_column_title', 'matrix_entry']);
+export type TranscribeAreaTarget = z.infer<typeof TranscribeAreaTargetSchema>;
+
+/** Multipart form fields for a tight source-area image selected in Verify. */
+export const TranscribeAreaRequestSchema = z.object({
+  documentId: z.string().min(1),
+  target: TranscribeAreaTargetSchema,
+});
+export type TranscribeAreaRequest = z.infer<typeof TranscribeAreaRequestSchema>;
+
+/** Exact text the vision reader transcribed from one operator-selected source area. */
+export const TranscribedAreaSchema = z.object({ text: z.string() });
+export type TranscribedArea = z.infer<typeof TranscribedAreaSchema>;
 
 /**
  * Ask the AI to re-read the source page of ONE already-extracted question and re-extract its fields

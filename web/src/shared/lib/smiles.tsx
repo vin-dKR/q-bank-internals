@@ -12,12 +12,13 @@ import SmilesDrawer from 'smiles-drawer';
  */
 const drawer = new SmilesDrawer.SmiDrawer({ width: 220, height: 160, padding: 12 });
 
-/** Match the app's active theme so the structure's bonds/atoms stay legible on light and dark surfaces. */
-function currentTheme(): 'light' | 'dark' {
-  const attr = document.documentElement.getAttribute('data-theme');
-  if (attr === 'dark' || attr === 'light') return attr;
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-}
+/**
+ * Verify is a print-like, light surface. Use smiles-drawer's monochrome theme rather than the
+ * browser/OS colour-scheme: an OS-level dark preference previously selected white bonds on this
+ * white canvas. Monochrome diagrams also match the source-paper convention and keep every atom
+ * label and bond equally legible.
+ */
+const VERIFY_STRUCTURE_THEME = 'oldschool';
 
 export function SmilesStructure({ smiles }: { smiles: string }): JSX.Element {
   const ref = useRef<SVGSVGElement | null>(null);
@@ -29,7 +30,7 @@ export function SmilesStructure({ smiles }: { smiles: string }): JSX.Element {
     svg.replaceChildren(); // clear any previous draw before redrawing this SMILES
     setFailed(false);
     try {
-      drawer.draw(smiles, svg, currentTheme(), undefined, () => { setFailed(true); });
+      drawer.draw(smiles, svg, VERIFY_STRUCTURE_THEME, undefined, () => { setFailed(true); });
     } catch {
       setFailed(true);
     }

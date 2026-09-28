@@ -6,6 +6,8 @@ export type ChapterMetadataDraft = {
   /** Where the questions came from: pyq / module / textbook. Empty until the operator picks one. */
   source: string;
   exam: string;
+  /** CBSE grade; only collected when the selected exam is CBSE. */
+  className: string;
   subject: string;
   module: string;
   chapter: string;
@@ -67,6 +69,7 @@ export function emptyMetadata(): ChapterMetadataDraft {
   return {
     source: '',
     exam: '',
+    className: '',
     subject: '',
     module: '',
     chapter: '',

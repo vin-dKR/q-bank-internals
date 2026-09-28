@@ -32,6 +32,8 @@ export type ExtractedQuestion = {
   // The model's difficulty classification (easy|medium|hard), or null. Stamped onto the persisted
   // question and resolved to the bank's Level FK on publish.
   level: string | null;
+  /** The model's 0–1 confidence in its difficulty classification; null for legacy/custom prompt replies. */
+  difficultyConfidence: number | null;
   sourcePage: number;
   /**
    * The SOURCE exam + year the model read off the page for a PYQ segment (e.g. "NEET" / "2019"), or
@@ -142,6 +144,8 @@ export type AnswerExtractionScope = {
   sectionName: string;
   /** The exact type fixed on the corresponding question leaf; null means mixed/unknown. */
   questionType: string | null;
+  /** The leaf's subject, which can be more precise than the sibling PDF's document-level metadata. */
+  subject?: string;
   /** The leaf's inclusive page span in the question PDF. */
   questionPageRange: PageRange;
   /** The inclusive page span selected from this answer or solution PDF. */

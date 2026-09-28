@@ -1,5 +1,10 @@
 import { type JSX, useMemo, useState } from 'react';
-import type { CreateDictionaryEntry, DictionaryQuery, TaxonomyDimension, UpdateDictionaryEntry } from '@ingest/contracts';
+import type {
+  CreateDictionaryEntry,
+  DictionaryQuery,
+  TaxonomyDimension,
+  UpdateDictionaryEntry,
+} from '@ingest/contracts';
 import {
   Badge,
   Button,
@@ -53,14 +58,28 @@ export function DictionaryPanel({
   const parent = useDictionary(parentDimension, {}, meta.scope !== undefined);
   const parentEntries = parent.data?.entries ?? [];
   const parentNames = useMemo(() => parentEntries.map((entry) => entry.name), [parentEntries]);
-  const nameToId = useMemo(() => new Map(parentEntries.map((entry) => [entry.name, entry.id])), [parentEntries]);
-  const idToName = useMemo(() => new Map(parentEntries.map((entry) => [entry.id, entry.name])), [parentEntries]);
+  const nameToId = useMemo(
+    () => new Map(parentEntries.map((entry) => [entry.name, entry.id])),
+    [parentEntries],
+  );
+  const idToName = useMemo(
+    () => new Map(parentEntries.map((entry) => [entry.id, entry.name])),
+    [parentEntries],
+  );
   const scopeId = nameToId.get(scopeName) ?? '';
+  // Subjects are never nested under Exams. Instead, they may optionally carry any number of compatible
+  // exam links; loading the small Exam dictionary here lets the Subject editor manage those links.
+  const exams = useDictionary('exam', {}, dimension === 'subject');
+  const examOptions = useMemo(
+    () => (exams.data?.entries ?? []).map((entry) => ({ id: entry.id, name: entry.name })),
+    [exams.data],
+  );
 
   const query: DictionaryQuery = {
     q: search.trim() || undefined,
     subjectId: meta.scope === 'subject' ? scopeId || undefined : undefined,
     chapterId: meta.scope === 'chapter' ? scopeId || undefined : undefined,
+    moduleId: meta.scope === 'module' ? scopeId || undefined : undefined,
   };
   const list = useDictionary(dimension, query);
   const entries = list.data?.entries ?? [];
@@ -80,6 +99,7 @@ export function DictionaryPanel({
     const body: CreateDictionaryEntry = { name };
     if (meta.scope === 'subject') body.subjectId = scopeId;
     if (meta.scope === 'chapter') body.chapterId = scopeId;
+    if (meta.scope === 'module') body.moduleId = scopeId;
     try {
       await create.mutateAsync(body);
       toast.success(`Added ${meta.singular}`, name);
@@ -89,14 +109,16 @@ export function DictionaryPanel({
     }
   };
 
-  const onSaveRow = (id: string) => async (body: UpdateDictionaryEntry): Promise<void> => {
-    try {
-      await update.mutateAsync({ id, body });
-      toast.success('Saved');
-    } catch (error) {
-      toast.error('Could not save', errorMessage(error));
-    }
-  };
+  const onSaveRow =
+    (id: string) =>
+    async (body: UpdateDictionaryEntry): Promise<void> => {
+      try {
+        await update.mutateAsync({ id, body });
+        toast.success('Saved');
+      } catch (error) {
+        toast.error('Could not save', errorMessage(error));
+      }
+    };
 
   const onDeleteRow = (id: string, name: string) => async (): Promise<void> => {
     const confirmed = await confirm({
@@ -132,9 +154,16 @@ export function DictionaryPanel({
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
         <p className="max-w-xl text-sm text-ink-2">{meta.description}</p>
         <div className="flex items-center gap-3">
-          {countLabel ? <span className="text-xs text-ink-3 tabular-nums">{countLabel}</span> : null}
+          {countLabel ? (
+            <span className="text-xs text-ink-3 tabular-nums">{countLabel}</span>
+          ) : null}
           {meta.seedable ? (
-            <Button variant="default" size="xs" onClick={() => void onSeed()} disabled={seed.isPending}>
+            <Button
+              variant="default"
+              size="xs"
+              onClick={() => void onSeed()}
+              disabled={seed.isPending}
+            >
               {seed.isPending ? 'Seeding…' : 'Seed canonical'}
             </Button>
           ) : null}
@@ -143,13 +172,18 @@ export function DictionaryPanel({
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-[220px] flex-1">
-          <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-ink-3" aria-hidden />
+          <IconSearch
+            className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-ink-3"
+            aria-hidden
+          />
           <input
             type="text"
             className="w-full !pl-9"
             placeholder={`Search ${meta.label.toLowerCase()}…`}
             value={search}
-            onChange={(event) => { setSearch(event.target.value); }}
+            onChange={(event) => {
+              setSearch(event.target.value);
+            }}
             aria-label={`Search ${meta.label.toLowerCase()}`}
           />
         </div>
@@ -165,7 +199,14 @@ export function DictionaryPanel({
               />
             </div>
             {scopeName ? (
-              <Button variant="ghost" size="xs" onClick={() => { setScopeName(''); }} aria-label="Clear filter">
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => {
+                  setScopeName('');
+                }}
+                aria-label="Clear filter"
+              >
                 <IconX />
               </Button>
             ) : null}
@@ -175,7 +216,10 @@ export function DictionaryPanel({
 
       {meta.creatable ? (
         <form
-          onSubmit={(event) => { event.preventDefault(); void onAdd(); }}
+          onSubmit={(event) => {
+            event.preventDefault();
+            void onAdd();
+          }}
           className="flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-line-strong bg-surface-2/30 px-2.5 py-2"
         >
           <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand">
@@ -186,17 +230,26 @@ export function DictionaryPanel({
             className="min-w-[200px] flex-1"
             placeholder={`Add ${/^[aeiou]/i.test(meta.singular) ? 'an' : 'a'} ${meta.singular}…`}
             value={newName}
-            onChange={(event) => { setNewName(event.target.value); }}
+            onChange={(event) => {
+              setNewName(event.target.value);
+            }}
             aria-label={`New ${meta.singular} name`}
           />
           {meta.scope ? (
             scopeId ? (
-              <Badge tone="info" dot={false}>under {scopeName}</Badge>
+              <Badge tone="info" dot={false}>
+                under {scopeName}
+              </Badge>
             ) : (
               <span className="text-xs text-ink-3">pick a {scopeLabel} to file under</span>
             )
           ) : null}
-          <Button variant="primary" size="xs" type="submit" disabled={!newName.trim() || create.isPending || scopedButUnset}>
+          <Button
+            variant="primary"
+            size="xs"
+            type="submit"
+            disabled={!newName.trim() || create.isPending || scopedButUnset}
+          >
             {create.isPending ? 'Adding…' : 'Add'}
           </Button>
         </form>
@@ -210,9 +263,15 @@ export function DictionaryPanel({
           <ul className="divide-y divide-line">
             {[0, 1, 2, 3, 4].map((row) => (
               <li key={row} className="flex items-center gap-3 px-3 py-3">
-                <div className={DICT_COL.name}><Skeleton className="h-4 w-40" /></div>
-                <div className={DICT_COL.aliases}><Skeleton className="h-4 w-24" /></div>
-                <div className={DICT_COL.used}><Skeleton className="ml-auto h-4 w-8" /></div>
+                <div className={DICT_COL.name}>
+                  <Skeleton className="h-4 w-40" />
+                </div>
+                <div className={DICT_COL.aliases}>
+                  <Skeleton className="h-4 w-24" />
+                </div>
+                <div className={DICT_COL.used}>
+                  <Skeleton className="ml-auto h-4 w-8" />
+                </div>
                 <div className={DICT_COL.actions} />
               </li>
             ))}
@@ -221,7 +280,9 @@ export function DictionaryPanel({
       ) : entries.length === 0 ? (
         <EmptyState
           icon={<IconLayers />}
-          title={filtered ? `No ${meta.label.toLowerCase()} match` : `No ${meta.label.toLowerCase()} yet`}
+          title={
+            filtered ? `No ${meta.label.toLowerCase()} match` : `No ${meta.label.toLowerCase()} yet`
+          }
           body={
             filtered
               ? 'Try a different search or clear the filter.'
@@ -248,11 +309,38 @@ export function DictionaryPanel({
                 deletable={meta.creatable}
                 scopeName={
                   meta.scope === 'subject'
-                    ? idToName.get(entry.subjectId ?? '') ?? null
+                    ? (idToName.get(entry.subjectId ?? '') ?? null)
                     : meta.scope === 'chapter'
-                      ? idToName.get(entry.chapterId ?? '') ?? null
-                      : null
+                      ? (idToName.get(entry.chapterId ?? '') ?? null)
+                      : meta.scope === 'module'
+                        ? (idToName.get(entry.moduleId ?? '') ?? null)
+                        : null
                 }
+                parentScope={
+                  meta.scope
+                    ? {
+                        field:
+                          meta.scope === 'subject'
+                            ? 'subjectId'
+                            : meta.scope === 'chapter'
+                              ? 'chapterId'
+                              : 'moduleId',
+                        label: meta.scope,
+                        options: parentEntries.map((parentEntry) => ({
+                          id: parentEntry.id,
+                          name: parentEntry.name,
+                        })),
+                        valueId:
+                          meta.scope === 'subject'
+                            ? entry.subjectId
+                            : meta.scope === 'chapter'
+                              ? entry.chapterId
+                              : entry.moduleId,
+                        allowUnassigned: meta.scope !== 'module',
+                      }
+                    : undefined
+                }
+                examLinks={dimension === 'subject' ? { options: examOptions } : undefined}
                 saving={update.isPending}
                 onSave={onSaveRow(entry.id)}
                 onDelete={() => void onDeleteRow(entry.id, entry.name)()}

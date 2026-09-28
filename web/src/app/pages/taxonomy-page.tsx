@@ -8,7 +8,7 @@ export function TaxonomyPage(): JSX.Element {
     <section className="page">
       <PageHeader
         title="Question taxonomy"
-        subtitle="The normalized dictionaries every bank question files against — modules, exams, subjects, chapters, sections, question types, difficulty, and topics. Modules are independent content providers such as Allen or PW. The extractor picks IDs from these and the publisher stamps them onto each question."
+        subtitle="The normalized dictionaries every bank question files against — modules, exams, subjects, chapters, sections, question types, difficulty, and topics. Modules are independent providers such as Allen or PW; sections are filed under a module, while subjects can optionally link to several exams. The extractor picks IDs from these and the publisher stamps them onto each question."
       />
       <section className="card">
         <TaxonomyManager />

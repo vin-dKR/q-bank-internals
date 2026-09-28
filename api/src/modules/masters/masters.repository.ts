@@ -10,13 +10,18 @@ export type DictionaryRow = {
   rank: number | null;
   subjectId: string | null;
   chapterId: string | null;
+  /** Section only — the independent publisher/module this section is filed under. */
+  moduleId: string | null;
+  /** Subject only — optional compatible exams. Empty means the subject remains global. */
+  examIds: string[];
 };
 
-/** Parsed list filters: a name substring + parent-scope narrowing (chapters by subject, topics by chapter). */
+/** Parsed list filters: a name substring + parent-scope narrowing (chapters by subject, sections by module, topics by chapter). */
 export type DictionaryFilter = {
   q?: string | undefined;
   subjectId?: string | undefined;
   chapterId?: string | undefined;
+  moduleId?: string | undefined;
 };
 
 /** A new row to insert. `key` is already canonicalised by the service; `createdAt`/`updatedAt` are set by the store. */
@@ -28,6 +33,8 @@ export type NewDictionaryRow = {
   rank: number | null;
   subjectId: string | null;
   chapterId: string | null;
+  moduleId: string | null;
+  examIds: string[];
 };
 
 /** A `$set` patch. Only the keys present are written; `null` clears a scope link. */
@@ -38,6 +45,8 @@ export type DictionaryPatch = {
   rank?: number;
   subjectId?: string | null;
   chapterId?: string | null;
+  moduleId?: string | null;
+  examIds?: string[];
 };
 
 /**

@@ -3,7 +3,7 @@ import { aiFilledFields, withoutAiFields, type AiFillableField, type AiFilled, t
 /**
  * The AI-filled tags after a Verify-screen edit, or undefined when they are unchanged. A tagged field whose
  * value the operator changes is no longer the AI's, so its tag is dropped; re-saving the same value (Verify
- * autosaves the whole draft) keeps it. Level is not editable on Verify, so its tag is never touched here.
+ * autosaves the whole draft) keeps it.
  */
 export function aiFilledAfterEdit(current: Question, patch: UpdateQuestion): AiFilled | null | undefined {
   const tagged = aiFilledFields(current.aiFilled);
@@ -12,7 +12,7 @@ export function aiFilledAfterEdit(current: Question, patch: UpdateQuestion): AiF
     topic: patch.topic !== undefined && patch.topic !== current.topic,
     answer: patch.answer !== undefined && patch.answer !== current.answer,
     solution: patch.explanation !== undefined && patch.explanation !== current.explanation,
-    level: false,
+    level: patch.level !== undefined && patch.level !== current.level,
     // Rebuilding the matching by hand on the verify screen makes the structure the operator's, not the AI's.
     structure: patch.match !== undefined && JSON.stringify(patch.match) !== JSON.stringify(current.match),
   };

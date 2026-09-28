@@ -30,22 +30,47 @@ function context(document: Document): string {
  * every other paper. This keeps ordinary physics/math extraction inexpensive without making a
  * chemistry upload silently lose its rendering contract.
  */
-function isChemistryContext(document: Document): boolean {
-  const subject = document.subject?.trim();
-  if (subject) return /\bchem(?:istry|ical)?\b/i.test(subject);
-  return /\b(?:chem(?:istry|ical)?|organic|inorganic|stoichiometr|mole concept|periodic table|electrochem)\b/i
-    .test([document.path.module, document.path.chapter, document.path.section, document.sectionName ?? ''].join(' '));
+function hasChemistrySignal(value: string | null | undefined): boolean {
+  return /\b(?:chem(?:istry|ical)?|organic|inorganic|stoichiometr|mole concept|periodic table|electrochem)\b/i.test(
+    value ?? '',
+  );
 }
 
-function chemistryExtractionRules(document: Document, overrides: PromptOverrides): string[] {
+/** Check every available routing signal: an assembled/PYQ document can carry a generic document subject. */
+function isChemistryContext(document: Document, leafSubject?: string): boolean {
+  return [
+    document.subject,
+    leafSubject,
+    document.path.module,
+    document.path.chapter,
+    document.path.section,
+    document.sectionName,
+  ].some(hasChemistrySignal);
+}
+
+function chemistryExtractionRules(
+  document: Document,
+  overrides: PromptOverrides,
+  leafSubject?: string,
+): string[] {
   const hasOperatorRule = Boolean(overrides.chemistry?.trim() || overrides.smiles?.trim());
-  if (hasOperatorRule || isChemistryContext(document)) {
-    return [resolvePrompt(overrides, 'chemistry'), resolvePrompt(overrides, 'smiles')].filter(Boolean);
+  if (hasOperatorRule || isChemistryContext(document, leafSubject)) {
+    return [resolvePrompt(overrides, 'chemistry'), resolvePrompt(overrides, 'smiles')].filter(
+      Boolean,
+    );
   }
   return [
     'CHEMISTRY SAFETY (only if chemical notation appears): preserve a printed formula, ion, or reaction as inline mhchem such as \\(\\ce{H2O}\\) or \\(\\ce{2H2 + O2 -> 2H2O}\\); never put ordinary prose or units in \\ce, and leave an unreadable drawn molecular structure for its image rather than inventing it.',
   ];
 }
+
+/**
+ * A deliberately compact, code-owned guard for every prompt that can return question text. The full
+ * editable SMILES policy is useful for a chemistry batch, but interactive re-reads need this rule
+ * even with no operator override — otherwise a model often turns an expanded structural drawing into
+ * a flat `\\ce{…}` formula that the UI cannot redraw.
+ */
+const DRAWN_CHEMISTRY_STRUCTURE_GUARD = `DRAWN CHEMISTRY STRUCTURE (required whenever one appears): When the source visibly draws bonds, double bonds, rings, or atom positions, emit each molecule in place as exactly one <smiles>RAW_SMILES</smiles>. An expanded structural formula with every atom written beside drawn bonds is still a diagram, not a \\ce formula. Preserve connectivity, charge, ring positions, and I/II/III/IV order; never simplify it to a formula, chemical name, or prose. For example, a drawn CF3-S(=O)2-O− is <smiles>[O-]S(=O)(=O)C(F)(F)F</smiles>, and a drawn phenoxide is <smiles>[O-]c1ccccc1</smiles>. Use an image fallback only when connectivity or stereochemistry is genuinely unreadable or ambiguous; never guess a SMILES.`;
 
 const TYPE_RULES: Record<string, string> = {
   single_correct:
@@ -86,7 +111,7 @@ const ANSWER_TYPE_RULES: Record<string, string> = {
   assertion_reason:
     'ASSERTION-REASON: each answer is the single chosen printed option label for the standard evaluation of the Assertion and the Reason. In the explanation, state which of the Assertion and the Reason are true and whether the Reason correctly explains the Assertion.',
   comprehension:
-    'COMPREHENSION: give ONE answer PER SUB-QUESTION, keyed by that sub-question\'s own printed number (each sub-question is a separate entry); each value is the option letter(s) or value for that sub-question.',
+    "COMPREHENSION: give ONE answer PER SUB-QUESTION, keyed by that sub-question's own printed number (each sub-question is a separate entry); each value is the option letter(s) or value for that sub-question.",
   true_false:
     'TRUE/FALSE: each answer is "True" or "False" — or the printed option letter (e.g. "A" for True, "B" for False) when the paper labels the choices.',
   fill_blank:
@@ -128,9 +153,10 @@ function answerSourceScopeRule(
     : 'The corresponding questions have mixed or unspecified types; preserve each printed answer format exactly.';
   const questionPages = `${String(scope.questionPageRange.from)}–${String(scope.questionPageRange.to)}`;
   const sourcePages = `${String(scope.sourcePageRange.from)}–${String(scope.sourcePageRange.to)}`;
-  const pairing = source === 'answer key'
-    ? 'Return only the final answer value for each printed question number; never manufacture an explanation from an answer key.'
-    : 'For each printed question number, keep its final answer in "answer" and all working for that same question in "explanation"; stop before the next numbered solution.';
+  const pairing =
+    source === 'answer key'
+      ? 'Return only the final answer value for each printed question number; never manufacture an explanation from an answer key.'
+      : 'For each printed question number, keep its final answer in "answer" and all working for that same question in "explanation"; stop before the next numbered solution.';
   return [
     `BOUND ${source.toUpperCase()} SCOPE (authoritative): these source pages ${sourcePages} are bound only to question leaf ${leaf} (question-PDF pages ${questionPages}).`,
     type,
@@ -148,6 +174,7 @@ function answerSourceContext(document: Document, scope?: AnswerExtractionScope):
     `Bound question leaf: ${scope.sectionName}`,
   ];
   if (scope.questionType) parts.push(`Question type: ${scope.questionType}`);
+  if (scope.subject) parts.push(`Subject: ${scope.subject}`);
   return parts.join(' | ');
 }
 
@@ -172,35 +199,48 @@ function classificationRule(expectedType: string | null, masters?: MastersSnapsh
   // edit is reflected with no code change), falling back to the built-in constants when no snapshot is
   // available (e.g. the unconfigured taxonomy store). questionType rows are presented as the pipeline
   // SLUG the model must emit (single/multi get the `_correct` suffix) paired with their display name.
-  const configuredRows = masters && masters.questionType.length > 0
-    ? masters.questionType.map((row) => ({ slug: slugForKind(row.kind) ?? row.key, name: row.name }))
-    : [];
+  const configuredRows =
+    masters && masters.questionType.length > 0
+      ? masters.questionType.map((row) => ({
+          slug: slugForKind(row.kind) ?? row.key,
+          name: row.name,
+        }))
+      : [];
   // The live master tree may omit a built-in extraction kind (notably true/false and fill-in-the-
   // blank). Keep the vocabulary complete while still allowing custom operator-managed keys.
-  const knownRows = (KNOWN_QUESTION_TYPES as readonly string[]).map((slug) => ({ slug, name: slug }));
+  const knownRows = (KNOWN_QUESTION_TYPES as readonly string[]).map((slug) => ({
+    slug,
+    name: slug,
+  }));
   const typeRows = [...configuredRows, ...knownRows].filter(
     (row, index, rows) => rows.findIndex((candidate) => candidate.slug === row.slug) === index,
   );
-  const levelRows = masters && masters.level.length > 0
-    ? masters.level.map((row) => ({ slug: row.key, name: row.name }))
-    : (KNOWN_LEVELS as readonly string[]).map((slug) => ({ slug, name: slug }));
+  const levelRows =
+    masters && masters.level.length > 0
+      ? masters.level.map((row) => ({ slug: row.key, name: row.name }))
+      : (KNOWN_LEVELS as readonly string[]).map((slug) => ({ slug, name: slug }));
   const types = typeRows.map((row) => row.slug).join('", "');
   const levels = levelRows.map((row) => row.slug).join('", "');
   const typeLegend = typeRows.map((row) => `    • "${row.slug}" — ${row.name}`).join('\n');
   const difficultyRule = `- "difficulty": how hard the question is for a student preparing for this exam — exactly one of "${levels}" (easy = direct recall or a single step, medium = a couple of steps, hard = multi-step or conceptually tricky).`;
+  const difficultyConfidenceRule =
+    '- "difficulty_confidence": your numeric confidence in that difficulty classification, from 0 to 1 (for example 0.85).';
   if (expectedType && expectedType !== 'comprehension') {
     return [
       `TYPE LOCK: this cut was explicitly configured as "${expectedType}". Emit that exact value in "question_type" for EVERY question on this page; do not reclassify it from OCR or a neighbouring heading.`,
       difficultyRule,
+      difficultyConfidenceRule,
     ].join('\n');
   }
-  const typeHint = expectedType === 'comprehension'
-    ? 'This page is a COMPREHENSION container: each sub-question still needs its own printed type; do not emit "comprehension" as a child type.'
-    : 'Pick the type that matches how each question is actually printed.';
+  const typeHint =
+    expectedType === 'comprehension'
+      ? 'This page is a COMPREHENSION container: each sub-question still needs its own printed type; do not emit "comprehension" as a child type.'
+      : 'Pick the type that matches how each question is actually printed.';
   return [
     'CLASSIFY EACH QUESTION using ONLY the operator-managed masters vocabulary below — never invent a type or difficulty. In addition to question_number, question_text and options, add TWO more fields to EVERY question object (and, for a comprehension, to every sub-question):',
     `- "question_type": the question's own type, exactly one of "${types}". ${typeHint}\n  The current question-type masters (choose from these only):\n${typeLegend}`,
     difficultyRule,
+    difficultyConfidenceRule,
   ].join('\n');
 }
 
@@ -242,7 +282,8 @@ export function questionPrompt(
     typeRule ? `TYPE-SPECIFIC RULE:\n${typeRule}` : '',
     classificationRule(expectedType, masters),
     expectedType ? '' : detectedTypeStructureRule(),
-    ...chemistryExtractionRules(document, overrides),
+    ...chemistryExtractionRules(document, overrides, binding?.subject),
+    DRAWN_CHEMISTRY_STRUCTURE_GUARD,
     document.answerLayout === 'inline' ? resolvePrompt(overrides, 'inlineAnswer') : '',
     resolvePyq(document, binding) ? resolvePrompt(overrides, 'pyq') : '',
   ]
@@ -296,14 +337,31 @@ function reExtractOverrideRules(
   if (context.sourceKind === 'question' && context.inlineAnswers) {
     overridesToApply.push(['inlineAnswer', 'INLINE-ANSWER']);
   }
-  const rules = overridesToApply
-    .flatMap(([key, label]) => {
-      const value = overrides[key]?.trim();
-      return value ? [`${label} OVERRIDE:\n${value}`] : [];
-    });
+  const rules = overridesToApply.flatMap(([key, label]) => {
+    const value = overrides[key]?.trim();
+    return value ? [`${label} OVERRIDE:\n${value}`] : [];
+  });
   return rules.length > 0
     ? `OPERATOR PROMPT OVERRIDES — apply their content-reading/pairing rules, but the target-only JSON shape below remains authoritative:\n${rules.join('\n\n')}`
     : '';
+}
+
+/**
+ * Read one operator-selected source rectangle into a single editable matrix field. This intentionally
+ * has a tiny, target-only envelope: unlike page re-extraction it must not inspect neighbouring rows
+ * or manufacture a complete question/table from a tight crop.
+ */
+export function transcribeSourceAreaPrompt(target: 'matrix_column_title' | 'matrix_entry'): string {
+  const fieldRule =
+    target === 'matrix_column_title'
+      ? 'The selected rectangle is a MATRIX COLUMN HEADING. Return only that heading.'
+      : 'The selected rectangle is ONE MATRIX ENTRY. Return only its body text. Omit a standalone leading row marker such as "A", "(A)", "p", "1." when it is merely the entry label; retain all actual body text.';
+  return [
+    'You are given one tightly cropped region that a teacher selected from an examination paper.',
+    fieldRule,
+    'Return ONLY this exact JSON shape:\n\n{ "text": "the selected field text" }',
+    'TRANSCRIBE RULES:\n1. Read ONLY what is visibly inside the selected rectangle, in its printed order. Never borrow neighbouring rows/columns, infer missing words, correct a statement, or add a label that is not part of the requested field.\n2. Preserve math precisely using LaTeX delimiters such as \\(...\\) or \\[...\\]; preserve signs, subscripts, superscripts, fractions, arrows, units, and punctuation.\n3. Chemical formulas/ions/reactions use mhchem inside inline math, e.g. \\(\\ce{H2O}\\), \\(\\ce{SO4^2-}\\), \\(\\ce{2H2 + O2 -> 2H2O}\\). Do not balance or repair what is printed.\n4. If the selected area is unreadable or contains only a non-text diagram, return an empty string.\n5. Return valid JSON only — no prose, markdown fence, or extra keys.',
+  ].join('\n\n');
 }
 
 /**
@@ -312,45 +370,51 @@ function reExtractOverrideRules(
  * a single question by its printed number (with the current stem as a fallback hint). A sibling answer
  * or solution page uses a field-specific prompt so it is never misread as a second question paper.
  */
-export function reExtractQuestionPrompt(target: {
-  questionNumber: number | null;
-  stemHint: string;
-  questionType: string | null;
-  sourceKind?: 'question' | 'answer' | 'solution' | 'companion';
-  fieldTarget?: 'answer' | 'solution';
-  inlineAnswers?: boolean;
-}, overrides: PromptOverrides = {}): string {
+export function reExtractQuestionPrompt(
+  target: {
+    questionNumber: number | null;
+    stemHint: string;
+    questionType: string | null;
+    sourceKind?: 'question' | 'answer' | 'solution' | 'companion';
+    fieldTarget?: 'answer' | 'solution';
+    inlineAnswers?: boolean;
+  },
+  overrides: PromptOverrides = {},
+): string {
   const hint = target.stemHint.replace(/\s+/g, ' ').trim().slice(0, 120);
   const typeRule = target.questionType ? TYPE_RULES[target.questionType] : undefined;
   const answerRule = target.questionType ? ANSWER_TYPE_RULES[target.questionType] : undefined;
   const isMatrix = target.questionType === 'matrix';
   const sourceKind = target.sourceKind ?? 'question';
   const fieldTarget = target.fieldTarget;
-  const sourceIntro = sourceKind === 'answer'
-    ? 'You are given an image from an exam ANSWER KEY.'
-    : sourceKind === 'solution'
-      ? 'You are given an image from an exam SOLUTIONS / EXPLANATIONS booklet.'
-      : sourceKind === 'companion'
-        ? 'You are given an image from one grouped exam ANSWER KEY + SOLUTIONS companion booklet.'
-      : 'You are given an image of one page from an exam question paper.';
-  const targetReadInstruction = sourceKind === 'answer'
-    ? `Find the final answer — and any worked reasoning printed in this same source — for question number ${target.questionNumber === null ? '(unknown)' : String(target.questionNumber)}${hint ? `, whose question begins: "${hint}"` : ''}.`
-    : sourceKind === 'solution'
-      ? `Find ONLY the worked solution printed for question number ${target.questionNumber === null ? '(unknown)' : String(target.questionNumber)}${hint ? `, whose question begins: "${hint}"` : ''}.`
-      : sourceKind === 'companion'
-        ? `Find ${fieldTarget === 'answer' ? 'the final answer' : fieldTarget === 'solution' ? 'the worked solution and final answer when stated' : 'the final answer and any worked solution'} for question number ${target.questionNumber === null ? '(unknown)' : String(target.questionNumber)}${hint ? `, whose question begins: "${hint}"` : ''}.`
-      : `Re-read the SINGLE question printed as number ${
-        target.questionNumber === null ? '(unknown)' : String(target.questionNumber)
-      }${hint ? `, which begins: "${hint}"` : ''} and extract only that one question.`;
-  const sourceRule = sourceKind === 'answer'
-    ? 'ANSWER-KEY SOURCE RULES: Locate the exact printed question number, never an option/table row. Return stem as "", options as [], columns as [], omit match, and put the final answer value in answer. If this same source also prints worked reasoning, preserve it completely in explanation; otherwise explanation is null. If no answer is visible, return answer as "". Do not invent question text, choices, working, or a visual figure transcription.'
-    : sourceKind === 'solution'
-      ? 'SOLUTION SOURCE RULES: Locate the exact printed question number, never an option/table row. Return stem as "", options as [], columns as [], omit match, answer as the final result when stated (else ""), and explanation as the COMPLETE working for that same question (else null). Stop at the next numbered solution; do not invent question text or choices.'
-      : sourceKind === 'companion'
-        ? `COMPANION SOURCE RULES: Locate the exact printed question number, never an option/table row. Return stem as "", options as [], columns as [], and omit match. ${fieldTarget === 'answer' ? 'Return the final answer; explanation is null unless the same page visibly includes its working.' : fieldTarget === 'solution' ? 'Return the final answer when stated and the COMPLETE same-number working.' : 'Return both the final answer when stated and the COMPLETE same-number working.'} Stop at the next numbered entry; do not invent question text or choices.`
-      : target.inlineAnswers
-        ? 'INLINE PAIRING RULE: this question PDF prints answers/solutions beside the questions. The next numbered QUESTION is the boundary; "Ans.", "Solution", a caption, or a line break is not. Keep everything after this question and before the next numbered question paired to this one.'
-        : '';
+  const sourceIntro =
+    sourceKind === 'answer'
+      ? 'You are given an image from an exam ANSWER KEY.'
+      : sourceKind === 'solution'
+        ? 'You are given an image from an exam SOLUTIONS / EXPLANATIONS booklet.'
+        : sourceKind === 'companion'
+          ? 'You are given an image from one grouped exam ANSWER KEY + SOLUTIONS companion booklet.'
+          : 'You are given an image of one page from an exam question paper.';
+  const targetReadInstruction =
+    sourceKind === 'answer'
+      ? `Find the final answer — and any worked reasoning printed in this same source — for question number ${target.questionNumber === null ? '(unknown)' : String(target.questionNumber)}${hint ? `, whose question begins: "${hint}"` : ''}.`
+      : sourceKind === 'solution'
+        ? `Find ONLY the worked solution printed for question number ${target.questionNumber === null ? '(unknown)' : String(target.questionNumber)}${hint ? `, whose question begins: "${hint}"` : ''}.`
+        : sourceKind === 'companion'
+          ? `Find ${fieldTarget === 'answer' ? 'the final answer' : fieldTarget === 'solution' ? 'the worked solution and final answer when stated' : 'the final answer and any worked solution'} for question number ${target.questionNumber === null ? '(unknown)' : String(target.questionNumber)}${hint ? `, whose question begins: "${hint}"` : ''}.`
+          : `Re-read the SINGLE question printed as number ${
+              target.questionNumber === null ? '(unknown)' : String(target.questionNumber)
+            }${hint ? `, which begins: "${hint}"` : ''} and extract only that one question.`;
+  const sourceRule =
+    sourceKind === 'answer'
+      ? 'ANSWER-KEY SOURCE RULES: Locate the exact printed question number, never an option/table row. Return stem as "", options as [], columns as [], omit match, and put the final answer value in answer. If this same source also prints worked reasoning, preserve it completely in explanation; otherwise explanation is null. If no answer is visible, return answer as "". Do not invent question text, choices, working, or a visual figure transcription.'
+      : sourceKind === 'solution'
+        ? 'SOLUTION SOURCE RULES: Locate the exact printed question number, never an option/table row. Return stem as "", options as [], columns as [], omit match, answer as the final result when stated (else ""), and explanation as the COMPLETE working for that same question (else null). Stop at the next numbered solution; do not invent question text or choices.'
+        : sourceKind === 'companion'
+          ? `COMPANION SOURCE RULES: Locate the exact printed question number, never an option/table row. Return stem as "", options as [], columns as [], and omit match. ${fieldTarget === 'answer' ? 'Return the final answer; explanation is null unless the same page visibly includes its working.' : fieldTarget === 'solution' ? 'Return the final answer when stated and the COMPLETE same-number working.' : 'Return both the final answer when stated and the COMPLETE same-number working.'} Stop at the next numbered entry; do not invent question text or choices.`
+          : target.inlineAnswers
+            ? 'INLINE PAIRING RULE: this question PDF prints answers/solutions beside the questions. The next numbered QUESTION is the boundary; "Ans.", "Solution", a caption, or a line break is not. Keep everything after this question and before the next numbered question paired to this one.'
+            : '';
   return [
     sourceIntro,
     targetReadInstruction,
@@ -378,11 +442,16 @@ export function reExtractQuestionPrompt(target: {
 6. explanation: use null when no worked solution is printed on this page.
 7. Preserve all math as LaTeX, and write any chemistry (formulae, ions, reactions) with mhchem \\(\\ce{...}\\) — e.g. \\(\\ce{H2O}\\), \\(\\ce{SO4^2-}\\), \\(\\ce{2H2 + O2 -> 2H2O}\\); one whole reaction per \\ce, keep units/quantities as ordinary math (not \\ce), and never wrap prose words in \\ce. A molecule DRAWN as a 2-D diagram (a benzene ring, a skeletal/organic structure) is written inline as <smiles>RAW_SMILES</smiles> — e.g. <smiles>c1ccccc1</smiles>, <smiles>Oc1ccccc1</smiles> — never as \\ce and never wrapped in \\( \\); leave a wedge/dash-stereo or unreadable drawing for image. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`,
     sourceRule,
+    DRAWN_CHEMISTRY_STRUCTURE_GUARD,
     sourceKind === 'question' && isMatrix
       ? 'MATRIX MATCH: put ONLY the instruction/stem in "stem" — do NOT copy the columns into it. Fill "columns" — an array of EVERY printed column in order (usually two, sometimes three), each { "title": the heading, "entries": [ { "label": the printed label e.g. "A"/"p"/"t", "body": that entry\'s text with math as LaTeX } ] }. ALSO fill "options" with the printed multiple-choice ANSWERS (usually four), each { "label": one of "A"–"D" in printed order (normalize (1)(2)(3)(4)), "body": that choice\'s FULL matching text EXACTLY as printed, e.g. "A-i, B-ii, C-iii, D-iv, E-v", "is_correct": true only for the choice the page marks correct else false }. When printed choices exist, write the canonical "answer" as ONLY the selected choice label (for example "C"), never the expanded matching. When the page also prints the matching, add "match" mapping each first-column label to the labels it matches, e.g. { "A": ["iv"], "B": ["v"] }. Use a mapping string as "answer" only for a genuine direct-response matrix with no printed choices; omit "match" when no matching is shown. Never reconstruct or invent unreadable/missing choices: return options [] and preserve the key; the server adds verified generated choices only after key validation.'
-      : (sourceKind === 'question'
-        ? (typeRule ? `TYPE-SPECIFIC RULE:\n${typeRule}` : '')
-        : (answerRule ? `ANSWER TYPE-SPECIFIC RULE:\n${answerRule}` : '')),
+      : sourceKind === 'question'
+        ? typeRule
+          ? `TYPE-SPECIFIC RULE:\n${typeRule}`
+          : ''
+        : answerRule
+          ? `ANSWER TYPE-SPECIFIC RULE:\n${answerRule}`
+          : '',
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -419,38 +488,46 @@ function groupMemberStructureRule(type: string | null): string {
  * re-read. Each child carries its pre-existing type in the prompt, instead of treating the first child
  * as a group-wide type; this keeps a matrix/int/multiple-choice mix structurally safe.
  */
-export function reExtractGroupPrompt(target: {
-  mode: 'passage_only' | 'passage_and_questions';
-  members: readonly GroupReExtractPromptMember[];
-  passageHint: string;
-  sourceKind?: 'question' | 'answer' | 'solution' | 'companion';
-  fieldTarget?: 'answer' | 'solution';
-  inlineAnswers?: boolean;
-}, overrides: PromptOverrides = {}): string {
+export function reExtractGroupPrompt(
+  target: {
+    mode: 'passage_only' | 'passage_and_questions';
+    members: readonly GroupReExtractPromptMember[];
+    passageHint: string;
+    sourceKind?: 'question' | 'answer' | 'solution' | 'companion';
+    fieldTarget?: 'answer' | 'solution';
+    inlineAnswers?: boolean;
+  },
+  overrides: PromptOverrides = {},
+): string {
   const hint = target.passageHint.replace(/\s+/g, ' ').trim().slice(0, 120);
   const sourceKind = target.sourceKind ?? 'question';
   const fieldTarget = target.fieldTarget;
-  const sourceIntro = sourceKind === 'answer'
-    ? 'You are given source-page images from an exam ANSWER KEY for an existing comprehension group.'
-    : sourceKind === 'solution'
-      ? 'You are given source-page images from an exam SOLUTIONS booklet for an existing comprehension group.'
-      : sourceKind === 'companion'
-        ? 'You are given source-page images from one grouped exam ANSWER KEY + SOLUTIONS companion booklet for an existing comprehension group.'
-      : 'You are given one or more source-page images from an exam COMPREHENSION block: a shared passage followed by several sub-questions.';
-  const sourceRule = sourceKind === 'answer'
-    ? 'ANSWER-KEY SOURCE RULE: do not invent passage/stems/options/table data. For each visible target member, return only its final answer and null explanation.'
-    : sourceKind === 'solution'
-      ? 'SOLUTION SOURCE RULE: do not invent passage/stems/options/table data. For each visible target member, return its final answer when stated and the complete same-number explanation; stop at the next numbered solution.'
-      : sourceKind === 'companion'
-        ? `COMPANION SOURCE RULE: do not invent passage/stems/options/table data. For each visible target member, return ${fieldTarget === 'answer' ? 'its final answer (and no explanation unless the same page visibly includes it)' : fieldTarget === 'solution' ? 'the final answer when stated plus complete same-number explanation' : 'the final answer when stated plus complete same-number explanation'}.`
-      : target.inlineAnswers
-        ? 'INLINE PAIRING RULE: answers and working belong to the preceding question until the next numbered QUESTION, not to a heading, caption, or line break.'
-        : '';
-  const memberLines = target.members.map((member, index) => {
-    const number = member.questionNumber === null ? 'unnumbered' : `question ${String(member.questionNumber)}`;
-    const stem = member.stemHint.replace(/\s+/g, ' ').trim().slice(0, 72);
-    return `${String(index)} | ${number} | fixed type: ${member.questionType ?? 'unknown'}${stem ? ` | begins: "${stem}"` : ''}`;
-  }).join('\n');
+  const sourceIntro =
+    sourceKind === 'answer'
+      ? 'You are given source-page images from an exam ANSWER KEY for an existing comprehension group.'
+      : sourceKind === 'solution'
+        ? 'You are given source-page images from an exam SOLUTIONS booklet for an existing comprehension group.'
+        : sourceKind === 'companion'
+          ? 'You are given source-page images from one grouped exam ANSWER KEY + SOLUTIONS companion booklet for an existing comprehension group.'
+          : 'You are given one or more source-page images from an exam COMPREHENSION block: a shared passage followed by several sub-questions.';
+  const sourceRule =
+    sourceKind === 'answer'
+      ? 'ANSWER-KEY SOURCE RULE: do not invent passage/stems/options/table data. For each visible target member, return only its final answer and null explanation.'
+      : sourceKind === 'solution'
+        ? 'SOLUTION SOURCE RULE: do not invent passage/stems/options/table data. For each visible target member, return its final answer when stated and the complete same-number explanation; stop at the next numbered solution.'
+        : sourceKind === 'companion'
+          ? `COMPANION SOURCE RULE: do not invent passage/stems/options/table data. For each visible target member, return ${fieldTarget === 'answer' ? 'its final answer (and no explanation unless the same page visibly includes it)' : fieldTarget === 'solution' ? 'the final answer when stated plus complete same-number explanation' : 'the final answer when stated plus complete same-number explanation'}.`
+          : target.inlineAnswers
+            ? 'INLINE PAIRING RULE: answers and working belong to the preceding question until the next numbered QUESTION, not to a heading, caption, or line break.'
+            : '';
+  const memberLines = target.members
+    .map((member, index) => {
+      const number =
+        member.questionNumber === null ? 'unnumbered' : `question ${String(member.questionNumber)}`;
+      const stem = member.stemHint.replace(/\s+/g, ' ').trim().slice(0, 72);
+      return `${String(index)} | ${number} | fixed type: ${member.questionType ?? 'unknown'}${stem ? ` | begins: "${stem}"` : ''}`;
+    })
+    .join('\n');
 
   if (target.mode === 'passage_only') {
     return [
@@ -465,11 +542,16 @@ export function reExtractGroupPrompt(target: {
       }),
       `Return ONLY this exact JSON shape:\n\n{\n  "passage": "the FULL shared passage VERBATIM, math as LaTeX like \\\\( \\\\sqrt{3} \\\\)"\n}`,
       'RULES:\n1. Copy the complete shared passage exactly once; do not include any numbered sub-question.\n2. Preserve math as LaTeX. Write chemistry formulae/reactions with mhchem, for example \\(\\ce{H2O}\\) and \\(\\ce{2H2 + O2 -> 2H2O}\\).\n3. Return valid JSON only — no prose, markdown fence, or extra keys.',
+      DRAWN_CHEMISTRY_STRUCTURE_GUARD,
     ].join('\n\n');
   }
 
-  const distinctTypes = [...new Set(target.members.map((member) => member.questionType ?? 'unknown'))];
-  const structuralRules = distinctTypes.map((type) => `- ${type}: ${groupMemberStructureRule(type === 'unknown' ? null : type)}`).join('\n');
+  const distinctTypes = [
+    ...new Set(target.members.map((member) => member.questionType ?? 'unknown')),
+  ];
+  const structuralRules = distinctTypes
+    .map((type) => `- ${type}: ${groupMemberStructureRule(type === 'unknown' ? null : type)}`)
+    .join('\n');
   return [
     sourceIntro,
     `${hint ? `Re-read the comprehension block whose passage begins: "${hint}".` : 'Re-read the shared passage immediately before the target members.'} Return exactly the existing members below — no adjacent question, invented child, or changed type.`,
@@ -496,6 +578,7 @@ export function reExtractGroupPrompt(target: {
 }`,
     `MEMBER TYPE CONTRACTS:\n${structuralRules}`,
     sourceRule,
+    DRAWN_CHEMISTRY_STRUCTURE_GUARD,
     `RE-EXTRACT RULES:
 1. Return one object for EVERY target member and use its exact member_index. Keep question_number as printed (or null); never use a matrix row label or option label as a question number.
 2. passage is the FULL shared passage exactly once, VERBATIM. NEVER repeat it inside stem. stem contains ONLY the member's own question.
@@ -525,10 +608,13 @@ export function answerPrompt(
     ? `CHEMISTRY OVERRIDE:\n${chemistryOverride}`
     : 'CHEMISTRY ANSWER RULE: preserve every printed formula, ion, and reaction with mhchem inside inline math (for example \\(\\ce{H2O}\\), \\(\\ce{SO4^2-}\\), \\(\\ce{2H2 + O2 -> 2H2O}\\)); keep numbers with units as ordinary math and never rewrite a printed chemical name.';
   return [
-    fillTokens(resolvePrompt(overrides, 'answerKey'), { context: answerSourceContext(document, scope) }),
+    fillTokens(resolvePrompt(overrides, 'answerKey'), {
+      context: answerSourceContext(document, scope),
+    }),
     answerSourceScopeRule(scope, 'answer key'),
     typeRule ? `ANSWER TYPE-SPECIFIC RULE:\n${typeRule}` : '',
     answerChemistryRule,
+    DRAWN_CHEMISTRY_STRUCTURE_GUARD,
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -548,10 +634,13 @@ export function solutionPrompt(
   const questionType = resolveQuestionType(document, pageNumber, scope);
   const typeRule = questionType ? ANSWER_TYPE_RULES[questionType] : undefined;
   return [
-    fillTokens(resolvePrompt(overrides, 'solution'), { context: answerSourceContext(document, scope) }),
+    fillTokens(resolvePrompt(overrides, 'solution'), {
+      context: answerSourceContext(document, scope),
+    }),
     answerSourceScopeRule(scope, 'solution'),
     typeRule ? `ANSWER TYPE-SPECIFIC RULE:\n${typeRule}` : '',
-    ...chemistryExtractionRules(document, overrides),
+    ...chemistryExtractionRules(document, overrides, scope?.subject),
+    DRAWN_CHEMISTRY_STRUCTURE_GUARD,
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -590,9 +679,14 @@ export function companionPrompt(
 }`,
     'COMPANION RULES:\n1. Include every visible section and use printed question numbers as keys.\n2. Every entry contains BOTH keys: answer is the final value when printed (else null); explanation is the full same-number working when printed (else null).\n3. A terse answer-key page therefore yields explanation: null; a worked-solution page yields the complete explanation and its final answer when stated. Never borrow content across numbered entries.\n4. Preserve math as LaTeX and do not invent a transcription for a figure; keep its question-number pairing for Verify cropping.\n5. Return valid JSON only — no prose or markdown fence.',
     typeRule ? `ANSWER TYPE-SPECIFIC RULE:\n${typeRule}` : '',
-    answerOverride ? `ANSWER-KEY OVERRIDE (content rules only; keep the companion JSON shape):\n${answerOverride}` : '',
-    solutionOverride ? `SOLUTION OVERRIDE (content rules only; keep the companion JSON shape):\n${solutionOverride}` : '',
-    ...chemistryExtractionRules(document, overrides),
+    answerOverride
+      ? `ANSWER-KEY OVERRIDE (content rules only; keep the companion JSON shape):\n${answerOverride}`
+      : '',
+    solutionOverride
+      ? `SOLUTION OVERRIDE (content rules only; keep the companion JSON shape):\n${solutionOverride}`
+      : '',
+    ...chemistryExtractionRules(document, overrides, scope?.subject),
+    DRAWN_CHEMISTRY_STRUCTURE_GUARD,
   ]
     .filter(Boolean)
     .join('\n\n');

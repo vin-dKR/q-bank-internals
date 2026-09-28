@@ -13,10 +13,11 @@ export const AI_FILLABLE_FIELDS = ['topic', 'answer', 'solution', 'level', 'stru
 export type AiFillableField = (typeof AI_FILLABLE_FIELDS)[number];
 
 /**
- * How the value reached the question: `review` — a batch proposal approved on the Fix with AI screen;
- * `assist` — a suggestion filled into the fix panel and saved there unchanged.
+ * How the value reached the question: `extraction` — the initial vision extraction classified it;
+ * `review` — a batch proposal approved on the Fix with AI screen; `assist` — a suggestion filled into
+ * the fix panel and saved there unchanged.
  */
-export const AiFillViaSchema = z.enum(['review', 'assist']);
+export const AiFillViaSchema = z.enum(['extraction', 'review', 'assist']);
 export type AiFillVia = z.infer<typeof AiFillViaSchema>;
 
 export const AiFillTagSchema = z.object({

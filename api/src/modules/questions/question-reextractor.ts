@@ -1,4 +1,9 @@
-import type { MatchData, QuestionOption, ReExtractGroupMode } from '@ingest/contracts';
+import type {
+  MatchData,
+  QuestionOption,
+  ReExtractGroupMode,
+  TranscribeAreaTarget,
+} from '@ingest/contracts';
 import type { AiTokenUsage } from '../usage/index.js';
 
 /** Which document layout the one-question re-read is looking at. */
@@ -37,6 +42,12 @@ export type QuestionReExtraction = {
   match: MatchData | null;
   usage: AiTokenUsage;
 };
+
+/** One tight source-area image, selected by the operator for field-level transcription. */
+export type SourceAreaTranscriptionInput = { png: Buffer; target: TranscribeAreaTarget };
+
+/** The exact text read from a selected source area, plus the vision call's token spend. */
+export type SourceAreaTranscription = { text: string; usage: AiTokenUsage };
 
 /** One existing comprehension member, used to keep a group re-read in the right structural shape. */
 export type GroupReExtractMember = {
@@ -101,5 +112,8 @@ export type GroupReExtraction = {
 export interface QuestionReExtractor {
   reExtract(input: ReExtractInput): Promise<QuestionReExtraction>;
   reExtractGroup(input: GroupReExtractInput): Promise<GroupReExtraction>;
+  /** Read only an operator-selected source region, without re-extracting the full question/page. */
+  transcribeArea(input: SourceAreaTranscriptionInput): Promise<SourceAreaTranscription>;
+  /** Transcribe a field-specific crop into the question, answer, or solution. */
   transcribeRegion(input: TranscribeRegionInput): Promise<{ text: string; usage: AiTokenUsage }>;
 }

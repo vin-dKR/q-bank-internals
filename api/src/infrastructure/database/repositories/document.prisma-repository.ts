@@ -46,6 +46,7 @@ type DocumentRow = {
   sectionName: string | null;
   questionType: string | null;
   exam: string | null;
+  className: string | null;
   subject: string | null;
   pyq: boolean;
   pyqExam: string | null;
@@ -113,6 +114,7 @@ function toDocument(row: DocumentRow): Document {
     sectionName: row.sectionName,
     questionType: row.questionType,
     exam: row.exam,
+    className: row.className ?? null,
     subject: row.subject,
     pyq: row.pyq,
     pyqExam: row.pyqExam,
@@ -207,6 +209,7 @@ export class PrismaDocumentRepository implements DocumentRepository {
         sectionName: input.sectionName,
         questionType: input.questionType,
         exam: input.exam,
+        className: input.className,
         subject: input.subject,
         pyq: input.pyq,
         pyqExam: input.pyqExam,
@@ -233,6 +236,7 @@ export class PrismaDocumentRepository implements DocumentRepository {
         sectionName: input.sectionName,
         questionType: input.questionType,
         exam: input.exam,
+        className: input.className,
         subject: input.subject,
         pyq: input.pyq,
         pyqExam: input.pyqExam,

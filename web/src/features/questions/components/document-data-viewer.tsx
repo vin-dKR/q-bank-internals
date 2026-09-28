@@ -65,6 +65,7 @@ function toPassageView(passage: Passage): PassageViewModel {
 function metaBadges(question: Question): JSX.Element {
   const chips: JSX.Element[] = [];
   if (question.level) chips.push(<Badge key="level" tone="neutral" dot={false}>{question.level}</Badge>);
+  if (question.className) chips.push(<Badge key="class" tone="info" dot={false}>{question.className}</Badge>);
   const section = question.sectionName ?? question.path.section;
   if (section) chips.push(<Badge key="section" tone="neutral" dot={false}>{section}</Badge>);
   if (question.topic) chips.push(<Badge key="topic" tone="neutral" dot={false}>{question.topic}</Badge>);
@@ -173,6 +174,7 @@ export function DocumentDataViewer({ documentId }: { documentId: string }): JSX.
                   <th className="num">#</th>
                   <th>Type</th>
                   <th>Level</th>
+                  <th>Class</th>
                   <th>Section</th>
                   <th>Topic</th>
                   <th>Subject</th>
@@ -187,6 +189,7 @@ export function DocumentDataViewer({ documentId }: { documentId: string }): JSX.
                     <td className="num">{question.questionNumber ?? index + 1}</td>
                     <td>{cell(question.questionType)}</td>
                     <td>{cell(question.level)}</td>
+                    <td>{cell(question.className)}</td>
                     <td>{cell(question.sectionName ?? question.path.section)}</td>
                     <td>{cell(question.topic)}</td>
                     <td>{cell(question.subject)}</td>

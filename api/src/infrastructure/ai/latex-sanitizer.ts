@@ -28,6 +28,8 @@
  *     span (e.g. `\xrightarrow[\ce{NaOH}]{\ce{(CH3)2SO4}` is missing one `}`).
  */
 
+import { stripModelControlArtifacts } from '../../shared/text/model-control-sanitizer.js';
+
 /** The math delimiters the renderer recognises (mirrors web `shared/lib/latex.tsx`), longest-opener first. */
 const MATH_REGIONS: readonly (readonly [string, string])[] = [
   ['$$', '$$'],
@@ -56,16 +58,6 @@ function collapseOverEscapes(text: string): string {
  */
 function restoreNewlines(text: string): string {
   return text.replace(/\\n(?![a-z])/g, '\n');
-}
-
-/** Keep printable characters plus the only whitespace controls that legitimately occur (tab, LF, CR). */
-function stripStrayControls(text: string): string {
-  let out = '';
-  for (const ch of text) {
-    const code = ch.charCodeAt(0);
-    if (code >= 0x20 || code === 0x09 || code === 0x0a || code === 0x0d) out += ch;
-  }
-  return out;
 }
 
 /**
@@ -152,5 +144,5 @@ function wrapBareChemistry(text: string): string {
 export function sanitizeExtractedLatex(text: string): string {
   if (!text) return text;
   const unescaped = restoreNewlines(collapseOverEscapes(text.split(CE_ESCAPE_STANDIN).join('\\c')));
-  return balanceMathBraces(wrapBareChemistry(stripStrayControls(unescaped)));
+  return balanceMathBraces(wrapBareChemistry(stripModelControlArtifacts(unescaped)));
 }
