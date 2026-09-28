@@ -607,10 +607,19 @@
   .combobox__pop {
     @apply absolute left-0 right-0 z-[60] m-0 max-h-60 overflow-y-auto rounded-lg border border-line bg-surface p-1 shadow-lg;
     top: calc(100% + 4px);
+    right: auto;
+    width: max-content;
+    min-width: 100%;
+    max-width: calc(100vw - 2rem);
     list-style: none;
   }
   .combobox__option {
     @apply flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-sm text-ink;
+    overflow: hidden;
+    min-width: 0;
+    max-width: 100%;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
   .combobox__option svg {
     @apply size-4;
@@ -1058,6 +1067,22 @@
   .verify__resizer:active .verify__grip {
     @apply bg-brand;
   }
+  /* Independent source-PDF splits let Question, Answer, and Solution previews be resized separately. */
+  .verify__pane-resizer {
+    @apply relative flex w-3.5 flex-none cursor-col-resize items-stretch justify-center;
+    touch-action: none;
+  }
+  .verify__pane-grip {
+    @apply my-auto h-10 w-0.5 rounded-full bg-line transition-colors;
+  }
+  .verify__pane-resizer:hover .verify__pane-grip,
+  .verify__pane-resizer:active .verify__pane-grip,
+  .verify__pane-resizer:focus-visible .verify__pane-grip {
+    @apply bg-brand;
+  }
+  .verify__pane-resizer:focus-visible {
+    @apply outline-none ring-2 ring-inset ring-indigo-500/40;
+  }
   /* AI-crop review lives in the pinned top block: cap its height so a long list scrolls inside the
      card instead of pushing the question cards off-screen. */
   .verify__ai-review-list {
@@ -1146,7 +1171,7 @@
     @apply flex flex-none flex-col gap-2 rounded-xl border border-line bg-surface px-3 py-2 shadow-sm;
   }
   .verify__session-row {
-    @apply flex items-center gap-2;
+    @apply flex flex-wrap items-center gap-2;
   }
   /* Live magnifier: an Amazon-style zoom of the crop being drawn or adjusted, never over the page. */
   .verify__magnifier {

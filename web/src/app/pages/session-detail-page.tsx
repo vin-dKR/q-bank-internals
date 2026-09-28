@@ -13,7 +13,7 @@ import {
   useUpdateSession,
 } from '../../features/sessions/index.js';
 import { DocumentUnitList, useDeleteDocument, useDocuments, useUpdateDocument } from '../../features/documents/index.js';
-import { usePublishDocument } from '../../features/questions/index.js';
+import { LatexIssueActions, usePublishDocument } from '../../features/questions/index.js';
 import { Badge, IconTrash, IconWarning, LoadingState, PageHeader, Spinner, StatusBadge, useConfirm } from '../../shared/ui/index.js';
 
 type StatusFilter = DocumentStatus | 'all';
@@ -22,7 +22,8 @@ function canRun(doc: Document): boolean {
   return doc.kind === 'question' && (doc.status === 'uploaded' || doc.status === 'failed');
 }
 function isExtracted(doc: Document): boolean {
-  return doc.status === 'extracted' || doc.status === 'completed' || doc.status === 'published';
+  return doc.status === 'extracted' || doc.status === 'needs_review' || doc.status === 'approved'
+    || doc.status === 'completed' || doc.status === 'published';
 }
 
 /** Phase-2 workspace for one session: summary, settings, files with per-file actions, and delete. */
@@ -141,6 +142,7 @@ export function SessionDetailPage(): JSX.Element {
       {doc.kind === 'question' && doc.flagged ? <Badge tone="danger">flagged</Badge> : null}
       {isExtracted(doc) ? (
         <>
+          {doc.kind === 'question' ? <LatexIssueActions documentId={doc.id} /> : null}
           <Link className="btn btn--xs" to={`/verify?documentId=${doc.id}`}>View</Link>
           <Link className="btn btn--xs" to={`/documents/${doc.id}/data`}>Data</Link>
           {doc.status !== 'published' ? (

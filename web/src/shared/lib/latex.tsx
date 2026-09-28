@@ -10,8 +10,8 @@ type Part = { type: 'text' | 'inline' | 'block' | 'smiles'; value: string };
 /**
  * The math delimiters we recognise, checked in this order. `\( … \)` is the app's canonical inline form
  * (what the AI "Fix LaTeX" refiner emits); `$$ … $$` and `\[ … \]` are the unambiguous DISPLAY forms a
- * worked solution or passage may carry. Single `$ … $` is deliberately NOT a delimiter — it collides
- * with currency ("$5") and none of our data uses it.
+ * worked solution or passage may carry. Single `$ … $` is deliberately NOT a delimiter because it
+ * collides with currency ("$5"); the LaTeX scanner flags legacy math written that way for repair.
  */
 const DELIMITERS = [
   { open: '<smiles>', close: '</smiles>', type: 'smiles' as const },

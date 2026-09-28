@@ -1,4 +1,6 @@
-import { LATEX_COMMAND, joinLatex, splitLatex, type Segment } from './latex-segments.js';
+import katex from 'katex';
+import 'katex/contrib/mhchem'; // Validate chemistry with the same extension enabled in Verify.
+import { LATEX_COMMAND, RAW_MATH_MARKER, joinLatex, splitLatex, type Segment } from './latex-segments.js';
 
 /**
  * The option label a bank option string starts with ("(1) ", "(A) "), which must stay OUTSIDE the maths.
@@ -22,7 +24,7 @@ export function wrapLooseMath(text: string): string | null {
   let changed = false;
   const rewritten: Segment[] = [];
   for (const segment of segments) {
-    if (segment.type !== 'text' || !LATEX_COMMAND.test(segment.value)) {
+    if (segment.type !== 'text' || (!LATEX_COMMAND.test(segment.value) && !RAW_MATH_MARKER.test(segment.value))) {
       rewritten.push(segment);
       continue;
     }
@@ -43,9 +45,31 @@ function wrapRun(run: string): string | null {
   const body = run.slice(label.length);
   const core = body.trim();
   if (core === '') return run;
+  // Single-dollar fragments are raw text in Verify. A formula such as
+  // `Cl$_2$ \rightarrow I$_2$` must have those fragments merged before the whole run is wrapped;
+  // otherwise KaTeX receives dollar signs nested inside \( ... \) and rejects it.
+  const math = core.includes('$') ? unwrapSingleDollarMath(core) : core;
+  if (math === null) return null;
   // Commands are not prose; what is left decides whether this run is a formula or a sentence.
-  if (PROSE_WORD.test(core.replace(new RegExp(LATEX_COMMAND.source, 'g'), ' '))) return null;
+  if (PROSE_WORD.test(math.replace(new RegExp(LATEX_COMMAND.source, 'g'), ' '))) return null;
+  if (math !== core) {
+    try {
+      katex.renderToString(math, { throwOnError: true, strict: 'ignore' });
+    } catch {
+      return null;
+    }
+  }
   const leading = body.slice(0, body.length - body.trimStart().length);
   const trailing = body.slice(body.trimEnd().length);
-  return `${label}${leading}\\(${core}\\)${trailing}`;
+  return `${label}${leading}\\(${math}\\)${trailing}`;
+}
+
+/** Only remove balanced legacy $...$ markers inside an otherwise formula-only run. */
+function unwrapSingleDollarMath(core: string): string | null {
+  let pairs = 0;
+  const unwrapped = core.replace(/(?<!\\)\$([^$\r\n]{1,80})\$/g, (_whole, inner: string) => {
+    pairs += 1;
+    return inner;
+  });
+  return pairs > 0 && !unwrapped.includes('$') ? unwrapped : null;
 }

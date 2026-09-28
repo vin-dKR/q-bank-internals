@@ -140,6 +140,16 @@ export function IconDownload(props: IconProps): JSX.Element {
   );
 }
 
+/** Box with an outward arrow — open this item in its own page/view. */
+export function IconExternalLink(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <path d="M14 3h7v7M10 14 21 3" />
+      <path d="M19 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6" />
+    </svg>
+  );
+}
+
 export function IconCheck(props: IconProps): JSX.Element {
   return (
     <svg {...base(props)}>
@@ -233,6 +243,15 @@ export function IconScan(props: IconProps): JSX.Element {
     <svg {...base(props)}>
       <path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2" />
       <path d="M4 12h16" />
+    </svg>
+  );
+}
+
+export function IconTextSelect(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 7V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-2" />
+      <path d="M8 9h8M8 12h8M8 15h5" />
     </svg>
   );
 }

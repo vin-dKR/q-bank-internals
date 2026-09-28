@@ -1,5 +1,6 @@
 import katex from 'katex';
-import { LATEX_COMMAND, splitLatex } from './latex-segments.js';
+import 'katex/contrib/mhchem'; // Register the same \ce chemistry commands that Verify renders.
+import { LATEX_COMMAND, RAW_MATH_MARKER, splitLatex } from './latex-segments.js';
 import type { AuditQuestion, RuleFinding } from './quality.types.js';
 
 type MathRun = { math: string; display: boolean };
@@ -18,6 +19,24 @@ const CORRUPTED_ESCAPES: readonly { pattern: RegExp; command: string; letter: st
   { pattern: /\v(?=ec|arepsilon|arphi|ert|dots)/g, command: '\\v (\\vec)', letter: 'v' },
   { pattern: /\r(?=ho|ight|angle|ceil|floor)/g, command: '\\r (\\rho, \\right)', letter: 'r' },
 ];
+
+// Verify renders \(...\), \[...\], and $$...$$, but leaves legacy $...$ inline math visible.
+// Ignore prose between currency amounts such as "$5 and $10".
+const LEGACY_INLINE_MATH = /(?<!\\)\$(?!\$)([^$\r\n]{1,120})(?<!\\)\$(?!\$)/g;
+function legacyInlineMath(text: string): RegExpExecArray | null {
+  for (const match of text.matchAll(LEGACY_INLINE_MATH)) {
+    const inner = (match[1] ?? '').trim();
+    if (!inner) continue;
+    const afterClosingDollar = text[match.index + match[0].length] ?? '';
+    if (/^\d/.test(inner) && /^\d/.test(afterClosingDollar)) continue;
+    const withoutCommands = inner.replace(/\\[A-Za-z]+/g, '');
+    if (/\b[A-Za-z]{3,}\b/.test(withoutCommands)) continue;
+    // A bare amount like "$5$" is ambiguous; require math syntax or a single-letter variable.
+    if (!/[_^\\{}=+\-*/<>]/.test(inner) && !/^\d\s*,\s*[+-]?\d/.test(inner) && !/^[A-Za-z]$/.test(inner)) continue;
+    return match;
+  }
+  return null;
+}
 
 /**
  * Turn every corrupted escape back into its backslash command ("\f rac" → "\frac"). Only the characters the
@@ -70,12 +89,23 @@ function fieldFindings(field: string, source: string): RuleFinding[] {
   for (const segment of segments) {
     if (segment.type !== 'text') continue;
     const raw = LATEX_COMMAND.exec(segment.value);
-    if (raw) {
-      findings.push({ kind: 'latex_outside_delimiters', field, detail: `Shown raw: "${excerpt(segment.value, raw.index)}"` });
+    const legacy = legacyInlineMath(segment.value);
+    const marker = RAW_MATH_MARKER.exec(segment.value);
+    if (raw || legacy || marker) {
+      const at = raw?.index ?? legacy?.index ?? marker?.index ?? 0;
+      const detail = legacy && !raw && !marker
+        ? 'Single-dollar math shown raw'
+        : marker && !raw && !legacy ? 'Subscript or superscript shown raw' : 'Shown raw';
+      findings.push({ kind: 'latex_outside_delimiters', field, detail: `${detail}: "${excerpt(segment.value, at)}"` });
       break;
     }
   }
   return findings;
+}
+
+/** Shared by live-bank quality scans and staged-session scans. */
+export function detectLatexInField(field: string, source: string): RuleFinding[] {
+  return fieldFindings(field, source);
 }
 
 /** Every LaTeX-bearing field of a question, labelled with the bank column (and index) it came from. */

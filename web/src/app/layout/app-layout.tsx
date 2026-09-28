@@ -1,6 +1,6 @@
 import type { JSX } from 'react';
-import { useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { IconDroplet, IconEdit, IconFileText, IconImage, IconLayers, IconScan, IconWarning } from '../../shared/ui/index.js';
 
 /** localStorage key remembering whether the operator collapsed the sidebar. */
@@ -171,6 +171,15 @@ function SectionCaption({ label, collapsed }: { label: string; collapsed: boolea
 /** The shell every page renders inside: a persistent sidebar + the routed content canvas. */
 export function AppLayout(): JSX.Element {
   const [collapsed, setCollapsed] = useState<boolean>(readCollapsed);
+  const { pathname } = useLocation();
+
+  // Give the two PDF workbenches the full canvas on entry. The user can still expand the sidebar
+  // manually after arriving; this effect runs only when the route changes.
+  useEffect(() => {
+    if (pathname !== '/' && pathname !== '/verify') return;
+    setCollapsed(true);
+    writeCollapsed(true);
+  }, [pathname]);
 
   function toggleSidebar(): void {
     setCollapsed((prev) => {

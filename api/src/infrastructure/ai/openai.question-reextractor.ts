@@ -12,6 +12,7 @@ import type {
   QuestionReExtractor,
   ReExtractedSubDraft,
   ReExtractInput,
+  TranscribeRegionInput,
 } from '../../modules/questions/index.js';
 import type { AiTokenUsage } from '../../modules/usage/index.js';
 import { errors } from '../../shared/errors/error-catalog.js';
@@ -338,6 +339,30 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
       'question re-extract done',
     );
     return { stem, options, answer, explanation, match, usage };
+  }
+
+  async transcribeRegion(input: TranscribeRegionInput): Promise<{ text: string; usage: AiTokenUsage }> {
+    const prompt = [
+      'You are transcribing a cropped region of an exam paper into a question-bank text field.',
+      `Destination field: ${input.destination}.`,
+      'Return JSON with one string property named "text".',
+      'Transcribe every readable item in the crop, in its printed order. Preserve the wording, labels, numbering, punctuation, and mathematical meaning exactly.',
+      'Do not solve the problem, explain it, infer content outside the crop, omit repeated items, or add labels that are not printed.',
+      'The question bank renders inline LaTeX only when it is enclosed in \\( ... \\). Every mathematical expression must use this exact delimiter form, including short expressions, fractions, equations, symbols, chemical formulas, subscripts, and superscripts.',
+      'Keep ordinary prose and answer labels outside math delimiters. In mixed prose, wrap only each mathematical expression, not the whole sentence.',
+      'Convert clearly readable printed math notation into equivalent valid LaTeX. Use braces for multi-character subscripts and superscripts, for example \\(x_{12}\\), \\(10^{3}\\), and fractions such as \\(\\frac{22}{425}\\).',
+      'For chemistry, use the mhchem command inside inline delimiters, for example \\(\\ce{2H2 + O2 -> 2H2O}\\).',
+      'Never emit bare LaTeX commands such as \\frac, \\sqrt, \\ce, or raw math subscript/superscript syntax outside \\( ... \\). Do not use single-dollar math delimiters.',
+      'For compact answer keys, preserve each printed question label and its corresponding answer; use line breaks between entries when visible or needed to keep the mapping unambiguous.',
+      'If part of the crop is unreadable, transcribe the readable parts faithfully and do not guess the unreadable content. If the entire crop is unreadable or contains no text, return {"text":""}.',
+    ].join('\n');
+    const { content, usage } = await this.callVision(prompt, input.png, 2000);
+    const parsed = parseReply(content) as { text?: unknown };
+    const text = cleanString(parsed.text);
+    if (!text || text.includes('[[FIGURE]]')) {
+      throw errors.extractionFailed('The selected area did not produce readable text. The question was left unchanged.');
+    }
+    return { text, usage };
   }
 
   async reExtractGroup(input: GroupReExtractInput): Promise<GroupReExtraction> {

@@ -34,6 +34,8 @@ const EnvSchema = z.object({
   // budget covers hidden reasoning before the JSON; the extractor retries at double and then fails
   // loudly rather than persisting a silently truncated page. Override to trade quality for cost.
   OPENAI_API_KEY: z.string().optional(),
+  // Local-only override when an OS-level OPENAI_API_KEY would otherwise take precedence over .env.
+  OPENAI_API_KEY_2: z.string().optional(),
   EXTRACTION_MODEL: z.string().default('gpt-5.4'),
   // Per-run deadline for the extraction worker. A run that exceeds this is aborted (its in-flight
   // vision call is cancelled) and flipped to `failed` so the document can be re-extracted, instead of
@@ -86,7 +88,12 @@ if (!parsed.success) {
   throw new Error(`Invalid environment configuration:\n${issues}`);
 }
 
-export const env = parsed.data;
+export const env = {
+  ...parsed.data,
+  OPENAI_API_KEY: parsed.data.NODE_ENV === 'production' || parsed.data.VERCEL
+    ? parsed.data.OPENAI_API_KEY
+    : parsed.data.OPENAI_API_KEY_2 || parsed.data.OPENAI_API_KEY,
+};
 export type Env = typeof env;
 
 /**
