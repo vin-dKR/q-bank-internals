@@ -26,6 +26,12 @@ export type ReExtractInput = {
   inlineAnswers?: boolean;
 };
 
+/** A tightly cropped region selected from a source PDF for literal transcription. */
+export type TranscribeRegionInput = {
+  png: Buffer;
+  destination: 'stem' | 'answer' | 'solution';
+};
+
 /** The re-extracted fields plus the token spend the model reported producing them. */
 export type QuestionReExtraction = {
   stem: string;
@@ -108,4 +114,6 @@ export interface QuestionReExtractor {
   reExtractGroup(input: GroupReExtractInput): Promise<GroupReExtraction>;
   /** Read only an operator-selected source region, without re-extracting the full question/page. */
   transcribeArea(input: SourceAreaTranscriptionInput): Promise<SourceAreaTranscription>;
+  /** Transcribe a field-specific crop into the question, answer, or solution. */
+  transcribeRegion(input: TranscribeRegionInput): Promise<{ text: string; usage: AiTokenUsage }>;
 }

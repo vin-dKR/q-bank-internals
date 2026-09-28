@@ -40,6 +40,14 @@ type CropCapability = {
   onExistingCrop?: (id: string, replacedUrl: string, imageUrl: string, natural: Rect, page: number) => string | null | Promise<string | null>;
 };
 
+/** Drag selection routed to one editable question text field instead of creating an image crop. */
+type TranscriptionCapability = {
+  armed: boolean;
+  page: number;
+  onSelect: (bbox: [number, number, number, number], page: number) => void;
+  onCancel: () => void;
+};
+
 /** One-page AI figure scan for this sibling source. The parent owns mapping + persistence. */
 type DetectionCapability = {
   busy: boolean;
@@ -80,10 +88,13 @@ export function SourcePreviewPane({
   fileName,
   defaultPage,
   crop,
+  transcription,
   detection,
   destination,
   onPageChange,
   onMagnifierChange,
+  paneId,
+  flexWeight,
 }: {
   title: string;
   tone: 'answer' | 'solution';
@@ -91,6 +102,7 @@ export function SourcePreviewPane({
   fileName: string;
   defaultPage: number;
   crop?: CropCapability;
+  transcription?: TranscriptionCapability | undefined;
   /** Optional Answer/Solution figure scan for the page currently displayed in this pane. */
   detection?: DetectionCapability;
   /** Compact field destination picker for a single grouped Answer + Solution companion source. */
@@ -99,6 +111,9 @@ export function SourcePreviewPane({
   onPageChange?: (page: number) => void;
   /** Receives a live sibling crop while it is drawn or adjusted; null clears the shared magnifier. */
   onMagnifierChange?: (value: SourcePreviewMagnifier | null) => void;
+  /** Identifies this preview in the Verify source-pane splitters. */
+  paneId: 'answer' | 'solution';
+  flexWeight?: number | undefined;
 }): JSX.Element {
   const [page, setPage] = useState(defaultPage);
   useEffect(() => { setPage(defaultPage); }, [defaultPage]);
@@ -146,11 +161,17 @@ export function SourcePreviewPane({
   const imgRef = useRef<HTMLImageElement>(null);
   const startRef = useRef<{ x: number; y: number } | null>(null);
   const [rubber, setRubber] = useState<Rect | null>(null);
-  const armed = crop?.armed ?? false;
+  const armed = (crop?.armed ?? false) || (transcription?.armed ?? false);
   // Read the latest crop callbacks through a ref so the drag listeners never capture a stale closure
   // (the parent passes a fresh `crop` object each render).
   const cropRef = useRef(crop);
   cropRef.current = crop;
+  const transcriptionRef = useRef(transcription);
+  transcriptionRef.current = transcription;
+  useEffect(() => {
+    const activeTranscription = transcriptionRef.current;
+    if (activeTranscription?.armed && activeTranscription.page !== page) activeTranscription.onCancel();
+  }, [page]);
   // Each saved crop owns its own natural-pixel working rect. Keeping the map in a ref as well as
   // state is important: mouseup can occur before React has committed the last mousemove state update.
   const [editedNaturals, setEditedNaturals] = useState<ReadonlyMap<string, Rect>>(() => new Map());
@@ -319,6 +340,16 @@ export function SourcePreviewPane({
       const box = el.getBoundingClientRect();
       const scaleX = el.naturalWidth / box.width;
       const scaleY = el.naturalHeight / box.height;
+      const activeTranscription = transcriptionRef.current;
+      if (activeTranscription?.armed) {
+        activeTranscription.onSelect([
+          Math.max(0, rect.x * scaleX / el.naturalWidth),
+          Math.max(0, rect.y * scaleY / el.naturalHeight),
+          Math.min(1, (rect.x + rect.width) * scaleX / el.naturalWidth),
+          Math.min(1, (rect.y + rect.height) * scaleY / el.naturalHeight),
+        ], page);
+        return;
+      }
       cropRef.current?.onCrop(questionsApi.pageImageUrl(documentId, page), {
         x: rect.x * scaleX,
         y: rect.y * scaleY,
@@ -327,7 +358,10 @@ export function SourcePreviewPane({
       }, page);
     };
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') cropRef.current?.onCancel();
+      if (event.key === 'Escape') {
+        cropRef.current?.onCancel();
+        transcriptionRef.current?.onCancel();
+      }
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -448,7 +482,11 @@ export function SourcePreviewPane({
   const drawingNewCrop = armed;
 
   return (
-    <div className="verify__source">
+    <div
+      className="verify__source"
+      data-verify-source-pane={paneId}
+      style={flexWeight === undefined ? undefined : { flex: `${String(flexWeight)} 1 0px` }}
+    >
       <div className="verify__source-head">
         <span className={`chip ${tone === 'answer' ? 'is-answer' : 'is-solution'}`}>{title}</span>
         <span className="verify__source-name" title={fileName}>{fileName}</span>
@@ -518,7 +556,7 @@ export function SourcePreviewPane({
         ) : null}
         {armed ? (
           <div className="verify__source-crophint" role="status">
-            Draw a box on the {tone} — <kbd>Esc</kbd>
+            {transcription?.armed ? 'Select text or formula' : `Draw a box on the ${tone}`} — <kbd>Esc</kbd>
           </div>
         ) : null}
         <div ref={scrollRef} className={`crop-canvas__viewport${zoomed ? ' crop-canvas__viewport--zoomed' : ''}`} style={{ inset: 12 }}>

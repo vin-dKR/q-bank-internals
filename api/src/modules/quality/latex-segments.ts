@@ -62,3 +62,6 @@ export function joinLatex(segments: Segment[]): string {
 /** LaTeX commands common enough that seeing one outside a math block means the text is unwrapped. */
 export const LATEX_COMMAND =
   /\\(frac|dfrac|sqrt|times|cdot|alpha|beta|gamma|theta|lambda|mu|omega|Omega|Delta|delta|pi|sigma|phi|epsilon|vec|hat|text|mathrm|left|right|circ|infty|int|sum|lim|log|sin|cos|tan|leq?|geq?|neq|approx|pm|propto|rightarrow)(?![a-zA-Z])/;
+
+/** Raw subscript/superscript syntax outside math, excluding ordinary identifiers such as file_name. */
+export const RAW_MATH_MARKER = /(?<![A-Za-z])(?:(?:[A-Z][a-z]?){1,5}|[a-z]|\d)[_^](?:\{[^}\r\n]+\}|[A-Za-z0-9+-])(?=$|[^A-Za-z])/;

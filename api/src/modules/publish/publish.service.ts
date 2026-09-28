@@ -7,6 +7,7 @@ import {
   type PaperMetadata,
   type Passage,
   type PublishSessionResult,
+  type PublishIssues,
   type Question,
   type QuestionOption,
   synthesizeMatrixChoiceOptions,
@@ -68,6 +69,51 @@ export class PublishService {
     const published = await this.bank.upsertQuestions(rows);
     if (document.status !== 'published') await this.documents.updateStatus(documentId, 'published');
     return { published };
+  }
+
+  /** Return every question-level blocker that can be checked before a bank write. */
+  async listPublishIssues(documentId: string): Promise<PublishIssues> {
+    const document = await this.documents.findById(documentId);
+    if (!document) throw errors.documentNotFound(documentId);
+    if (document.status !== 'published' && !PUBLISHABLE_STATUSES.has(document.status)) {
+      return {
+        documentId,
+        issues: [{
+          questionId: null,
+          questionNumber: null,
+          message: errors.documentNotPublishable(document.id, document.status).message,
+        }],
+      };
+    }
+
+    const [questions, passages] = await Promise.all([
+      this.questions.findByDocument(documentId),
+      this.questions.findPassagesByDocument(documentId),
+    ]);
+    const passageById = new Map(passages.map((passage) => [passage.id, passage] as const));
+    const issues: PublishIssues['issues'] = [];
+    for (const question of questions) {
+      const passage = question.passageId !== null ? passageById.get(question.passageId) : null;
+      if (!passage && (question.passageId !== null || question.groupOrder !== null)) {
+        const missingId = question.passageId ?? '(legacy pre-v2 row)';
+        issues.push({
+          questionId: question.id,
+          questionNumber: question.questionNumber,
+          message: errors.passageNotResolved(question.id, missingId).message,
+        });
+      }
+
+      try {
+        matrixProjectionForPublish(question);
+      } catch (caught) {
+        issues.push({
+          questionId: question.id,
+          questionNumber: question.questionNumber,
+          message: caught instanceof Error ? caught.message : String(caught),
+        });
+      }
+    }
+    return { documentId, issues };
   }
 
   /**

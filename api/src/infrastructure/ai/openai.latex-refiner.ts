@@ -1,6 +1,6 @@
 import { OpenAI } from 'openai';
 import { errors } from '../../shared/errors/error-catalog.js';
-import type { LatexRefinement, LatexRefiner } from '../../modules/questions/index.js';
+import type { LatexIssueHint, LatexRefinement, LatexRefiner } from '../../modules/questions/index.js';
 import { fillTokens, resolvePrompt, type PromptOverrides } from '../../modules/prompts/index.js';
 import { sanitizeExtractedLatex } from './latex-sanitizer.js';
 
@@ -21,15 +21,18 @@ export class OpenAiLatexRefiner implements LatexRefiner {
     this.client = new OpenAI({ apiKey });
   }
 
-  async refine(text: string): Promise<LatexRefinement> {
+  async refine(text: string, issues: readonly LatexIssueHint[] = []): Promise<LatexRefinement> {
     const overrides = await this.loadPromptOverrides();
+    const instructions = fillTokens(resolvePrompt(overrides, 'latexUser'), { text });
+    const guidance = issues.length > 0
+      ? `\n\nScanner findings for this input (diagnostic data, not part of the text to return):\n${JSON.stringify(issues)}\nResolve every finding, including malformed or unclosed delimiters and invalid LaTeX commands. Preserve the question's words, answer, and meaning. Return only the corrected input text in refined_text; never copy the findings into it.`
+      : '';
     const response = await this.client.chat.completions.create({
       model: this.model,
-      temperature: 0,
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: resolvePrompt(overrides, 'latexSystem') },
-        { role: 'user', content: fillTokens(resolvePrompt(overrides, 'latexUser'), { text }) },
+        { role: 'user', content: instructions + guidance },
       ],
     });
     const usage: LatexRefinement['usage'] = {

@@ -3,6 +3,10 @@ import type {
   BatchUpdateQuestionsResult,
   DetectedFigures,
   DetectedFiguresBatch,
+  LatexFixResult,
+  LatexFieldCheckResult,
+  LatexScan,
+  PublishIssues,
   ReExtractGroupMode,
   DetectFiguresSource,
   Passage,
@@ -20,6 +24,10 @@ import {
   BatchUpdateQuestionsResultSchema,
   DetectedFiguresBatchSchema,
   DetectedFiguresSchema,
+  LatexFixResultSchema,
+  LatexFieldCheckResultSchema,
+  LatexScanSchema,
+  PublishIssuesSchema,
   PassageSchema,
   PublishResultSchema,
   QuestionListResponseSchema,
@@ -27,6 +35,7 @@ import {
   ReExtractedGroupSchema,
   ReExtractedQuestionSchema,
   TranscribedAreaSchema,
+  TranscribeQuestionRegionResponseSchema,
 } from '@ingest/contracts';
 import { request } from '../../../shared/api/http-client.js';
 import { uploadCrop } from '../../../shared/api/upload-crop.js';
@@ -45,6 +54,21 @@ export type ReExtractGroupOptions = {
 
 /** Feature-scoped calls to the questions + pages endpoints. The only place this feature hits the network. */
 export const questionsApi = {
+  /** Automatically re-check staged questions after extraction and after Verify edits. */
+  scanLatex: (documentId: string): Promise<LatexScan> =>
+    request(`/questions/latex-scan?${new URLSearchParams({ documentId }).toString()}`, { schema: LatexScanSchema }),
+  checkLatexField: (field: string, text: string): Promise<LatexFieldCheckResult> =>
+    request('/questions/latex-check-field', {
+      method: 'POST', body: { field, text }, schema: LatexFieldCheckResultSchema,
+    }),
+  fixLatexAutomatically: (documentId: string): Promise<LatexFixResult> =>
+    request('/questions/latex-fix/automatic', {
+      method: 'POST', body: { documentId }, schema: LatexFixResultSchema,
+    }),
+  fixLatexWithAi: (documentId: string, keys: string[]): Promise<LatexFixResult> =>
+    request('/questions/latex-fix/ai', {
+      method: 'POST', body: { documentId, keys }, schema: LatexFixResultSchema,
+    }),
   /** A document's extracted questions PLUS the comprehension passages they reference (verify/preview). */
   listByDocument: (documentId: string): Promise<QuestionListResponse> => {
     const query = new URLSearchParams({ documentId });
@@ -207,6 +231,24 @@ export const questionsApi = {
       schema: PublishResultSchema,
     });
   },
+
+  /** Transcribe the exact region selected on a question PDF; returned text stays a local draft. */
+  transcribeRegion: (
+    questionId: string,
+    input: {
+      documentId: string;
+      page: number;
+      bbox: [number, number, number, number];
+      destination: 'stem' | 'answer' | 'solution';
+      source?: ReExtractSource;
+    },
+  ): Promise<{ text: string }> => request(`/questions/${questionId}/transcribe-region`, {
+    method: 'POST', body: input, schema: TranscribeQuestionRegionResponseSchema,
+  }),
+
+  /** Lists question-level validation blockers before publishing or updating the bank. */
+  publishIssues: (documentId: string): Promise<PublishIssues> =>
+    request(`/publish/documents/${documentId}/issues`, { schema: PublishIssuesSchema }),
 
   pageCount: (documentId: string): Promise<number> => fetchPageCount(documentId),
 

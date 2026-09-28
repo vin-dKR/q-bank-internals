@@ -17,6 +17,7 @@ import { PdfCutterPage } from './pages/pdf-cutter-page.js';
 import { QnaPdfPage } from './pages/qna-pdf-page.js';
 import { ImageRenamerPage } from './pages/image-renamer-page.js';
 import { PdfEditorPage } from './pages/pdf-editor-page.js';
+import { LatexReviewPage } from './pages/latex-review-page.js';
 
 // The one app-wide fallback for anything a page throws. On a child route it replaces only the
 // `<Outlet />` content, so the shell (sidebar) stays; on the root it also covers a layout-level throw.
@@ -36,6 +37,7 @@ export const router = createBrowserRouter([
       { path: 'sessions/:sessionId', element: <SessionDetailPage />, errorElement },
       { path: 'documents/:documentId/data', element: <DocumentDataPage />, errorElement },
       { path: 'verify', element: <PipelinePage />, errorElement },
+      { path: 'latex-review', element: <LatexReviewPage />, errorElement },
       // "Fix bank images" folded into Verify — search a published question there. Keep the old link.
       { path: 'bank', element: <Navigate to="/verify" replace />, errorElement },
       { path: 'questions', element: <QuestionsPage />, errorElement },

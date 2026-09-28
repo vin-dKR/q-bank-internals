@@ -6,6 +6,9 @@ import type {
   DetectedFiguresBatch,
   DetectedFiguresPage,
   Document,
+  LatexFixResult,
+  LatexFieldCheckResult,
+  LatexScan,
   PaperMetadata,
   Passage,
   Question,
@@ -30,11 +33,14 @@ import {
   synthesizeMatrixChoiceOptions,
 } from '@ingest/contracts';
 import { createHash } from 'node:crypto';
+import sharp from 'sharp';
 import type { ReExtractedSubDraft } from './question-reextractor.js';
 import { mapWithConcurrency } from '../../shared/async/map-with-concurrency.js';
 import { errors } from '../../shared/errors/error-catalog.js';
 import { logger } from '../../shared/logger/logger.js';
 import { readPngSize } from '../../shared/image/png-size.js';
+import { detectLatexInField } from '../quality/latex-rules.js';
+import { automaticLatexRepair, fullyAutomaticLatexRepair, preservesExtractedContent, questionLatexPatch, stagedLatexFields, stagedLatexIssues, type StagedLatexField } from './staged-latex.js';
 import type { UsageService } from '../usage/index.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { BankQuestionStore } from '../bank/index.js';
@@ -502,6 +508,187 @@ export class QuestionsService {
       this.questions.findPassagesByDocument(documentId),
     ]);
     return { questions, passages };
+  }
+
+  /** Scan current staged text on demand. Session and Verify queries start this after extraction. */
+  async scanLatex(documentId: string): Promise<LatexScan> {
+    const document = await this.documents.findById(documentId);
+    if (!document) throw errors.documentNotFound(documentId);
+    if (document.kind !== 'question') throw errors.validation({ message: 'LaTeX scan requires a question PDF.' });
+    const { questions, passages } = await this.listByDocument(documentId);
+    const issues = stagedLatexIssues(stagedLatexFields(questions, passages));
+    return {
+      documentId,
+      issues,
+      questionCount: new Set(issues.flatMap((issue) => issue.questionId ? [issue.questionId] : [])).size,
+      automaticFields: new Set(issues.filter((issue) => issue.automatic).map((issue) => issue.key)).size,
+      aiFields: new Set(issues.map((issue) => issue.key)).size,
+    };
+  }
+
+  /** Check an unsaved Verify draft field with the exact same rules as the document scan. */
+  checkLatexField(field: string, text: string): LatexFieldCheckResult {
+    return { field, issues: detectLatexInField(field, text) };
+  }
+
+  /** Transcribe a user-selected question/answer/solution PDF region into reviewable draft text. */
+  async transcribeQuestionRegion(input: {
+    questionId: string;
+    documentId: string;
+    page: number;
+    bbox: [number, number, number, number];
+    destination: 'stem' | 'answer' | 'solution';
+    source?: ReExtractSource | undefined;
+  }): Promise<{ text: string }> {
+    const [question, document] = await Promise.all([
+      this.questions.findById(input.questionId),
+      this.documents.findById(input.documentId),
+    ]);
+    if (!question || question.documentId !== input.documentId) {
+      throw errors.validation({ message: 'This question does not belong to the selected document.' });
+    }
+    if (!document || document.kind !== 'question') {
+      throw errors.validation({ message: 'Text selection requires the question PDF as its owner document.' });
+    }
+    const source = await this.resolveReExtractSource(
+      input.documentId,
+      input.source,
+      question.sourceRegion.page,
+      [question.sourceRegion.page],
+    );
+    const sourceMatchesDestination =
+      source.sourceKind === 'question' ||
+      (input.destination === 'answer' && (source.sourceKind === 'answer' || source.fieldTarget === 'answer')) ||
+      (input.destination === 'solution' && (source.sourceKind === 'solution' || source.fieldTarget === 'solution'));
+    if (!sourceMatchesDestination || (input.destination === 'stem' && source.sourceKind !== 'question')) {
+      throw errors.validation({ message: 'Choose a source PDF that matches the text field you are transcribing.' });
+    }
+    if (source.page !== input.page) {
+      throw errors.validation({ message: 'The selected PDF page changed. Select the area again.' });
+    }
+    const png = await this.pages.renderPage(source.documentId, source.page);
+    const { width, height } = readPngSize(png);
+    const [x0, y0, x1, y1] = input.bbox;
+    const left = Math.max(0, Math.floor(x0 * width));
+    const top = Math.max(0, Math.floor(y0 * height));
+    const right = Math.min(width, Math.ceil(x1 * width));
+    const bottom = Math.min(height, Math.ceil(y1 * height));
+    const cropWidth = right - left;
+    const cropHeight = bottom - top;
+    if (cropWidth < 20 || cropHeight < 20) {
+      throw errors.validation({ message: 'Select a larger area of the page and try again.' });
+    }
+    const crop = await sharp(png).extract({ left, top, width: cropWidth, height: cropHeight }).png().toBuffer();
+    const { text, usage } = await this.reExtractor.transcribeRegion({ png: crop, destination: input.destination });
+    try {
+      await this.usage.recordUsage({ source: 'reextract', documentId: input.documentId, ...usage });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn({ err: message }, 'Failed to record selected-region transcription usage');
+    }
+    return { text };
+  }
+
+  /** Apply only mechanical repairs shared with Data Quality, skipping prose that needs judgment. */
+  async fixLatexAutomatically(documentId: string): Promise<LatexFixResult> {
+    await this.scanLatex(documentId); // Validate ownership before any write.
+    const { questions, passages } = await this.listByDocument(documentId);
+    const targets = stagedLatexFields(questions, passages).filter((field) =>
+      fullyAutomaticLatexRepair(field.field, field.text) !== null);
+    const failed: LatexFixResult['failed'] = [];
+    let updatedFields = 0;
+    for (const target of targets) {
+      try {
+        const current = await this.currentLatexField(documentId, target);
+        if (!current) continue;
+        const repaired = fullyAutomaticLatexRepair(current.field, current.text);
+        if (repaired === null) {
+          failed.push({ key: target.key, message: 'This field no longer has a complete automatic repair. Rescan and use AI or review it.' });
+          continue;
+        }
+        await this.saveLatexField(documentId, current, repaired);
+        updatedFields += 1;
+      } catch (caught) {
+        failed.push({ key: target.key, message: caught instanceof Error ? caught.message : String(caught) });
+      }
+    }
+    return { updatedFields, failed };
+  }
+
+  /** Refine at most five flagged fields per request; the client chains batches from one click. */
+  async fixLatexWithAi(documentId: string, keys: string[]): Promise<LatexFixResult> {
+    await this.scanLatex(documentId);
+    const { questions, passages } = await this.listByDocument(documentId);
+    const targets = stagedLatexFields(questions, passages).filter((field) =>
+      keys.includes(field.key) && stagedLatexIssues([field]).length > 0);
+    const groups = new Map<string, StagedLatexField[]>();
+    for (const target of targets) {
+      const groupKey = target.questionId ?? target.key;
+      groups.set(groupKey, [...(groups.get(groupKey) ?? []), target]);
+    }
+    const results = await mapWithConcurrency([...groups.values()], 2, async (group) => {
+      const groupResult: LatexFixResult = { updatedFields: 0, failed: [] };
+      for (const target of group) {
+        try {
+          const current = await this.currentLatexField(documentId, target);
+          if (!current) continue;
+          const before = detectLatexInField(current.field, current.text);
+          if (before.length === 0) continue;
+          const mechanical = automaticLatexRepair(current.text);
+          const remaining = detectLatexInField(current.field, mechanical);
+          const refined = remaining.length === 0
+            ? mechanical : await this.refineLatex(mechanical, remaining);
+          const after = detectLatexInField(current.field, refined);
+          if (!refined.trim()) {
+            groupResult.failed.push({ key: target.key, message: 'The AI returned blank text; the extracted content was kept.' });
+            continue;
+          }
+          if (!preservesExtractedContent(current.text, refined)) {
+            groupResult.failed.push({ key: target.key, message: 'The AI changed or removed extracted content; no change was saved.' });
+            continue;
+          }
+          if (refined === current.text || after.length > 0) {
+            groupResult.failed.push({ key: target.key, message: 'The AI did not resolve every LaTeX issue in this field; no change was saved.' });
+            continue;
+          }
+          await this.saveLatexField(documentId, current, refined);
+          groupResult.updatedFields += 1;
+        } catch (caught) {
+          groupResult.failed.push({ key: target.key, message: caught instanceof Error ? caught.message : String(caught) });
+        }
+      }
+      return groupResult;
+    });
+    return {
+      updatedFields: results.reduce((sum, result) => sum + result.updatedFields, 0),
+      failed: results.flatMap((result) => result.failed),
+    };
+  }
+
+  private async currentLatexField(documentId: string, target: StagedLatexField): Promise<StagedLatexField | null> {
+    if (target.questionId) {
+      const question = await this.questions.findById(target.questionId);
+      if (!question || question.documentId !== documentId) return null;
+      return stagedLatexFields([question], []).find((field) => field.key === target.key) ?? null;
+    }
+    const passages = await this.questions.findPassagesByDocument(documentId);
+    return stagedLatexFields([], passages).find((field) => field.key === target.key) ?? null;
+  }
+
+  private async saveLatexField(documentId: string, target: StagedLatexField, text: string): Promise<void> {
+    if (target.questionId) {
+      const question = await this.questions.findById(target.questionId);
+      if (!question || question.documentId !== documentId) throw errors.questionNotFound(target.questionId);
+      const latest = stagedLatexFields([question], []).find((field) => field.key === target.key);
+      if (!latest || latest.text !== target.text) throw new Error('This field changed during the LaTeX fix. Refresh and retry.');
+      const patch = questionLatexPatch(question, target.field, text);
+      if (!patch) throw errors.validation({ message: 'The LaTeX field no longer exists.' });
+      await this.update(question.id, patch);
+      return;
+    }
+    const latest = await this.currentLatexField(documentId, target);
+    if (!latest || latest.text !== target.text) throw new Error('This passage changed during the LaTeX fix. Refresh and retry.');
+    await this.questions.updatePassage(target.key.slice(2), { text });
   }
 
   /** Apply verify-screen edits (image flags/urls, stem, options, answer) to a question. */
@@ -991,10 +1178,10 @@ export class QuestionsService {
     return paper;
   }
 
-  /** One-click "Fix LaTeX": wrap the math in `\(...\)`. Empty text is returned unchanged. */
-  async refineLatex(text: string): Promise<string> {
+  /** Refine one field, optionally giving the model the scanner's remaining findings. */
+  async refineLatex(text: string, issues: Parameters<LatexRefiner['refine']>[1] = []): Promise<string> {
     if (!text.trim()) return text;
-    const { text: refined, usage } = await this.refiner.refine(text);
+    const { text: refined, usage } = await this.refiner.refine(text, issues);
     try {
       await this.usage.recordUsage({ source: 'latex', ...usage });
     } catch (error) {

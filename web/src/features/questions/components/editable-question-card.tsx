@@ -1,5 +1,5 @@
 import type { JSX } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   parseMatchKey,
   synthesizeMatrixChoiceOptions,
@@ -25,6 +25,7 @@ import {
   IconSparkle,
   IconTrash,
   IconUndo,
+  IconTextSelect,
   IconX,
   MatchTableEditor,
   Spinner,
@@ -111,6 +112,13 @@ type Props = {
   /** Retry the auto-save of a region whose upload failed. */
   onSaveBox: (boxId: string) => void;
   onDeleteBox: (boxId: string) => void;
+  /** Arm drag-to-transcribe for this question's source region. */
+  onTranscribeRegion: (
+    question: Question,
+    destination: 'stem' | 'answer' | 'solution',
+    source?: ReExtractSource,
+  ) => void;
+  transcribingRegion?: boolean;
 };
 
 function splitUrls(value: string | null): string[] {
@@ -638,6 +646,83 @@ function EditorSectionHeader({
   );
 }
 
+let moreFieldActionsVisible = false;
+const moreFieldActionsSubscribers = new Set<() => void>();
+let moreFieldActionsShortcutAttached = false;
+
+function onMoreFieldActionsShortcut(event: KeyboardEvent): void {
+  if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && event.key.toLowerCase() === 'y') {
+    const target = event.target;
+    if (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select, [contenteditable="true"]'))) {
+      return;
+    }
+    event.preventDefault();
+    moreFieldActionsVisible = !moreFieldActionsVisible;
+    moreFieldActionsSubscribers.forEach((subscriber) => { subscriber(); });
+  }
+}
+
+function subscribeToMoreFieldActions(callback: () => void): () => void {
+  moreFieldActionsSubscribers.add(callback);
+  if (!moreFieldActionsShortcutAttached && typeof window !== 'undefined') {
+    window.addEventListener('keydown', onMoreFieldActionsShortcut);
+    moreFieldActionsShortcutAttached = true;
+  }
+  return () => {
+    moreFieldActionsSubscribers.delete(callback);
+    if (moreFieldActionsSubscribers.size === 0 && moreFieldActionsShortcutAttached && typeof window !== 'undefined') {
+      window.removeEventListener('keydown', onMoreFieldActionsShortcut);
+      moreFieldActionsShortcutAttached = false;
+    }
+  };
+}
+
+/** Keep the less-frequently-used whole-field re-read available without occupying the field toolbar. */
+function MoreFieldActions({
+  label,
+  disabled,
+  busy,
+  onSelect,
+}: {
+  label: string;
+  disabled: boolean;
+  busy: boolean;
+  onSelect: () => void;
+}): JSX.Element {
+  const visible = useSyncExternalStore(
+    subscribeToMoreFieldActions,
+    () => moreFieldActionsVisible,
+    () => false,
+  );
+  if (!visible) return <></>;
+
+  return (
+    <details className="group relative">
+      <summary
+        aria-label="More field tools (Ctrl+Y to show or hide)"
+        title="More field tools (Ctrl+Y to show or hide)"
+        className="inline-grid size-7 cursor-pointer list-none place-items-center rounded-lg text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40 marker:content-none"
+      >
+        <IconChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="absolute right-0 top-full z-30 mt-1 min-w-52 rounded-lg border border-line bg-white p-1 shadow-lg">
+        <button
+          type="button"
+          disabled={disabled || busy}
+          className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+          onClick={(event) => {
+            event.currentTarget.closest('details')?.removeAttribute('open');
+            onSelect();
+          }}
+        >
+          {busy ? <Spinner className="size-4 flex-none" /> : <IconScan className="size-4 flex-none" />}
+          {busy ? 'Re-reading…' : label}
+        </button>
+      </div>
+    </details>
+  );
+}
+
 /**
  * The editable per-question card in Verify. Fields always render in the sheet's own order —
  * question text, options, answer, explanation, then metadata — and every LaTeX-bearing field
@@ -673,6 +758,8 @@ export function EditableQuestionCard({
   onDrawRegion,
   onSaveBox,
   onDeleteBox,
+  onTranscribeRegion,
+  transcribingRegion = false,
 }: Props): JSX.Element {
   const update = useUpdateQuestion();
   const setImageMode = useSetQuestionImageMode();
@@ -876,7 +963,33 @@ export function EditableQuestionCard({
   ): Promise<void> => {
     setFixing(field);
     try {
-      applyAi(field, value, await questionsApi.refine(value), apply);
+      const refined = await questionsApi.refine(value);
+      if (!refined.trim()) throw new Error('The AI returned blank text; your existing field was kept.');
+      applyAi(field, value, refined, apply);
+      try {
+        const checked = await questionsApi.checkLatexField(field, refined);
+        if (checked.issues.length === 0) {
+          toast.toast({
+            tone: 'success',
+            title: 'LaTeX check passed',
+            description: 'No LaTeX issues found in this field. Review the draft, then Update to save it.',
+          });
+        } else {
+          toast.toast({
+            tone: 'info',
+            title: 'LaTeX still needs review',
+            description: `${String(checked.issues.length)} issue(s) remain. The AI result is in your draft; review it before saving.`,
+          });
+        }
+      } catch (error) {
+        toast.toast({
+          tone: 'info',
+          title: 'AI edit is ready; check unavailable',
+          description: error instanceof Error ? error.message : 'Review the draft before saving.',
+        });
+      }
+    } catch (error) {
+      toast.error('Could not fix LaTeX with AI', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setFixing(null);
     }
@@ -987,6 +1100,7 @@ export function EditableQuestionCard({
      * Let that caller install the coherent result atomically before the generic text fallback runs.
      */
     applyStructuredResult?: (fresh: ReExtractedQuestion) => boolean,
+    actionBeforeMore?: JSX.Element,
   ): JSX.Element => (
     <>
       <AiButton
@@ -998,16 +1112,16 @@ export function EditableQuestionCard({
           void refine(key, current, applyText);
         }}
       />
-      <AiButton
+      {actionBeforeMore}
+      <MoreFieldActions
         busy={reading === key}
         disabled={fixing === key}
-        title={
+        label={
           source
             ? 'Re-read this field from the answer / solution page'
             : 'Re-read this question from the page'
         }
-        icon={<IconScan />}
-        onClick={() => {
+        onSelect={() => {
           void reExtract(
             key,
             (fresh) => {
@@ -1305,6 +1419,13 @@ export function EditableQuestionCard({
               applyChoiceAnswer,
               (fresh) => fresh.answer,
               answerSource,
+              undefined,
+              <IconButton
+                icon={<IconTextSelect />}
+                label="Select PDF area and transcribe it into the answer"
+                disabled={cropDisabled || transcribingRegion}
+                onClick={() => { onTranscribeRegion(question, 'answer', answerSource); }}
+              />,
             )}
             {canCropAnswer ? (
               <CropImageButton
@@ -1585,14 +1706,24 @@ export function EditableQuestionCard({
           title="Question"
           tone="question"
           id={`question-${question.id}`}
-          actions={fieldAi(
-            'stem',
-            draft.stem,
-            (t) => {
-              set('stem', t);
-            },
-            (fresh) => fresh.stem,
-          )}
+          actions={
+            <>
+              {fieldAi(
+                'stem',
+                draft.stem,
+                (t) => { set('stem', t); },
+                (fresh) => fresh.stem,
+                undefined,
+                undefined,
+                <IconButton
+                  icon={<IconTextSelect />}
+                  label="Select PDF area and transcribe it into the question"
+                  disabled={cropDisabled || transcribingRegion}
+                  onClick={() => { onTranscribeRegion(question, 'stem'); }}
+                />,
+              )}
+            </>
+          }
         />
         <span className={FIELD_LABEL}>Question text</span>
         <EditableLatexValue
@@ -2131,6 +2262,13 @@ export function EditableQuestionCard({
                   },
                   (fresh) => fresh.explanation ?? '',
                   solutionSource,
+                  undefined,
+                  <IconButton
+                    icon={<IconTextSelect />}
+                    label="Select PDF area and transcribe it into the solution"
+                    disabled={cropDisabled || transcribingRegion}
+                    onClick={() => { onTranscribeRegion(question, 'solution', solutionSource); }}
+                  />,
                 )}
                 {canCropSolution ? (
                   <CropImageButton

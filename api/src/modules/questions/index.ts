@@ -5,7 +5,7 @@ export type { NewPassage, NewQuestion, QuestionRepository } from './questions.re
 export { sortByPdfOrder } from './question-order.js';
 export { aiFilledAfterEdit } from './ai-filled-edits.js';
 export type { ImageStore } from './image-store.js';
-export type { LatexRefiner, LatexRefinement } from './latex-refiner.js';
+export type { LatexRefiner, LatexRefinement, LatexIssueHint } from './latex-refiner.js';
 export type { PageRenderer } from './page-renderer.js';
 export type {
   DetectorPage,
@@ -24,6 +24,7 @@ export type {
   ReExtractInput,
   SourceAreaTranscription,
   SourceAreaTranscriptionInput,
+  TranscribeRegionInput,
 } from './question-reextractor.js';
 export type {
   PaperMetadataExtraction,

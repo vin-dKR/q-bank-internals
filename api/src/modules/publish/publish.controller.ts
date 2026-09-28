@@ -6,11 +6,16 @@ import type { PublishService } from './publish.service.js';
 
 export function createPublishController(service: PublishService): {
   document: RequestHandler;
+  documentIssues: RequestHandler;
   session: RequestHandler;
 } {
   return {
     document: asyncHandler(async (req, res) => {
       ok(res, await service.publishDocument(requiredParam(req, 'documentId')), 201);
+    }),
+
+    documentIssues: asyncHandler(async (req, res) => {
+      ok(res, await service.listPublishIssues(requiredParam(req, 'documentId')));
     }),
 
     session: asyncHandler(async (req, res) => {

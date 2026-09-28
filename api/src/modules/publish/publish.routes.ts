@@ -10,6 +10,7 @@ import { createPublishController } from './publish.controller.js';
 export function createPublishRouter(service: PublishService): Router {
   const controller = createPublishController(service);
   const router = Router();
+  router.get('/documents/:documentId/issues', controller.documentIssues);
   router.post('/documents/:documentId', controller.document);
   router.post('/sessions/:sessionId', controller.session);
   return router;
