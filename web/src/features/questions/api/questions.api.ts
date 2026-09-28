@@ -3,6 +3,9 @@ import type {
   BatchUpdateQuestionsResult,
   DetectedFigures,
   DetectedFiguresBatch,
+  LatexFixResult,
+  LatexFieldCheckResult,
+  LatexScan,
   ReExtractGroupMode,
   DetectFiguresSource,
   Passage,
@@ -19,6 +22,9 @@ import {
   BatchUpdateQuestionsResultSchema,
   DetectedFiguresBatchSchema,
   DetectedFiguresSchema,
+  LatexFixResultSchema,
+  LatexFieldCheckResultSchema,
+  LatexScanSchema,
   PassageSchema,
   PublishResultSchema,
   QuestionListResponseSchema,
@@ -43,6 +49,21 @@ export type ReExtractGroupOptions = {
 
 /** Feature-scoped calls to the questions + pages endpoints. The only place this feature hits the network. */
 export const questionsApi = {
+  /** Automatically re-check staged questions after extraction and after Verify edits. */
+  scanLatex: (documentId: string): Promise<LatexScan> =>
+    request(`/questions/latex-scan?${new URLSearchParams({ documentId }).toString()}`, { schema: LatexScanSchema }),
+  checkLatexField: (field: string, text: string): Promise<LatexFieldCheckResult> =>
+    request('/questions/latex-check-field', {
+      method: 'POST', body: { field, text }, schema: LatexFieldCheckResultSchema,
+    }),
+  fixLatexAutomatically: (documentId: string): Promise<LatexFixResult> =>
+    request('/questions/latex-fix/automatic', {
+      method: 'POST', body: { documentId }, schema: LatexFixResultSchema,
+    }),
+  fixLatexWithAi: (documentId: string, keys: string[]): Promise<LatexFixResult> =>
+    request('/questions/latex-fix/ai', {
+      method: 'POST', body: { documentId, keys }, schema: LatexFixResultSchema,
+    }),
   /** A document's extracted questions PLUS the comprehension passages they reference (verify/preview). */
   listByDocument: (documentId: string): Promise<QuestionListResponse> => {
     const query = new URLSearchParams({ documentId });

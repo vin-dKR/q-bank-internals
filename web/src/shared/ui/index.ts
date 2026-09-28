@@ -44,6 +44,7 @@ export {
   IconX,
   IconCopy,
   IconDownload,
+  IconExternalLink,
   IconCheck,
   IconWarning,
   IconSearch,

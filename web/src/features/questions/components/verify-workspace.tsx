@@ -590,7 +590,7 @@ export function VerifyWorkspace({
   documentId: string;
   autoRun?: boolean;
   /** The unit picker + publish controls, rendered pinned to the top of the right panel. */
-  sessionBar?: ReactNode | ((hasUnsavedEdits: boolean, isSaving: boolean) => ReactNode);
+  sessionBar?: ReactNode | ((hasUnsavedEdits: boolean, isSaving: boolean, onFocusQuestion: (questionId: string) => void) => ReactNode);
   /** Page to open on (a searched question's source page); defaults to the first page. */
   initialPage?: number;
   /** A question to scroll to and briefly ring once loaded — the one a bank search opened. */
@@ -1203,6 +1203,7 @@ export function VerifyWorkspace({
   const cardRefs = useRef(new Map<string, HTMLDivElement>());
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [sourceHighlightId, setSourceHighlightId] = useState<string | null>(null);
+  const pendingFocusId = useRef<string | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusQuestion = (questionId: string): void => {
     cardRefs.current.get(questionId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1256,6 +1257,27 @@ export function VerifyWorkspace({
     // rAF so the scroll runs after the new page's cards have rendered.
     requestAnimationFrame(() => { panelRef.current?.scrollTo({ top: 0 }); });
   };
+
+  // A LaTeX issue can belong to a question on another PDF page. Switch pages first, then focus the
+  // card once the new page has rendered so the affected question is visible and highlighted.
+  const focusQuestionInWorkspace = (questionId: string): void => {
+    const target = questionById.get(questionId);
+    if (!target) return;
+    if (target.sourceRegion.page !== pageRef.current) {
+      pendingFocusId.current = questionId;
+      goToPage(target.sourceRegion.page);
+      return;
+    }
+    focusQuestion(questionId);
+  };
+  useEffect(() => {
+    const pendingId = pendingFocusId.current;
+    if (!pendingId) return;
+    const target = questionById.get(pendingId);
+    if (!target || target.sourceRegion.page !== page) return;
+    pendingFocusId.current = null;
+    requestAnimationFrame(() => { focusQuestion(pendingId); });
+  }, [page, questionById]);
 
   // A bank search or Questions-browse link opens the workspace on the focused question's source page;
   // once its card renders, scroll to and briefly ring both the card and the source region. If its page
@@ -2715,7 +2737,7 @@ export function VerifyWorkspace({
         <div className="verify__pinned">
           <div className="verify__session">
             {sessionBar ? <div className="verify__session-row">{typeof sessionBar === 'function'
-              ? sessionBar(drafts.dirtyIds.size + passageDrafts.dirtyIds.size > 0, drafts.isSaving || passageDrafts.isSaving)
+              ? sessionBar(drafts.dirtyIds.size + passageDrafts.dirtyIds.size > 0, drafts.isSaving || passageDrafts.isSaving, focusQuestionInWorkspace)
               : sessionBar}</div> : null}
             <div className="verify__session-row" hidden={viewModes.length <= 1}>
               <span className="text-sm text-ink-2">View</span>

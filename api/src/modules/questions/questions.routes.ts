@@ -23,6 +23,10 @@ export function createQuestionsRouter(service: QuestionsService): Router {
   const router = Router();
 
   router.get('/', controller.list);
+  router.get('/latex-scan', controller.scanLatex);
+  router.post('/latex-check-field', controller.checkLatexField);
+  router.post('/latex-fix/automatic', controller.fixLatexAutomatically);
+  router.post('/latex-fix/ai', controller.fixLatexWithAi);
   router.post('/refine', controller.refine);
   router.post('/paper-metadata', upload.single('file'), controller.extractPaperMetadata);
   router.post('/re-extract', controller.reExtract);

@@ -2,7 +2,7 @@ import { type JSX, useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { BankQuestion } from '@ingest/contracts';
 import { DocumentPicker, useDocument, useRestoreDocument } from '../../features/documents/index.js';
-import { VerifyWorkspace, usePublishDocument } from '../../features/questions/index.js';
+import { LatexIssueActions, VerifyWorkspace, usePublishDocument } from '../../features/questions/index.js';
 import { BankQuestionSearch } from '../../features/bank/index.js';
 import { useReextractDocument } from '../../features/sessions/index.js';
 import { Button, Card, PageHeader, Spinner, useConfirm } from '../../shared/ui/index.js';
@@ -120,30 +120,35 @@ export function PipelinePage(): JSX.Element {
     );
   }
 
-  // The unit picker + publish now live at the top of the workspace's right panel (beside the page),
-  // so the PDF and question editor own the full viewport height instead of losing a top bar to them.
-  const sessionBar = (hasUnsavedEdits: boolean, isSaving: boolean): JSX.Element => (
-    <>
-      <div className="min-w-0 flex-1">
+  const latexScanReady = document.data?.kind === 'question'
+    && ['extracted', 'needs_review', 'approved', 'completed', 'published'].includes(document.data.status);
+  // Keep the picker and primary action visible; secondary actions live in one dropdown.
+  const sessionBar = (hasUnsavedEdits: boolean, isSaving: boolean, onFocusQuestion: (questionId: string) => void): JSX.Element => (
+    <div className="relative flex w-full min-w-0 flex-wrap items-center gap-2">
+      <div className="min-w-[140px] flex-1">
         <DocumentPicker value={documentId} onChange={selectUnit} />
       </div>
-      {document.data?.kind === 'question' && document.data.status !== 'published' ? (
-        <Button
-          variant="default"
-          className="flex-none"
-          disabled={reextract.isPending || document.data.status === 'queued' || document.data.status === 'extracting'}
-          onClick={onReextract}
-        >
-          {reextract.isPending ? <><Spinner /> Re-extracting…</> : 'Re-extract'}
+      <div className="ml-auto flex max-w-full flex-none flex-wrap items-center justify-end gap-2">
+        {document.data?.kind === 'question' ? (
+          <LatexIssueActions
+            documentId={documentId}
+            disabled={hasUnsavedEdits || isSaving}
+            layout="dropdown"
+            scanEnabled={latexScanReady}
+            {...(isPublished ? {} : { onReextract })}
+            reextractDisabled={reextract.isPending || document.data.status === 'queued' || document.data.status === 'extracting'}
+            reextractPending={reextract.isPending}
+            onNavigateToQuestion={onFocusQuestion}
+          />
+        ) : null}
+        <Button variant="primary" className="flex-none" disabled={publish.isPending || !document.data || hasUnsavedEdits || isSaving}
+          title={hasUnsavedEdits ? 'Save your edits with Update all first' : undefined} onClick={onPublish}>
+          {publish.isPending
+            ? <><Spinner /> {isPublished ? 'Updating bank…' : 'Publishing…'}</>
+            : isPublished ? 'Update bank →' : 'Publish to bank →'}
         </Button>
-      ) : null}
-      <Button variant="primary" className="flex-none" disabled={publish.isPending || !document.data || hasUnsavedEdits || isSaving}
-        title={hasUnsavedEdits ? 'Save your edits with Update all first' : undefined} onClick={onPublish}>
-        {publish.isPending
-          ? <><Spinner /> {isPublished ? 'Updating bank…' : 'Publishing…'}</>
-          : isPublished ? 'Update bank →' : 'Publish to bank →'}
-      </Button>
-    </>
+      </div>
+    </div>
   );
 
   return (

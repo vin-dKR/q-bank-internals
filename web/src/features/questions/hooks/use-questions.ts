@@ -68,8 +68,8 @@ export function usePublishDocument(): UseMutationResult<{ published: number }, E
       updating: queryClient.getQueryData<Document>(['document', documentId])?.status === 'published',
     }),
     onSuccess: (result, documentId, context) => {
-      success(context?.updating ? 'Bank updated' : 'Published to bank',
-        result.published === 0 ? 'The bank is already up to date.' : `${String(result.published)} question(s) ${context?.updating ? 'updated in the bank' : 'are now live'}.`);
+      success(context.updating ? 'Bank updated' : 'Published to bank',
+        result.published === 0 ? 'The bank is already up to date.' : `${String(result.published)} question(s) ${context.updating ? 'updated in the bank' : 'are now live'}.`);
       void queryClient.invalidateQueries({ queryKey: ['document', documentId] });
       void queryClient.invalidateQueries({ queryKey: ['catalog'] });
       void queryClient.invalidateQueries({ queryKey: ['bank-search'] });
@@ -104,6 +104,7 @@ export function useBatchUpdateQuestions(
           : prev,
       );
       void queryClient.invalidateQueries({ queryKey: questionsQueryKey(documentId) });
+      void queryClient.invalidateQueries({ queryKey: ['latex-scan', documentId] });
     },
   });
 }
@@ -128,6 +129,7 @@ export function useUpdateQuestion(): UseMutationResult<
           : prev,
       );
       void queryClient.invalidateQueries({ queryKey: questionsQueryKey(question.documentId) });
+      void queryClient.invalidateQueries({ queryKey: ['latex-scan', question.documentId] });
     },
   });
 }
@@ -244,6 +246,7 @@ export function useDeleteQuestion(documentId: string): UseMutationResult<void, E
     onSuccess: () => {
       success('Question deleted', 'Removed from this unit.');
       void queryClient.invalidateQueries({ queryKey: questionsQueryKey(documentId) });
+      void queryClient.invalidateQueries({ queryKey: ['latex-scan', documentId] });
       void queryClient.invalidateQueries({ queryKey: ['documents'] });
       void queryClient.invalidateQueries({ queryKey: ['sessions'] });
       void queryClient.invalidateQueries({ queryKey: ['session'] });
@@ -267,6 +270,7 @@ export function useUpdatePassage(
           : prev,
       );
       void queryClient.invalidateQueries({ queryKey: questionsQueryKey(documentId) });
+      void queryClient.invalidateQueries({ queryKey: ['latex-scan', documentId] });
     },
   });
 }
@@ -280,6 +284,7 @@ export function useGroupQuestions(documentId: string): UseMutationResult<Passage
     onSuccess: () => {
       success('Grouped into comprehension', 'Re-extract the passage to read it off the page.');
       void queryClient.invalidateQueries({ queryKey: questionsQueryKey(documentId) });
+      void queryClient.invalidateQueries({ queryKey: ['latex-scan', documentId] });
     },
     onError: (err) => { error('Could not group', err.message); },
   });
@@ -294,6 +299,7 @@ export function useUngroupPassage(documentId: string): UseMutationResult<void, E
     onSuccess: () => {
       success('Ungrouped', 'Those questions are standalone again.');
       void queryClient.invalidateQueries({ queryKey: questionsQueryKey(documentId) });
+      void queryClient.invalidateQueries({ queryKey: ['latex-scan', documentId] });
     },
     onError: (err) => { error('Could not ungroup', err.message); },
   });

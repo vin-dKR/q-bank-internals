@@ -140,6 +140,16 @@ export function IconDownload(props: IconProps): JSX.Element {
   );
 }
 
+/** Box with an outward arrow — open this item in its own page/view. */
+export function IconExternalLink(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <path d="M14 3h7v7M10 14 21 3" />
+      <path d="M19 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6" />
+    </svg>
+  );
+}
+
 export function IconCheck(props: IconProps): JSX.Element {
   return (
     <svg {...base(props)}>

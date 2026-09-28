@@ -4,6 +4,9 @@ import {
   DetectFiguresBatchRequestSchema,
   DetectFiguresRequestSchema,
   GroupQuestionsSchema,
+  LatexAiBatchRequestSchema,
+  LatexFieldCheckRequestSchema,
+  LatexFixRequestSchema,
   QuestionListQuerySchema,
   ReExtractGroupSchema,
   ReExtractQuestionSchema,
@@ -20,6 +23,10 @@ import type { QuestionsService } from './questions.service.js';
 
 export function createQuestionsController(service: QuestionsService): {
   list: RequestHandler;
+  scanLatex: RequestHandler;
+  checkLatexField: RequestHandler;
+  fixLatexAutomatically: RequestHandler;
+  fixLatexWithAi: RequestHandler;
   update: RequestHandler;
   remove: RequestHandler;
   updatePassage: RequestHandler;
@@ -38,6 +45,23 @@ export function createQuestionsController(service: QuestionsService): {
     list: asyncHandler(async (req, res) => {
       const { documentId } = parseOrThrow(QuestionListQuerySchema, req.query);
       ok(res, await service.listByDocument(documentId));
+    }),
+
+    scanLatex: asyncHandler(async (req, res) => {
+      const { documentId } = parseOrThrow(QuestionListQuerySchema, req.query);
+      ok(res, await service.scanLatex(documentId));
+    }),
+    checkLatexField: asyncHandler((req, res) => {
+      const { field, text } = parseOrThrow(LatexFieldCheckRequestSchema, req.body);
+      return Promise.resolve(ok(res, service.checkLatexField(field, text)));
+    }),
+    fixLatexAutomatically: asyncHandler(async (req, res) => {
+      const { documentId } = parseOrThrow(LatexFixRequestSchema, req.body);
+      ok(res, await service.fixLatexAutomatically(documentId));
+    }),
+    fixLatexWithAi: asyncHandler(async (req, res) => {
+      const { documentId, keys } = parseOrThrow(LatexAiBatchRequestSchema, req.body);
+      ok(res, await service.fixLatexWithAi(documentId, keys));
     }),
 
     detectFigures: asyncHandler(async (req, res) => {

@@ -1,7 +1,9 @@
 import type { AiTokenUsage } from '../usage/index.js';
+import type { RuleFinding } from '../quality/quality.types.js';
 
 /** Refined text plus the token spend the model reported producing it. */
 export type LatexRefinement = { text: string; usage: AiTokenUsage };
+export type LatexIssueHint = Pick<RuleFinding, 'kind' | 'detail'>;
 
 /**
  * PORT (§3) for the one-click "Fix LaTeX": wrap the math in a piece of text with `\(...\)` inline
@@ -10,5 +12,5 @@ export type LatexRefinement = { text: string; usage: AiTokenUsage };
  * service can record spend alongside the extraction pipeline.
  */
 export interface LatexRefiner {
-  refine(text: string): Promise<LatexRefinement>;
+  refine(text: string, issues?: readonly LatexIssueHint[]): Promise<LatexRefinement>;
 }

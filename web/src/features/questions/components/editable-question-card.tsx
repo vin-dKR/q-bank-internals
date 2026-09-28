@@ -875,7 +875,33 @@ export function EditableQuestionCard({
   ): Promise<void> => {
     setFixing(field);
     try {
-      applyAi(field, value, await questionsApi.refine(value), apply);
+      const refined = await questionsApi.refine(value);
+      if (!refined.trim()) throw new Error('The AI returned blank text; your existing field was kept.');
+      applyAi(field, value, refined, apply);
+      try {
+        const checked = await questionsApi.checkLatexField(field, refined);
+        if (checked.issues.length === 0) {
+          toast.toast({
+            tone: 'success',
+            title: 'LaTeX check passed',
+            description: 'No LaTeX issues found in this field. Review the draft, then Update to save it.',
+          });
+        } else {
+          toast.toast({
+            tone: 'info',
+            title: 'LaTeX still needs review',
+            description: `${String(checked.issues.length)} issue(s) remain. The AI result is in your draft; review it before saving.`,
+          });
+        }
+      } catch (error) {
+        toast.toast({
+          tone: 'info',
+          title: 'AI edit is ready; check unavailable',
+          description: error instanceof Error ? error.message : 'Review the draft before saving.',
+        });
+      }
+    } catch (error) {
+      toast.error('Could not fix LaTeX with AI', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setFixing(null);
     }
