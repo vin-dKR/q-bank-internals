@@ -36,6 +36,8 @@ export const ChapterUploadMetadataSchema = ChapterPathSchema.extend({
   module: z.string(),
   chapter: z.string(),
   sessionId: z.string().min(1),
+  /** Optional school class for board-level or NCERT material. */
+  className: z.string().trim().min(1).max(32).optional(),
   /**
    * A client-minted id shared by the question/answer/solution/companion parts of ONE upload action, and fresh for
    * every new upload. It is the document's identity within a session (not the file name), so uploading

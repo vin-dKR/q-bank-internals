@@ -1,9 +1,10 @@
-import type {
-  ChapterPath,
-  ChapterUploadMetadata,
-  Document,
-  DriveFile,
-  SignedUploadTarget,
+import {
+  shouldCollectClassName,
+  type ChapterPath,
+  type ChapterUploadMetadata,
+  type Document,
+  type DriveFile,
+  type SignedUploadTarget,
 } from '@ingest/contracts';
 import { logger } from '../../shared/logger/logger.js';
 import { errors } from '../../shared/errors/error-catalog.js';
@@ -106,6 +107,9 @@ export class IngestionService {
       // Persist the operator's per-chapter exam/subject onto the document so publish reads the
       // authoritative value from here, not the first-write-wins session backfill below.
       exam: metadata.exam,
+      className: shouldCollectClassName(metadata.exam, metadata.module)
+        ? metadata.className ?? null
+        : null,
       subject: metadata.subject,
       pyq: metadata.pyq ?? false,
       pyqExam: metadata.pyqExam ?? null,

@@ -68,8 +68,8 @@ export function usePublishDocument(): UseMutationResult<{ published: number }, E
       updating: queryClient.getQueryData<Document>(['document', documentId])?.status === 'published',
     }),
     onSuccess: (result, documentId, context) => {
-      success(context?.updating ? 'Bank updated' : 'Published to bank',
-        result.published === 0 ? 'The bank is already up to date.' : `${String(result.published)} question(s) ${context?.updating ? 'updated in the bank' : 'are now live'}.`);
+      success(context.updating ? 'Bank updated' : 'Published to bank',
+        result.published === 0 ? 'The bank is already up to date.' : `${String(result.published)} question(s) ${context.updating ? 'updated in the bank' : 'are now live'}.`);
       void queryClient.invalidateQueries({ queryKey: ['document', documentId] });
       void queryClient.invalidateQueries({ queryKey: ['catalog'] });
       void queryClient.invalidateQueries({ queryKey: ['bank-search'] });

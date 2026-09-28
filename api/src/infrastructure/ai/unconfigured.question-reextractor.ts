@@ -3,6 +3,7 @@ import type {
   GroupReExtraction,
   QuestionReExtraction,
   QuestionReExtractor,
+  SourceAreaTranscription,
 } from '../../modules/questions/index.js';
 
 /** Null-object {@link QuestionReExtractor} used when no OpenAI key is set — fails loudly on use. */
@@ -12,6 +13,10 @@ export class UnconfiguredQuestionReExtractor implements QuestionReExtractor {
   }
 
   reExtractGroup(): Promise<GroupReExtraction> {
+    return Promise.reject(errors.extractionFailed('OPENAI_API_KEY is not configured.'));
+  }
+
+  transcribeArea(): Promise<SourceAreaTranscription> {
     return Promise.reject(errors.extractionFailed('OPENAI_API_KEY is not configured.'));
   }
 }

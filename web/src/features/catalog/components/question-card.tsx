@@ -212,6 +212,7 @@ export function QuestionCard({
   const badges = (
     <>
       {question.exam ? <Badge tone="info" dot={false}>{question.exam}</Badge> : null}
+      {question.className ? <Badge tone="info" dot={false}>{question.className}</Badge> : null}
       {question.subject ? <Badge tone="review" dot={false}>{question.subject}</Badge> : null}
       {question.chapter ? <Badge tone="neutral" dot={false}>{question.chapter}</Badge> : null}
       {question.section ? <Badge tone="neutral" dot={false}>{question.section}</Badge> : null}

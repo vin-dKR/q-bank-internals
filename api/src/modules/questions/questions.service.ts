@@ -17,6 +17,7 @@ import type {
   ReExtractedSubQuestion,
   ReExtractGroupMode,
   ReExtractSource,
+  TranscribeAreaTarget,
   UpdatePassage,
   UpdateQuestion,
 } from '@ingest/contracts';
@@ -301,7 +302,9 @@ function selectedMatrixChoiceForMatch(
 ): QuestionOption | null {
   const selectedLabel = answer.trim().toLocaleLowerCase();
   if (!selectedLabel) return null;
-  const selected = options.find((option) => option.label.trim().toLocaleLowerCase() === selectedLabel);
+  const selected = options.find(
+    (option) => option.label.trim().toLocaleLowerCase() === selectedLabel,
+  );
   if (!selected) return null;
   return findMatrixChoiceForMatch([selected], match) === selected.label ? selected : null;
 }
@@ -329,12 +332,13 @@ function refreshOrAppendGeneratedMatrixChoice(
   synthesis: Extract<ReturnType<typeof synthesizeMatrixChoiceOptions>, { status: 'generated' }>,
 ): { options: MatrixDraftState['options']; answer: string } {
   const generatedIndexes = options
-    .map((option, index) => option.generated === true ? index : -1)
+    .map((option, index) => (option.generated === true ? index : -1))
     .filter((index) => index >= 0);
   if (generatedIndexes.length > 0) {
     const correct = synthesis.options.find((option) => option.isCorrect);
-    const choices = [correct, ...synthesis.options.filter((option) => !option.isCorrect)]
-      .filter((option): option is NonNullable<typeof option> => option !== undefined);
+    const choices = [correct, ...synthesis.options.filter((option) => !option.isCorrect)].filter(
+      (option): option is NonNullable<typeof option> => option !== undefined,
+    );
     const selectedIndex = generatedIndexes[0] ?? -1;
     const selected = options[selectedIndex]?.label ?? '';
     let generatedPosition = 0;
@@ -395,7 +399,8 @@ function normalizeMatrixState(state: MatrixDraftState): MatrixDraftState {
       })),
     };
   }
-  const replaceableChoices = state.options.length === 0 || hasOnlyGeneratedMatrixChoices(state.options);
+  const replaceableChoices =
+    state.options.length === 0 || hasOnlyGeneratedMatrixChoices(state.options);
   if (replaceableChoices) {
     const synthesis = synthesizeMatrixChoiceOptions(match);
     if (synthesis.status === 'generated') {
@@ -436,7 +441,9 @@ function normalizeMatrixState(state: MatrixDraftState): MatrixDraftState {
 }
 
 /** Return only fields whose post-patch normalized value differs from the candidate state. */
-function matrixNormalizationPatch(candidate: MatrixDraftState): Pick<UpdateQuestion, 'match' | 'options' | 'answer'> {
+function matrixNormalizationPatch(
+  candidate: MatrixDraftState,
+): Pick<UpdateQuestion, 'match' | 'options' | 'answer'> {
   const normalized = normalizeMatrixState(candidate);
   return {
     ...(sameJson(candidate.match, normalized.match) ? {} : { match: normalized.match }),
@@ -457,8 +464,8 @@ function normalizeMatrixReExtract(
   const candidate: MatrixDraftState = {
     questionType: 'matrix',
     match: fresh.match ?? (fieldSource ? question.match : null),
-    options: fresh.options.length > 0 ? fresh.options : (fieldSource ? question.options : []),
-    answer: fresh.answer.trim() ? fresh.answer : (fieldSource ? question.answer : ''),
+    options: fresh.options.length > 0 ? fresh.options : fieldSource ? question.options : [],
+    answer: fresh.answer.trim() ? fresh.answer : fieldSource ? question.answer : '',
   };
   const normalized = normalizeMatrixState(candidate);
   return {
@@ -961,9 +968,10 @@ export class QuestionsService {
       mode,
       passage: resolvedPassage,
       // Defend the passage-only contract even if a future adapter ignores the requested mode.
-      subQuestions: mode === 'passage_only'
-        ? []
-        : matchGroupSubQuestions(group, subQuestions, resolvedSource.sourceKind),
+      subQuestions:
+        mode === 'passage_only'
+          ? []
+          : matchGroupSubQuestions(group, subQuestions, resolvedSource.sourceKind),
     };
   }
 
@@ -994,6 +1002,33 @@ export class QuestionsService {
       logger.warn({ err: message }, 'Failed to record LaTeX refiner token usage');
     }
     return refined;
+  }
+
+  /**
+   * Transcribe one user-selected rectangle from the question PDF into a single matrix field. Unlike
+   * page re-extraction, the browser has already cropped the source image, so adjacent rows/columns
+   * cannot be read or overwritten. The document check also keeps token usage attribution honest.
+   */
+  async transcribeSourceArea(
+    documentId: string,
+    png: Buffer,
+    target: TranscribeAreaTarget,
+  ): Promise<string> {
+    const document = await this.documents.findById(documentId);
+    if (!document || document.deletedAt !== null) throw errors.documentNotFound(documentId);
+    if (document.kind !== 'question') {
+      throw errors.validation({
+        message: 'Source-area transcription is available only for question PDFs.',
+      });
+    }
+    const { text, usage } = await this.reExtractor.transcribeArea({ png, target });
+    try {
+      await this.usage.recordUsage({ source: 'area-transcribe', documentId, ...usage });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn({ err: message }, 'Failed to record source-area transcription token usage');
+    }
+    return text;
   }
 }
 

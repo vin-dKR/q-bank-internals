@@ -3,8 +3,10 @@ import { z } from 'zod';
 /**
  * The API boundary for Masters → Question taxonomy: CRUD over the shared bank's normalized dictionary
  * collections (Exam / Subject / Chapter / Section / QuestionType / Level / Topic). One generic shape
- * serves every dimension (§6 DRY) — per-dimension extras (`kind`, `rank`, `subjectId`, `chapterId`)
- * are carried as nullable fields, always present on a read so the client never guesses.
+ * serves every dimension (§6 DRY) — per-dimension extras (`kind`, `rank`, parent ids, and optional
+ * exam links) are always present on a read so the client never guesses. A Module is an independent
+ * publisher/institute; Sections are filed under a Module, while Subjects may optionally be linked to
+ * many Exams without becoming children of any one Exam.
  */
 
 /** The eight managed taxonomy dimensions, in display order. */
@@ -42,6 +44,10 @@ export const DictionaryEntrySchema = z.object({
   subjectId: z.string().nullable(),
   /** topic only — the chapter it is scoped to; null otherwise / unresolved. */
   chapterId: z.string().nullable(),
+  /** section only — the publisher/module it is filed under; null on legacy unscoped rows. */
+  moduleId: z.string().nullable(),
+  /** subject only — optional compatible Exam ids. Empty means globally available. */
+  examIds: z.array(z.string()),
   questionCount: z.number().int().nonnegative(),
 });
 export type DictionaryEntry = z.infer<typeof DictionaryEntrySchema>;
@@ -52,18 +58,20 @@ export const DictionaryListSchema = z.object({
 });
 export type DictionaryList = z.infer<typeof DictionaryListSchema>;
 
-/** Query for a dictionary list: a name substring + parent-scope filters (chapters by subject, etc.). */
+/** Query for a dictionary list: a name substring + parent-scope filters (chapters by subject, sections by module, etc.). */
 export const DictionaryQuerySchema = z.object({
   q: z.string().trim().optional(),
   subjectId: z.string().optional(),
   chapterId: z.string().optional(),
+  moduleId: z.string().optional(),
 });
 export type DictionaryQuery = z.infer<typeof DictionaryQuerySchema>;
 
 /**
  * Create one dictionary entry. `name` is folded to a canonical `key` server-side (a known alias maps
  * to the existing row and 409s). `kind` is required for questionType, `rank`/inferred for level,
- * `subjectId` scopes a chapter, `chapterId` scopes a topic — all validated by the service.
+ * `subjectId` scopes a chapter, `chapterId` scopes a topic, `moduleId` scopes a section, and
+ * `examIds` optionally associates a subject with one or more exams — all validated by the service.
  */
 export const CreateDictionaryEntrySchema = z.object({
   name: z.string().trim().min(1).max(160),
@@ -72,6 +80,8 @@ export const CreateDictionaryEntrySchema = z.object({
   rank: z.number().int().min(1).optional(),
   subjectId: z.string().optional(),
   chapterId: z.string().optional(),
+  moduleId: z.string().optional(),
+  examIds: z.array(z.string()).optional(),
 });
 export type CreateDictionaryEntry = z.infer<typeof CreateDictionaryEntrySchema>;
 
@@ -84,8 +94,12 @@ export const UpdateDictionaryEntrySchema = z
     rank: z.number().int().min(1).optional(),
     subjectId: z.string().nullable().optional(),
     chapterId: z.string().nullable().optional(),
+    moduleId: z.string().nullable().optional(),
+    examIds: z.array(z.string()).optional(),
   })
-  .refine((patch) => Object.keys(patch).length > 0, { message: 'Provide at least one field to update.' });
+  .refine((patch) => Object.keys(patch).length > 0, {
+    message: 'Provide at least one field to update.',
+  });
 export type UpdateDictionaryEntry = z.infer<typeof UpdateDictionaryEntrySchema>;
 
 /** Result of seeding a dimension's canonical starting set. */

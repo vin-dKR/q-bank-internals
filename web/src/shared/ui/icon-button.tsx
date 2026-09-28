@@ -5,7 +5,7 @@ type IconButtonProps = {
   icon: ReactNode;
   label: string;
   variant?: 'ghost' | 'default' | 'danger';
-  size?: 'sm' | 'md';
+  size?: 'xs' | 'sm' | 'md';
 } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label' | 'children'>;
 
 const BASE =
@@ -18,6 +18,7 @@ const VARIANTS = {
 };
 
 const SIZES = {
+  xs: 'size-6 text-[11px]',
   sm: 'size-7 text-[13px]',
   md: 'size-9 text-[15px]',
 };

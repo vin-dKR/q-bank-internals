@@ -1,4 +1,5 @@
 import {
+  type AiFilled,
   type Document,
   matchKeyToAnswer,
   mergeMatrixKeyWithAnswer,
@@ -152,7 +153,11 @@ function normalizeQuestionType(raw: string | null): string | null {
  * operator's cut-time config. A concrete cut-time type is authoritative (except the comprehension
  * container, whose children legitimately carry their own types).
  */
-function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestion {
+function toNewQuestion(
+  document: Document,
+  draft: ExtractedQuestion,
+  extraction: { model: string; at: string },
+): NewQuestion {
   const binding = topicBindingForPage(document.topics, draft.sourcePage);
 
   // PYQ is the segment's per-node toggle (else the legacy document-level flag). When on, the source
@@ -180,6 +185,19 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
     : lockedType ?? (draft.match ? 'matrix' : aiType);
   // Do not let a hallucinated matrix payload override an operator-selected non-matrix type.
   const match = questionType === 'matrix' ? draft.match : null;
+  // Difficulty is derived in the initial vision pass, so record its source independently of later
+  // answer/solution merging. Older/custom prompt replies lack a score; 0.5 makes that absence visible
+  // as neutral confidence instead of pretending the model reported certainty.
+  const aiFilled: AiFilled | null = draft.level
+    ? {
+        level: {
+          model: extraction.model,
+          confidence: draft.difficultyConfidence ?? 0.5,
+          at: extraction.at,
+          via: 'extraction',
+        },
+      }
+    : null;
 
   // A match-the-column question persists both the structured columns and (when printed) its A–D answer
   // choices. Those are different things: the canonical `answer` for a choice-based matrix is the
@@ -222,11 +240,13 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
       images: [],
       questionType,
       level: draft.level,
+      aiFilled,
       // Matrix rows follow the same per-leaf section routing as every other type. Without the
       // binding here, a mixed assembled chapter published matrices under the unit fallback (for
       // example "All sections") while its other questions retained their actual section.
       sectionName: binding?.sectionName ?? document.sectionName ?? document.path.section,
       topic: binding?.topicName ?? null,
+      className: document.className,
       subject: binding?.subject ?? null,
       ...pyq,
       sourceRegion: { page: draft.sourcePage, bbox: [0, 0, 1, 1] },
@@ -253,8 +273,10 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
     images: [],
     questionType,
     level: draft.level,
+    aiFilled,
     sectionName: binding?.sectionName ?? document.sectionName ?? document.path.section,
     topic: binding?.topicName ?? null,
+    className: document.className,
     subject: binding?.subject ?? null,
     ...pyq,
     sourceRegion: { page: draft.sourcePage, bbox: [0, 0, 1, 1] },
@@ -353,7 +375,8 @@ export class ExtractionWorker {
       // answer/explanation and carries its group's passageId + order. Passages are persisted alongside
       // the questions in one wholesale replace (passages first, so every passageId resolves).
       const { drafts: grouped, passages } = materializePassages(answered, documentId);
-      const rows = grouped.map((draft) => toNewQuestion(document, draft));
+      const extraction = { model: usage.model, at: now() };
+      const rows = grouped.map((draft) => toNewQuestion(document, draft, extraction));
       const count = await this.questions.replaceDocument(documentId, passages, rows);
 
       await this.documents.recordExtraction(documentId, { questionCount: count });
@@ -545,6 +568,7 @@ export class ExtractionWorker {
           const scope: AnswerExtractionScope = {
             sectionName: topic.name,
             questionType: block.questionType ?? null,
+            ...(topic.subject ? { subject: topic.subject } : {}),
             questionPageRange: block.pageRange,
             sourcePageRange: range,
           };

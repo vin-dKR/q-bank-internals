@@ -314,6 +314,9 @@ function toBankQuestion(
     // first-write-wins backfill), so a Biology/NEET chapter never publishes as Physics/JEE. Subject is
     // sourced per-question first (a PYQ paper spans subjects — the node's subject wins), then the document.
     exam_name: document.exam,
+    // CBSE grade is selected once at cut time, copied onto every extracted question, and stored under a
+    // snake-case bank field so it stays distinct from the main app's unrelated Student.className.
+    class_name: question.className ?? document.className,
     subject: question.subject ?? document.subject,
     // Normalized taxonomy FKs + clean labels + questionKind/levelRank, resolved from the raw strings
     // above through the SAME foldMaps eduents uses (QUESTION_WRITE_CONTRACT §3.1). The keys are the

@@ -9,6 +9,41 @@ import { z } from 'zod';
 export const KNOWN_EXAMS = ['JEE', 'NEET', 'BOARDS'] as const;
 
 /**
+ * School-grade labels offered when a chapter is filed under CBSE. Keep the display value canonical so
+ * the same class survives cut/upload, verification, and the published bank without a second mapping.
+ */
+export const CBSE_CLASS_NAMES = [
+  'Class 1',
+  'Class 2',
+  'Class 3',
+  'Class 4',
+  'Class 5',
+  'Class 6',
+  'Class 7',
+  'Class 8',
+  'Class 9',
+  'Class 10',
+  'Class 11',
+  'Class 12',
+] as const;
+
+/**
+ * Board-level papers need a school class. `BOARDS` is the app's generic board option, while some
+ * imports use the explicit `CBSE` name; treat both alike without closing the dynamic exam vocabulary.
+ */
+export function isCbseExam(exam: string | null | undefined): boolean {
+  return /\b(?:cbse|boards?)\b/i.test(exam?.trim() ?? '');
+}
+
+/** A class can optionally help classify board material and NCERT textbooks/modules. */
+export function shouldCollectClassName(
+  exam: string | null | undefined,
+  module: string | null | undefined,
+): boolean {
+  return isCbseExam(exam) || /\bncert\b/i.test(module?.trim() ?? '');
+}
+
+/**
  * Exam a chapter's questions belong to. Kept dynamic like {@link QuestionTypeSchema}: the known
  * exams above are offered as defaults, but the masters Drive tree can introduce new exams, so any
  * non-empty string is accepted.

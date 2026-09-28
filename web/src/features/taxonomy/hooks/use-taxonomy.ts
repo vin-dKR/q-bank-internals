@@ -23,7 +23,14 @@ export function useDictionary(
   enabled = true,
 ): UseQueryResult<DictionaryList> {
   return useQuery({
-    queryKey: ['masters', dimension, query.q ?? '', query.subjectId ?? '', query.chapterId ?? ''],
+    queryKey: [
+      'masters',
+      dimension,
+      query.q ?? '',
+      query.subjectId ?? '',
+      query.chapterId ?? '',
+      query.moduleId ?? '',
+    ],
     queryFn: () => taxonomyApi.list(dimension, query),
     enabled,
   });

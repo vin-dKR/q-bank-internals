@@ -52,6 +52,7 @@ type QuestionRow = {
   topic: string | null;
   // Prisma `Json?`: which fields hold AI-written values, validated back into shape by `toAiFilled`.
   aiFilled: unknown;
+  className: string | null;
   subject: string | null;
   flagged: boolean;
   isPyq: boolean;
@@ -143,6 +144,7 @@ function toQuestion(row: QuestionRow): Question {
     sectionName: row.sectionName,
     topic: row.topic,
     aiFilled: toAiFilled(row.aiFilled),
+    className: row.className ?? null,
     subject: row.subject,
     flagged: row.flagged,
     isPyq: row.isPyq,
@@ -215,6 +217,8 @@ export class PrismaQuestionRepository implements QuestionRepository {
         level: question.level,
         sectionName: question.sectionName,
         topic: question.topic,
+        aiFilled: question.aiFilled,
+        className: question.className,
         subject: question.subject,
         isPyq: question.isPyq,
         pyqExam: question.pyqExam,
@@ -274,7 +278,8 @@ export class PrismaQuestionRepository implements QuestionRepository {
     // Only an edit to an AI-fillable field needs the current row: its tag must go when its value changes. The
     // match table counts — it is the "structure" an AI rebuild writes.
     const touchesAiField =
-      patch.topic !== undefined || patch.answer !== undefined || patch.explanation !== undefined || patch.match !== undefined;
+      patch.topic !== undefined || patch.answer !== undefined || patch.explanation !== undefined ||
+      patch.match !== undefined || patch.level !== undefined;
     const current = touchesAiField ? await this.prisma.question.findUnique({ where: { id } }) : null;
     const aiFilled = current ? aiFilledAfterEdit(toQuestion(current), patch) : undefined;
     const row = await this.prisma.question.update({

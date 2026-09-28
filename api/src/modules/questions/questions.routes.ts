@@ -11,6 +11,7 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
  *   GET  /?documentId=…       — a document's extracted questions (verify/preview)
  *   POST /detect-figures      — AI-locate the figures on one page → { imageWidth, imageHeight, figures }
  *   POST /detect-figures/batch — AI-locate figures on several pages at once → { pages: [...] }
+ *   POST /transcribe-area     — AI-read one operator-selected source rectangle into field text
  *   PATCH /batch              — apply verify-screen edits to several questions → { updated, failed }
  *   PATCH /:id                — apply verify-screen edits (image flags/urls, stem, options, answer)
  *   DELETE /:id               — delete one question (+ its published bank copy) → { ok }
@@ -24,6 +25,7 @@ export function createQuestionsRouter(service: QuestionsService): Router {
 
   router.get('/', controller.list);
   router.post('/refine', controller.refine);
+  router.post('/transcribe-area', upload.single('file'), controller.transcribeArea);
   router.post('/paper-metadata', upload.single('file'), controller.extractPaperMetadata);
   router.post('/re-extract', controller.reExtract);
   router.post('/re-extract-group', controller.reExtractGroup);

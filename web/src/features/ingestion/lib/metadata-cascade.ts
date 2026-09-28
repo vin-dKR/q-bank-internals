@@ -1,5 +1,6 @@
 import type { ChapterVocabulary } from '../hooks/use-chapter-vocabulary.js';
 import type { ChapterMetadataDraft } from '../types/chapter-group.js';
+import { shouldCollectClassName } from '@ingest/contracts';
 
 /**
  * Compute the metadata patch for a change to one dependent field (module → exam → subject → chapter),
@@ -19,6 +20,14 @@ export function cascadeMetadata(
   vocab: ChapterVocabulary,
 ): Partial<ChapterMetadataDraft> {
   const patch: Partial<ChapterMetadataDraft> = { [field]: next };
+
+  // A class has meaning only for board-level or NCERT material. Drop a stale value when either
+  // controlling field changes away from that scope.
+  const proposedExam = field === 'exam' ? next : draft.exam;
+  const proposedModule = field === 'module' ? next : draft.module;
+  if ((field === 'exam' || field === 'module') && !shouldCollectClassName(proposedExam, proposedModule)) {
+    patch.className = '';
+  }
 
   if (field === 'subject') {
     if (draft.chapter && !vocab.chaptersFor(next).includes(draft.chapter)) patch.chapter = '';

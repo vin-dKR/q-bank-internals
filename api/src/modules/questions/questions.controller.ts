@@ -8,6 +8,7 @@ import {
   ReExtractGroupSchema,
   ReExtractQuestionSchema,
   RefineLatexSchema,
+  TranscribeAreaRequestSchema,
   UpdatePassageSchema,
   UpdateQuestionSchema,
 } from '@ingest/contracts';
@@ -28,6 +29,7 @@ export function createQuestionsController(service: QuestionsService): {
   batchUpdate: RequestHandler;
   uploadImage: RequestHandler;
   refine: RequestHandler;
+  transcribeArea: RequestHandler;
   reExtract: RequestHandler;
   reExtractGroup: RequestHandler;
   detectFigures: RequestHandler;
@@ -55,13 +57,25 @@ export function createQuestionsController(service: QuestionsService): {
       ok(res, { text: await service.refineLatex(text) });
     }),
 
+    transcribeArea: asyncHandler(async (req, res) => {
+      if (!req.file) throw errors.uploadMissingFile();
+      const { documentId, target } = parseOrThrow(TranscribeAreaRequestSchema, req.body);
+      ok(res, { text: await service.transcribeSourceArea(documentId, req.file.buffer, target) });
+    }),
+
     reExtract: asyncHandler(async (req, res) => {
-      const { documentId, questionId, source, questionType } = parseOrThrow(ReExtractQuestionSchema, req.body);
+      const { documentId, questionId, source, questionType } = parseOrThrow(
+        ReExtractQuestionSchema,
+        req.body,
+      );
       ok(res, await service.reExtractQuestion(documentId, questionId, source, questionType));
     }),
 
     reExtractGroup: asyncHandler(async (req, res) => {
-      const { documentId, passageId, source, questionType, mode } = parseOrThrow(ReExtractGroupSchema, req.body);
+      const { documentId, passageId, source, questionType, mode } = parseOrThrow(
+        ReExtractGroupSchema,
+        req.body,
+      );
       ok(res, await service.reExtractGroup(documentId, passageId, source, questionType, mode));
     }),
 

@@ -54,6 +54,7 @@ const METADATA_KEYS: readonly Exclude<
 >[] = [
   'source',
   'exam',
+  'className',
   'subject',
   'module',
   'chapter',

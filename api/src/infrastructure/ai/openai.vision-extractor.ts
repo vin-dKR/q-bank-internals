@@ -39,6 +39,8 @@ type RawQuestion = {
   question_type?: unknown;
   /** The question's difficulty, classified by the model — one of KNOWN_LEVELS (easy/medium/hard). */
   difficulty?: unknown;
+  /** The model's 0–1 confidence in its difficulty classification. */
+  difficulty_confidence?: unknown;
   /** Only present for matrix-match questions — the ordered columns and (optionally) the answer key. */
   columns?: unknown;
   match?: unknown;
@@ -74,6 +76,16 @@ function cleanStringOrNull(value: unknown): string | null {
 function normalizeDifficulty(value: unknown): string | null {
   const text = asString(value).trim().toLowerCase();
   return (KNOWN_LEVELS as readonly string[]).includes(text) ? text : null;
+}
+
+/** A model-reported 0–1 difficulty confidence, or null for legacy/custom prompt replies. */
+function normalizeDifficultyConfidence(value: unknown): number | null {
+  const numeric = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && /^0(?:\.\d+)?$|^1(?:\.0+)?$/.test(value.trim())
+      ? Number(value)
+      : Number.NaN;
+  return Number.isFinite(numeric) && numeric >= 0 && numeric <= 1 ? numeric : null;
 }
 
 /**
@@ -350,6 +362,7 @@ export class OpenAiVisionExtractor implements VisionExtractor {
           // nothing usable — toNewQuestion falls back to the operator's binding for the type.
           questionType,
           level: normalizeDifficulty(raw.difficulty),
+          difficultyConfidence: normalizeDifficultyConfidence(raw.difficulty_confidence),
           sourcePage: page.pageNumber,
           pyqExam: asStringOrNull(raw.pyq_exam),
           pyqYear: asStringOrNull(raw.pyq_year),

@@ -9,7 +9,6 @@ import type {
 } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import {
-  CANONICAL_SECTIONS,
   CANONICAL_SUBJECTS,
   CLOSED_MASTER_DIMENSIONS,
   LEVELS,
@@ -34,8 +33,9 @@ const QUESTION_KIND_KEYS = new Set(QUESTION_KINDS.map((k) => k.key));
  * lists each dimension with its bank-usage count, creates/renames/deletes canonical entries (folding
  * every write through the SAME `foldMaps` the publisher and eduents use, so the vocabulary can never
  * re-dirty), and seeds the closed vocabularies (question kinds, difficulty levels) plus the curated
- * subject/section starting sets. Modules are independent providers; chapters are subject-scoped and
- * topics are chapter-scoped.
+ * subject starting sets. Modules are independent providers; sections are module-scoped, chapters are
+ * subject-scoped, and topics are chapter-scoped. Subjects may optionally declare many compatible exams
+ * without becoming children of an exam.
  */
 export class MastersService {
   constructor(private readonly store: TaxonomyStore) {}
@@ -45,16 +45,23 @@ export class MastersService {
       q: query.q,
       subjectId: dimension === 'chapter' ? query.subjectId : undefined,
       chapterId: dimension === 'topic' ? query.chapterId : undefined,
+      moduleId: dimension === 'section' ? query.moduleId : undefined,
     };
     const rows = await this.store.list(dimension, filter);
-    const counts = await this.store.usageCounts(dimension, rows.map((row) => row.id));
+    const counts = await this.store.usageCounts(
+      dimension,
+      rows.map((row) => row.id),
+    );
     return {
       dimension,
       entries: rows.map((row) => this.toEntry(dimension, row, counts.get(row.id) ?? 0)),
     };
   }
 
-  async create(dimension: TaxonomyDimension, input: CreateDictionaryEntry): Promise<DictionaryEntry> {
+  async create(
+    dimension: TaxonomyDimension,
+    input: CreateDictionaryEntry,
+  ): Promise<DictionaryEntry> {
     const canonical = canonicalizeMaster(dimension, input.name);
     if (!canonical) throw errors.dictionaryValueRejected(dimension, input.name);
 
@@ -64,11 +71,27 @@ export class MastersService {
     if (input.chapterId !== undefined && dimension !== 'topic') {
       throw errors.dictionaryFieldNotAllowed(dimension, 'chapterId');
     }
+    if (input.moduleId !== undefined && dimension !== 'section') {
+      throw errors.dictionaryFieldNotAllowed(dimension, 'moduleId');
+    }
+    if (input.examIds !== undefined && dimension !== 'subject') {
+      throw errors.dictionaryFieldNotAllowed(dimension, 'examIds');
+    }
+    if (dimension === 'section' && !input.moduleId) {
+      throw errors.dictionaryParentRequired('section', 'module');
+    }
 
     const existing = await this.store.findByKey(dimension, canonical.key);
     if (existing) throw errors.dictionaryEntryExists(dimension, existing.name);
 
-    await this.assertScopeExists(dimension, input.subjectId, input.chapterId);
+    const examIds = this.uniqueIds(input.examIds);
+    await this.assertScopeExists(
+      dimension,
+      input.subjectId,
+      input.chapterId,
+      input.moduleId,
+      examIds,
+    );
 
     const row: NewDictionaryRow = {
       key: canonical.key,
@@ -78,6 +101,8 @@ export class MastersService {
       rank: dimension === 'level' ? levelRank(canonical.key) : null,
       subjectId: dimension === 'chapter' ? (input.subjectId ?? null) : null,
       chapterId: dimension === 'topic' ? (input.chapterId ?? null) : null,
+      moduleId: dimension === 'section' ? (input.moduleId ?? null) : null,
+      examIds: dimension === 'subject' ? examIds : [],
     };
     const created = await this.store.create(dimension, row);
     return this.toEntry(dimension, created, 0);
@@ -104,7 +129,8 @@ export class MastersService {
 
     if (input.kind !== undefined) {
       if (dimension !== 'questionType') throw errors.dictionaryFieldNotAllowed(dimension, 'kind');
-      if (!QUESTION_KIND_KEYS.has(input.kind)) throw errors.dictionaryValueRejected('questionType', input.kind);
+      if (!QUESTION_KIND_KEYS.has(input.kind))
+        throw errors.dictionaryValueRejected('questionType', input.kind);
       patch.kind = input.kind;
     }
 
@@ -127,6 +153,20 @@ export class MastersService {
       patch.chapterId = input.chapterId;
     }
 
+    if (input.moduleId !== undefined) {
+      if (dimension !== 'section') throw errors.dictionaryFieldNotAllowed(dimension, 'moduleId');
+      if (!input.moduleId) throw errors.dictionaryParentRequired('section', 'module');
+      await this.assertScopeExists(dimension, undefined, undefined, input.moduleId);
+      patch.moduleId = input.moduleId;
+    }
+
+    if (input.examIds !== undefined) {
+      if (dimension !== 'subject') throw errors.dictionaryFieldNotAllowed(dimension, 'examIds');
+      const examIds = this.uniqueIds(input.examIds);
+      await this.assertScopeExists(dimension, undefined, undefined, undefined, examIds);
+      patch.examIds = examIds;
+    }
+
     const updated = await this.store.update(dimension, id, patch);
     const counts = await this.store.usageCounts(dimension, [id]);
     return this.toEntry(dimension, updated, counts.get(id) ?? 0);
@@ -138,6 +178,15 @@ export class MastersService {
     const current = await this.store.findById(dimension, id);
     if (!current) throw errors.dictionaryEntryNotFound(dimension, id);
 
+    // Sections are owned by their Module. Do not permit the parent to disappear while those rows
+    // still point at it; otherwise the UI would be unable to edit or filter the orphaned Sections.
+    if (dimension === 'module') {
+      const sections = await this.store.list('section', { moduleId: id });
+      if (sections.length > 0) {
+        throw errors.dictionaryEntryHasChildren(current.name, 'section', sections.length);
+      }
+    }
+
     const counts = await this.store.usageCounts(dimension, [id]);
     const used = counts.get(id) ?? 0;
     if (used > 0) throw errors.dictionaryEntryInUse(current.name, used);
@@ -147,8 +196,9 @@ export class MastersService {
 
   /**
    * Idempotently create a dimension's canonical starting set: the 7 question kinds, the 3 difficulty
-   * levels, and the curated subject/section vocabularies. Dimensions without a curated set (exam,
-   * module, chapter, topic) are a no-op — they populate from operator creation and publish-time resolution.
+   * levels, and the curated subject vocabulary. Sections deliberately have no global seed: every new
+   * section is filed under a module. Dimensions without a curated set (exam, module, chapter, section,
+   * topic) are a no-op — they populate from operator creation and publish-time resolution.
    */
   async seed(dimension: TaxonomyDimension): Promise<SeedDictionary> {
     const canonicalRows = this.seedRows(dimension);
@@ -164,29 +214,54 @@ export class MastersService {
   }
 
   private seedRows(dimension: TaxonomyDimension): NewDictionaryRow[] {
-    const blank = { kind: null, rank: null, subjectId: null, chapterId: null };
+    const blank = {
+      kind: null,
+      rank: null,
+      subjectId: null,
+      chapterId: null,
+      moduleId: null,
+      examIds: [],
+    };
     switch (dimension) {
       case 'questionType':
-        return QUESTION_KINDS.map((k) => ({ ...blank, key: k.key, name: k.name, aliases: [k.name], kind: k.kind ?? k.key }));
+        return QUESTION_KINDS.map((k) => ({
+          ...blank,
+          key: k.key,
+          name: k.name,
+          aliases: [k.name],
+          kind: k.kind ?? k.key,
+        }));
       case 'level':
-        return LEVELS.map((l) => ({ ...blank, key: l.key, name: l.name, aliases: [l.name], rank: l.rank }));
+        return LEVELS.map((l) => ({
+          ...blank,
+          key: l.key,
+          name: l.name,
+          aliases: [l.name],
+          rank: l.rank,
+        }));
       case 'subject':
-        return CANONICAL_SUBJECTS.map((s) => ({ ...blank, key: s.key, name: s.name, aliases: s.aliases }));
-      case 'section':
-        return CANONICAL_SECTIONS.map((s) => ({ ...blank, key: s.key, name: s.name, aliases: s.aliases }));
+        return CANONICAL_SUBJECTS.map((s) => ({
+          ...blank,
+          key: s.key,
+          name: s.name,
+          aliases: s.aliases,
+        }));
       case 'exam':
       case 'module':
       case 'chapter':
+      case 'section':
       case 'topic':
         return [];
     }
   }
 
-  /** Reject a chapter/topic whose declared parent id does not resolve to a real subject/chapter row. */
+  /** Reject a scoped row or optional subject→exam link whose declared parent ids do not resolve. */
   private async assertScopeExists(
     dimension: TaxonomyDimension,
     subjectId: string | undefined,
     chapterId: string | undefined,
+    moduleId?: string,
+    examIds: readonly string[] = [],
   ): Promise<void> {
     if (dimension === 'chapter' && subjectId) {
       const parent = await this.store.findById('subject', subjectId);
@@ -196,6 +271,31 @@ export class MastersService {
       const parent = await this.store.findById('chapter', chapterId);
       if (!parent) throw errors.dictionaryParentNotFound('chapter', chapterId);
     }
+    if (dimension === 'section' && moduleId) {
+      const parent = await this.store.findById('module', moduleId);
+      if (!parent) throw errors.dictionaryParentNotFound('module', moduleId);
+    }
+    if (dimension === 'subject') {
+      await Promise.all(
+        examIds.map(async (examId) => {
+          const parent = await this.store.findById('exam', examId);
+          if (!parent) throw errors.dictionaryParentNotFound('exam', examId);
+        }),
+      );
+    }
+  }
+
+  /** Trim and de-duplicate ObjectId strings before validation/storage. */
+  private uniqueIds(ids: readonly string[] | undefined): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const id of ids ?? []) {
+      const trimmed = id.trim();
+      if (!trimmed || seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      out.push(trimmed);
+    }
+    return out;
   }
 
   /** Trim, drop blanks, and de-duplicate aliases case-insensitively, preserving first-seen casing. */
@@ -213,7 +313,11 @@ export class MastersService {
     return out;
   }
 
-  private toEntry(dimension: TaxonomyDimension, row: DictionaryRow, questionCount: number): DictionaryEntry {
+  private toEntry(
+    dimension: TaxonomyDimension,
+    row: DictionaryRow,
+    questionCount: number,
+  ): DictionaryEntry {
     return {
       id: row.id,
       dimension,
@@ -224,6 +328,8 @@ export class MastersService {
       rank: row.rank,
       subjectId: row.subjectId,
       chapterId: row.chapterId,
+      moduleId: row.moduleId,
+      examIds: row.examIds,
       questionCount,
     };
   }

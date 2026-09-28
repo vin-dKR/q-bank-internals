@@ -1,4 +1,5 @@
 import type {
+  AiFilled,
   ImageCrop,
   MatchData,
   PaperMetadata,
@@ -30,8 +31,12 @@ export type NewQuestion = {
   questionType: string | null;
   // Per-question difficulty (easy|medium|hard) the AI classified; null when it gave nothing usable.
   level: string | null;
+  /** Provenance for AI-written values, including the extraction-time difficulty classification. */
+  aiFilled: AiFilled | null;
   sectionName: string | null;
   topic: string | null;
+  /** CBSE grade copied from the source document; null for non-CBSE/legacy rows. */
+  className: string | null;
   // Per-question subject stamped from the node's subject; null falls back to the document at publish.
   subject: string | null;
   // Per-question PYQ provenance stamped from the segment toggle + what the model read on the page.

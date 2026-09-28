@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Document, DocumentListQuery, RegisterDocument, UpdateDocument } from '@ingest/contracts';
+import { shouldCollectClassName, type Document, type DocumentListQuery, type RegisterDocument, type UpdateDocument } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { SessionRepository } from '../sessions/index.js';
 import type { DocumentRepository } from './documents.repository.js';
@@ -81,6 +81,9 @@ export class DocumentsService {
       sectionName: input.sectionName ?? null,
       questionType: input.questionType ?? null,
       exam: input.exam ?? null,
+      className: shouldCollectClassName(input.exam, input.path.module)
+        ? input.className ?? null
+        : null,
       subject: input.subject ?? null,
       pyq: input.pyq ?? false,
       pyqExam: input.pyqExam ?? null,

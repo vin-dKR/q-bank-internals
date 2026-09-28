@@ -4,6 +4,7 @@ import {
   type ChapterTopic,
   type ChapterUploadMetadata,
   hasPaperMetadata,
+  shouldCollectClassName,
   trimPaperMetadata,
 } from '@ingest/contracts';
 import type { NodeLevel, StructureNode, StructureTree } from '../types/structure-node.js';
@@ -180,6 +181,9 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
   const unitType = resolveQuestionType(firstLeaf.node, firstLeaf.ancestors).trim();
   const base: Base = {
     exam: m.exam.trim(),
+    ...(shouldCollectClassName(m.exam, m.module) && m.className.trim()
+      ? { className: m.className.trim() }
+      : {}),
     subject: m.subject.trim(),
     module: m.module.trim(),
     chapter: m.chapter.trim(),
@@ -205,6 +209,9 @@ export async function assembleChapterUpload(tree: StructureTree): Promise<Assemb
 function emptyBase(m: StructureTree['metadata']): Base {
   return {
     exam: m.exam.trim(),
+    ...(shouldCollectClassName(m.exam, m.module) && m.className.trim()
+      ? { className: m.className.trim() }
+      : {}),
     subject: m.subject.trim(),
     module: m.module.trim(),
     chapter: m.chapter.trim(),

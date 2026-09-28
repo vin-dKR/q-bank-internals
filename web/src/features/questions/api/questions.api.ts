@@ -12,6 +12,7 @@ import type {
   ReExtractedGroup,
   ReExtractedQuestion,
   ReExtractSource,
+  TranscribeAreaTarget,
   UpdatePassage,
   UpdateQuestion,
 } from '@ingest/contracts';
@@ -25,6 +26,7 @@ import {
   QuestionSchema,
   ReExtractedGroupSchema,
   ReExtractedQuestionSchema,
+  TranscribedAreaSchema,
 } from '@ingest/contracts';
 import { request } from '../../../shared/api/http-client.js';
 import { uploadCrop } from '../../../shared/api/upload-crop.js';
@@ -60,7 +62,11 @@ export const questionsApi = {
 
   /** Apply verify-screen edits (text / shared image) to one comprehension passage — a single PATCH. */
   updatePassage: (id: string, patch: UpdatePassage): Promise<Passage> => {
-    return request(`/questions/passages/${id}`, { method: 'PATCH', body: patch, schema: PassageSchema });
+    return request(`/questions/passages/${id}`, {
+      method: 'PATCH',
+      body: patch,
+      schema: PassageSchema,
+    });
   },
 
   /** Manually group the given questions into a new comprehension passage; returns the created passage. */
@@ -123,6 +129,24 @@ export const questionsApi = {
 
   /** One-click AI "Fix LaTeX": returns the text with math wrapped in \(...\). */
   refine: (text: string): Promise<string> => refineLatex(text),
+
+  /** AI-read a teacher-selected source rectangle, without scanning/replacing the whole question. */
+  transcribeArea: async (
+    documentId: string,
+    target: TranscribeAreaTarget,
+    blob: Blob,
+  ): Promise<string> => {
+    const form = new FormData();
+    form.append('documentId', documentId);
+    form.append('target', target);
+    form.append('file', blob, 'selected-source-area.png');
+    const result = await request('/questions/transcribe-area', {
+      method: 'POST',
+      body: form,
+      schema: TranscribedAreaSchema,
+    });
+    return result.text;
+  },
 
   /**
    * AI "read the page again": re-extract one question's fields (stem, options, answer, explanation)

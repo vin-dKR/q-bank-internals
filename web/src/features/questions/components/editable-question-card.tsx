@@ -8,6 +8,7 @@ import {
   type QuestionOption,
   type ReExtractedQuestion,
   type ReExtractSource,
+  type TranscribeAreaTarget,
 } from '@ingest/contracts';
 import {
   Badge,
@@ -99,6 +100,11 @@ type Props = {
     questionId: string,
     source: 'question' | 'answer' | 'solution',
     replaceUrl?: string,
+  ) => Promise<string | null>;
+  /** Arm a tight source-area selection and transcribe it into a matrix title or entry. */
+  onRequestTranscription: (
+    questionId: string,
+    target: TranscribeAreaTarget,
   ) => Promise<string | null>;
   /** Arm (or, on the armed target, cancel) draw mode — the drawn crop then saves automatically. */
   onDrawRegion: (question: Question, type: 'question' | 'option', optionIndex?: number) => void;
@@ -261,12 +267,11 @@ function matrixKeySignature(key: Record<string, readonly string[]>): string {
     .join('|');
 }
 
-function optionMatchesMatrixKey(
-  option: Pick<QuestionOption, 'body'>,
-  match: MatchData,
-): boolean {
+function optionMatchesMatrixKey(option: Pick<QuestionOption, 'body'>, match: MatchData): boolean {
   const parsed = parseOptionMatching(option.body, targetLabelsForMatch(match));
-  return Object.keys(parsed).length > 0 && matrixKeySignature(parsed) === matrixKeySignature(match.key);
+  return (
+    Object.keys(parsed).length > 0 && matrixKeySignature(parsed) === matrixKeySignature(match.key)
+  );
 }
 
 function isGeneratedMatrixOption(option: Pick<QuestionOption, 'generated'>): boolean {
@@ -373,9 +378,7 @@ function selectExistingMatrixOption(
     draft.match ? targetLabelsForMatch(draft.match) : undefined,
   );
   const match =
-    draft.match && Object.keys(parsed).length > 0
-      ? { ...draft.match, key: parsed }
-      : draft.match;
+    draft.match && Object.keys(parsed).length > 0 ? { ...draft.match, key: parsed } : draft.match;
 
   return {
     ...draft,
@@ -557,16 +560,13 @@ function AiButton({
   onClick: () => void;
 }): JSX.Element {
   return (
-    <Button
-      variant="ghost"
+    <IconButton
+      icon={busy ? <Spinner /> : icon}
+      label={title}
       size="xs"
       disabled={busy || disabled}
       onClick={onClick}
-      title={title}
-      aria-label={title}
-    >
-      {busy ? '…' : icon}
-    </Button>
+    />
   );
 }
 
@@ -669,6 +669,7 @@ export function EditableQuestionCard({
   onSave,
   onDelete,
   onRequestCrop,
+  onRequestTranscription,
   onDrawRegion,
   onSaveBox,
   onDeleteBox,
@@ -1267,13 +1268,22 @@ export function EditableQuestionCard({
       ? 'Assertion & reason choices'
       : draft.questionType === 'true_false'
         ? 'True / false choices'
-        : 'Options';
+      : 'Options';
+  const levelAiTag = question.aiFilled?.level;
   const settingPills = [
     { label: 'Type', value: selectedQuestionType },
     { label: 'Level', value: draft.level },
+    { label: 'Class', value: question.className },
     { label: 'Section', value: draft.sectionName },
     { label: 'Topic', value: draft.topic },
-  ].filter((item): item is { label: string; value: string } =>
+    ...(levelAiTag
+      ? [{
+          label: 'AI-generated',
+          value: 'difficulty',
+          title: `Difficulty classified during extraction by ${levelAiTag.model} (${String(Math.round(levelAiTag.confidence * 100))}% confidence).`,
+        }]
+      : []),
+  ].filter((item): item is { label: string; value: string; title?: string } =>
     Boolean(item.value && item.value.trim()),
   );
 
@@ -1703,7 +1713,10 @@ export function EditableQuestionCard({
               value={draft.match}
               onChange={setMatch}
               disabled={saving}
+              sourceActionsDisabled={cropDisabled}
               onCropImage={() => onRequestCrop(question.id, 'question')}
+              onRefineText={questionsApi.refine}
+              onRequestTranscription={(target) => onRequestTranscription(question.id, target)}
             />
 
             <div className="flex flex-col gap-1.5 border-t border-line pt-2">
@@ -2211,7 +2224,7 @@ export function EditableQuestionCard({
               settingPills.map((item) => (
                 <span
                   key={item.label}
-                  title={`${item.label}: ${item.value}`}
+                  title={item.title ?? `${item.label}: ${item.value}`}
                   className="inline-flex max-w-48 items-center overflow-hidden rounded-full border border-line bg-surface-2 text-[11px] text-ink-2"
                 >
                   <span className="flex-none bg-white px-1.5 py-0.5 font-semibold text-ink-3">
