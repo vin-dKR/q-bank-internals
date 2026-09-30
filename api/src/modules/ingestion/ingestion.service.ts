@@ -18,6 +18,16 @@ import type { UploadStagingStore } from './upload-staging.store.js';
 export type UploadChapterResult = { document: Document; driveFile: DriveFile };
 
 /**
+ * Give every Cut & Upload action a stable, visible suffix. Its question and supporting PDFs share
+ * the same upload-group id, so operators can tell one pair from another even within one session.
+ */
+function fileNameForUpload(metadata: ChapterUploadMetadata): string {
+  const base = metadata.chapter.trim() || metadata.exam.trim() || 'paper';
+  const uploadLabel = metadata.uploadGroupId.replaceAll('-', '').slice(0, 8);
+  return `${base}-${uploadLabel}-${metadata.kind}.pdf`;
+}
+
+/**
  * Orchestrates filing a cut chapter PDF into Drive AND recording it as a durable, session-scoped
  * Document — the breakable checkpoint that lets Phase 1 finish without waiting on Phase 2. It
  * ensures the nested exam → subject → module → chapter folder path exists, uploads the bytes, then
@@ -75,10 +85,9 @@ export class IngestionService {
     const bytes = await this.staging.download(storagePath);
 
     const path = { module: metadata.module, chapter: metadata.chapter, section: metadata.sectionName };
-    // A PYQ paper may omit the chapter, so fall back to the exam for a still-meaningful file name. This
-    // is a DISPLAY label only — the document's identity is the client-minted uploadGroupId, so two
-    // uploads of the same file (same derived name) are two distinct documents.
-    const name = `${metadata.chapter.trim() || metadata.exam.trim() || 'paper'}-${metadata.kind}.pdf`;
+    // A PYQ paper may omit the chapter, so fall back to the exam. The group suffix keeps repeated
+    // uploads visibly distinct while staying shared by their question/answer/solution pair.
+    const name = fileNameForUpload(metadata);
 
     // Identity is (session · uploadGroupId · kind). Only an idempotent retry of the SAME upload action
     // (same id) finds a twin — a genuine second upload mints a fresh id and creates a new document. A
