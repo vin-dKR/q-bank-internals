@@ -14,7 +14,7 @@ import {
   LoadedFileBar,
   useToast,
 } from '../../../shared/ui/index.js';
-import { saveBlob } from '../../../shared/lib/files.js';
+import { bytesToBlob, saveBlob } from '../../../shared/lib/files.js';
 import { usePdfFile } from '../../../shared/lib/use-pdf-file.js';
 import { buildQnaZip } from '../lib/build-qna.js';
 
@@ -32,9 +32,10 @@ export function QnaPdfTool(): JSX.Element {
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // A stable copy so pdf.js never reads a detached buffer across re-renders.
+  // pdf.js transfers each input buffer to its worker; react-pdf can derive a fresh buffer from this Blob
+  // whenever it reloads the preview.
   const fileData = useMemo(
-    () => (pdf.file ? { data: new Uint8Array(pdf.file.bytes.slice(0)) } : null),
+    () => (pdf.file ? bytesToBlob(new Uint8Array(pdf.file.bytes)) : null),
     [pdf.file],
   );
 
