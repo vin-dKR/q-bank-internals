@@ -33,7 +33,9 @@ export function PdfCutterTool(): JSX.Element {
   const [busy, setBusy] = useState(false);
 
   const fileData = useMemo(
-    () => (pdf.file ? { data: new Uint8Array(pdf.file.bytes.slice(0)) } : null),
+    // pdf.js transfers each input buffer to its worker; react-pdf can derive a fresh buffer from this Blob
+    // whenever it reloads the preview.
+    () => (pdf.file ? bytesToBlob(new Uint8Array(pdf.file.bytes)) : null),
     [pdf.file],
   );
 

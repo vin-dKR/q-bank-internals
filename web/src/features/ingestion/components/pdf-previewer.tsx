@@ -14,6 +14,7 @@ import 'react-pdf/dist/Page/AnnotationLayer.css';
 // origin, and correctly handled in both dev and build (the `new URL(bare-specifier)` form fails to
 // load in Vite dev with "Failed to fetch dynamically imported module").
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { bytesToBlob } from '../../../shared/lib/files.js';
 import {
   ErrorBoundary,
   ErrorFallback,
@@ -132,8 +133,12 @@ export function PdfPreviewer({
         )
       : GRID_THUMB_WIDTH;
 
-  // A stable copy so pdf.js never reads a detached buffer across re-renders (only recut on new file).
-  const file = useMemo(() => ({ data: new Uint8Array(pdfBytes.slice(0)) }), [pdfBytes]);
+  // pdf.js transfers its input buffer to its worker. Passing a Blob makes react-pdf read fresh bytes for
+  // each load, so a worker retry or teardown can never reuse an already-detached ArrayBuffer.
+  const file = useMemo(
+    () => bytesToBlob(pdfBytes instanceof Uint8Array ? pdfBytes : new Uint8Array(pdfBytes)),
+    [pdfBytes],
+  );
 
   const dragPagesFor = (pageNumber: number, selected: boolean): number[] =>
     selected && selectedPages && selectedPages.size > 0
