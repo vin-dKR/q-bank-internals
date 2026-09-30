@@ -56,7 +56,16 @@ function labelKey(label: string): string {
 }
 
 function cleanedSafeLabel(value: string): string | null {
-  const label = value.trim();
+  const raw = value.trim();
+  // The extractor normally returns bare identifiers (A / p), but papers often
+  // print them as (A) / (p) and that punctuation can leak into a saved table.
+  // It is presentation only: strip one *matched* enclosing pair before using
+  // the label as a key, while still rejecting arbitrary prose or punctuation.
+  const wrapped = /^([([{])\s*([A-Za-z0-9]+)\s*([)\]}])$/.exec(raw);
+  const closingFor: Record<string, string> = { '(': ')', '[': ']', '{': '}' };
+  const label = wrapped && closingFor[wrapped[1] ?? ''] === wrapped[3]
+    ? (wrapped[2] ?? '')
+    : raw;
   return SAFE_MATRIX_LABEL.test(label) ? label : null;
 }
 
