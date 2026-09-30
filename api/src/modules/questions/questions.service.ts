@@ -463,15 +463,21 @@ function normalizeMatrixReExtract(
   question: Question,
   fresh: ReExtractedQuestion,
   expectedType: string | null,
-  sourceKind: ReExtractSourceKind,
+  _sourceKind: ReExtractSourceKind,
 ): ReExtractedQuestion {
   if (expectedType !== 'matrix') return fresh;
-  const fieldSource = sourceKind !== 'question';
+  // A vision re-read is allowed to be incomplete, but it must not wipe an already-complete matrix
+  // just because the model did not recover its columns/key this time. Do not, however, pull normal
+  // MCQ choices into a question the operator has newly switched to Matrix Match.
+  const hasExistingMatrix = question.questionType === 'matrix' || question.match !== null;
+  const fallback = hasExistingMatrix
+    ? { match: question.match, options: question.options, answer: question.answer }
+    : { match: null, options: [], answer: '' };
   const candidate: MatrixDraftState = {
     questionType: 'matrix',
-    match: fresh.match ?? (fieldSource ? question.match : null),
-    options: fresh.options.length > 0 ? fresh.options : fieldSource ? question.options : [],
-    answer: fresh.answer.trim() ? fresh.answer : fieldSource ? question.answer : '',
+    match: fresh.match ?? fallback.match,
+    options: fresh.options.length > 0 ? fresh.options : fallback.options,
+    answer: fresh.answer.trim() ? fresh.answer : fallback.answer,
   };
   const normalized = normalizeMatrixState(candidate);
   return {

@@ -1,6 +1,7 @@
 import type { JSX } from 'react';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
+  mergeMatrixKeyWithAnswer,
   parseMatchKey,
   synthesizeMatrixChoiceOptions,
   type MatchData,
@@ -239,24 +240,7 @@ function parseOptionMatching(
   body: string,
   knownTargetLabels?: readonly string[],
 ): Record<string, string[]> {
-  const key: Record<string, string[]> = {};
-  let current: string | null = null;
-  const parseTargets = (token: string): string[] =>
-    parseMatchKey(`X → ${token}`, knownTargetLabels).X ?? [];
-  for (const segment of body.split(/[;,\n]/)) {
-    const token = segment.trim();
-    if (!token) continue;
-    const pair = /^([A-Za-z0-9]+)\s*[-–—>:→=.)]+\s*([A-Za-z0-9]+)$/.exec(token);
-    if (pair) {
-      current = (pair[1] ?? '').trim();
-      key[current] = parseTargets((pair[2] ?? '').trim());
-    } else if (current !== null && /^[A-Za-z0-9]+$/.test(token)) {
-      const targets = key[current] ?? [];
-      targets.push(...parseTargets(token));
-      key[current] = targets;
-    }
-  }
-  return key;
+  return parseMatchKey(body, knownTargetLabels);
 }
 
 function targetLabelsForMatch(match: MatchData): string[] {
@@ -298,7 +282,7 @@ function selectedMatrixOptionIndex(options: readonly QuestionOption[], answer: s
   return options.findIndex((option) => option.isCorrect);
 }
 
-type MatrixChoiceState = Pick<QuestionDraft, 'options' | 'answer'>;
+type MatrixChoiceState = Pick<QuestionDraft, 'match' | 'options' | 'answer'>;
 
 /**
  * Keep a matrix's selected answer choice honest after the table changes. The synthesis helper only
@@ -311,27 +295,39 @@ function synchronizeMatrixChoiceState(
   answer: string,
   match: MatchData,
 ): MatrixChoiceState {
-  const synthesis = synthesizeMatrixChoiceOptions(match);
+  // Older extracted rows can have a complete answer-map string but an empty
+  // structured key. Merge it before validation so opening Verify repairs the
+  // row instead of requiring an unreliable full-page re-extract.
+  const completedMatch = mergeMatrixKeyWithAnswer(match, answer);
+  const synthesis = synthesizeMatrixChoiceOptions(completedMatch);
   if (synthesis.status === 'blocked') {
     // An incomplete table must not leave a generated "correct" answer looking trustworthy. Printed
     // answer choices, however, remain source evidence and are deliberately preserved.
     if (options.length > 0 && options.every(isGeneratedMatrixOption)) {
-      return { options: options.map((option) => ({ ...option, isCorrect: false })), answer: '' };
+      return {
+        match: completedMatch,
+        options: options.map((option) => ({ ...option, isCorrect: false })),
+        answer: '',
+      };
     }
-    return { options: [...options], answer };
+    return { match: completedMatch, options: [...options], answer };
   }
 
   // A pristine generated set is disposable as a unit. Rebuild all distractors as well as the correct
   // choice so a manual table edit never leaves choices derived from the old relationship behind.
   if (options.length === 0 || options.every(isGeneratedMatrixOption)) {
-    return { options: synthesis.options, answer: synthesis.answer };
+    return { match: completedMatch, options: synthesis.options, answer: synthesis.answer };
   }
 
-  const matchingIndex = options.findIndex((option) => optionMatchesMatrixKey(option, match));
+  const matchingIndex = options.findIndex((option) => optionMatchesMatrixKey(option, completedMatch));
   const matchingOption = matchingIndex >= 0 ? options[matchingIndex] : undefined;
   if (matchingOption) {
     const selected = matchingOption;
-    return { options: withCorrectOptions(options, [selected.label]), answer: selected.label };
+    return {
+      match: completedMatch,
+      options: withCorrectOptions(options, [selected.label]),
+      answer: selected.label,
+    };
   }
 
   const selectedIndex = selectedMatrixOptionIndex(options, answer);
@@ -339,6 +335,7 @@ function synchronizeMatrixChoiceState(
   if (selectedOption && isGeneratedMatrixOption(selectedOption)) {
     const selected = selectedOption;
     return {
+      match: completedMatch,
       options: options.map((option, index) =>
         index === selectedIndex
           ? { ...option, body: synthesis.correctMapping, isCorrect: true, generated: true }
@@ -357,7 +354,11 @@ function synchronizeMatrixChoiceState(
     isCorrect: true,
     generated: true,
   };
-  return { options: [...withCorrectOptions(options, []), generated], answer: label };
+  return {
+    match: completedMatch,
+    options: [...withCorrectOptions(options, []), generated],
+    answer: label,
+  };
 }
 
 /**
@@ -856,7 +857,7 @@ export function EditableQuestionCard({
   const setMatch = (next: MatchData): void => {
     onDraftUpdate((prev) => {
       const synced = synchronizeMatrixChoiceState(prev.options, prev.answer, next);
-      return { ...prev, match: next, ...synced };
+      return { ...prev, ...synced };
     });
   };
   const seedMatch = (): void => {
@@ -873,7 +874,7 @@ export function EditableQuestionCard({
   // to repair the legacy direct-response shape. Incomplete tables remain untouched and show guidance.
   useEffect(() => {
     if (!draft.match || draft.options.length > 0) return;
-    if (synthesizeMatrixChoiceOptions(draft.match).status !== 'generated') return;
+    if (synthesizeMatrixChoiceOptions(mergeMatrixKeyWithAnswer(draft.match, draft.answer)).status !== 'generated') return;
     onDraftUpdate((prev) => {
       if (!prev.match || prev.options.length > 0) return prev;
       const synced = synchronizeMatrixChoiceState(prev.options, prev.answer, prev.match);
@@ -914,9 +915,10 @@ export function EditableQuestionCard({
       const wasEntireGeneratedSet =
         prev.options.length > 0 && prev.options.every(isGeneratedMatrixOption);
       if (wasEntireGeneratedSet) {
-        const synthesis = synthesizeMatrixChoiceOptions(prev.match);
+        const match = mergeMatrixKeyWithAnswer(prev.match, prev.answer);
+        const synthesis = synthesizeMatrixChoiceOptions(match);
         if (synthesis.status === 'generated') {
-          return { ...prev, options: synthesis.options, answer: synthesis.answer };
+          return { ...prev, match, options: synthesis.options, answer: synthesis.answer };
         }
       }
       const nextAnswer = selectedMatrixOptionIndex(remaining, prev.answer) >= 0 ? prev.answer : '';
@@ -1050,6 +1052,7 @@ export function EditableQuestionCard({
           next.match = fresh.match;
           if (fresh.match) {
             const synced = synchronizeMatrixChoiceState(fresh.options, fresh.answer, fresh.match);
+            next.match = synced.match;
             next.options = synced.options;
             next.answer = synced.answer;
           } else {
@@ -1297,7 +1300,7 @@ export function EditableQuestionCard({
         if (Object.keys(parsed).length > 0) {
           const nextMatch = { columns: prev.match.columns, key: parsed };
           const synced = synchronizeMatrixChoiceState(prev.options, prev.answer, nextMatch);
-          return { ...prev, match: nextMatch, ...synced };
+          return { ...prev, ...synced };
         }
         return { ...prev, answer };
       }
@@ -1327,7 +1330,7 @@ export function EditableQuestionCard({
       const answer = fresh.answer.trim() || prev.answer;
       if (match === null) return { ...prev, options, answer };
       const synced = synchronizeMatrixChoiceState(options, answer, match);
-      return { ...prev, match, ...synced };
+      return { ...prev, ...synced };
     });
     return true;
   };

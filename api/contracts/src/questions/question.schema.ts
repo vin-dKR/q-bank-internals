@@ -123,6 +123,33 @@ function parseCompactMatchTargets(
 }
 
 /**
+ * Matrix papers commonly print identifiers as `(A)` / `(p)`, while the stored
+ * key needs the identifier itself. Remove one balanced wrapper (and wrappers
+ * around individual targets) without accepting arbitrary punctuation as a
+ * label. This keeps a table's display label intact but lets an answer such as
+ * `(A) → (p, r, s)` complete that table's key.
+ */
+function unwrapMatchLabel(value: string): string {
+  const raw = value.trim();
+  const wrapped = /^([([{])\s*([A-Za-z0-9]+)\s*([)\]}])$/.exec(raw);
+  const closingFor: Record<string, string> = { '(': ')', '[': ']', '{': '}' };
+  return wrapped && closingFor[wrapped[1] ?? ''] === wrapped[3]
+    ? (wrapped[2] ?? '')
+    : raw;
+}
+
+/** Remove display wrappers before splitting a matrix row's target list. */
+function unwrapMatchTargets(value: string): string {
+  let text = value.trim();
+  const grouped = /^([([{])\s*([\s\S]+?)\s*([)\]}])$/.exec(text);
+  const closingFor: Record<string, string> = { '(': ')', '[': ']', '{': '}' };
+  if (grouped && closingFor[grouped[1] ?? ''] === grouped[3]) text = grouped[2] ?? '';
+  return text.replace(/([([{])\s*([A-Za-z0-9]+)\s*([)\]}])/g, (whole, open, label, close) =>
+    closingFor[open] === close ? label : whole,
+  );
+}
+
+/**
  * Semicolons/newlines always separate source rows. A comma does too only when the following text
  * visibly starts another `source → target` pair; otherwise it remains the one-to-many delimiter in
  * `A-p,t`. This admits ordinary printed options such as `A-i, B-ii, C-iii` without breaking a
@@ -131,7 +158,7 @@ function parseCompactMatchTargets(
 function splitMatchAnswerSegments(answer: string): string[] {
   return answer
     .split(/[;\n]+/)
-    .flatMap((segment) => segment.split(/,\s*(?=[A-Za-z0-9]+\s*[-–—>:→=]+)/));
+    .flatMap((segment) => segment.split(/,\s*(?=(?:[([{]\s*)?[A-Za-z0-9]+(?:\s*[)\]}])?\s*[-–—>:→=]+)/));
 }
 
 export function parseMatchKey(
@@ -140,15 +167,16 @@ export function parseMatchKey(
 ): Record<string, string[]> {
   const key: Record<string, string[]> = {};
   for (const segment of splitMatchAnswerSegments(answer)) {
-    const match = /^\s*([A-Za-z0-9]+)\s*(?:[-–—>:→=]+|\s)\s*(.+)$/.exec(segment.trim());
+    const match = /^\s*(?:[([{]\s*([A-Za-z0-9]+)\s*[)\]}]|([A-Za-z0-9]+))\s*(?:[-–—>:→=]+|\s)\s*(.+)$/.exec(segment.trim());
     if (!match) continue;
-    const label = (match[1] ?? '').trim();
-    const rest = (match[2] ?? '').trim();
+    const label = (match[1] ?? match[2] ?? '').trim();
+    const rest = unwrapMatchTargets((match[3] ?? '').trim());
     if (!label || !rest) continue;
     const targets = /[,\s]/.test(rest)
-      ? rest.split(/[,\s]+/).filter(Boolean)
+      ? rest.split(/[,\s]+/).map(unwrapMatchLabel).filter(Boolean)
       : parseCompactMatchTargets(rest, knownTargetLabels);
-    if (targets.length > 0) key[label] = targets;
+    const normalizedTargets = targets.map(unwrapMatchLabel).filter(Boolean);
+    if (normalizedTargets.length > 0) key[label] = normalizedTargets;
   }
   return key;
 }

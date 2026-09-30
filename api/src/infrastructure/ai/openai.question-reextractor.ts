@@ -340,44 +340,78 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
       },
       overrides,
     );
-    const { content, usage } = await this.callVision(prompt, input.png, MAX_TOKENS);
+    type Fields = Omit<QuestionReExtraction, 'usage'>;
+    const readFields = (content: string): Fields => {
+      const parsed = parseReply(content) as RawReExtract;
+      // A MATRIX MATCH question stores structured columns instead of options — parse them first, and when
+      // present clear options so the flat option array is never cluttered with leaked column entries
+      // (the "1 4 1 2 3 4 / same value four times" garbage). Non-matrix replies leave match null.
+      const extractedMatch = toMatchData(parsed.columns, parsed.match);
+      // A matrix question keeps BOTH: the structured columns/key AND the printed multiple-choice options
+      // (each a full matching like "A-i, B-ii, …"), so the operator can click a printed option to fill the
+      // grid. `toOptions` keeps real printed labels/counts while still rejecting leaked prose labels.
+      const extractedOptions = toOptions(parsed.options);
+      // When the columns are stored structurally, remove any duplicate column dump the model left in the
+      // stem so the same lists don't appear twice (question text + match table).
+      const rawStem = cleanString(parsed.stem);
+      const stem = extractedMatch ? stripMatchColumnsFromStem(rawStem) : rawStem;
+      const rawAnswer =
+        cleanString(parsed.answer) || answerFromMarkedOptions(extractedOptions, input.questionType);
+      // A matrix's direct answer map can arrive in `answer` while the visual table arrives separately.
+      // Complete only missing rows, then synthesize selections only when the source printed no choices.
+      const match = extractedMatch ? mergeMatrixKeyWithAnswer(extractedMatch, rawAnswer) : null;
+      const generated =
+        match && extractedOptions.length === 0 ? synthesizeMatrixChoiceOptions(match) : null;
+      const synthesized = generated?.status === 'generated' ? generated : null;
+      return {
+        stem,
+        options: synthesized?.options ?? extractedOptions,
+        answer: synthesized?.answer ?? rawAnswer,
+        explanation: cleanStringOrNull(parsed.explanation),
+        match,
+      };
+    };
+    const hasUsableFields = (fields: Fields): boolean =>
+      Boolean(fields.stem || fields.options.length > 0 || fields.match || fields.answer || fields.explanation);
+    const needsMatrixMapping = (fields: Fields): boolean =>
+      input.questionType === 'matrix' &&
+      (fields.match === null || Object.keys(fields.match.key).length === 0);
 
-    const parsed = parseReply(content) as RawReExtract;
-    // A MATRIX MATCH question stores structured columns instead of options — parse them first, and when
-    // present clear options so the flat option array is never cluttered with leaked column entries
-    // (the "1 4 1 2 3 4 / same value four times" garbage). Non-matrix replies leave match null.
-    const extractedMatch = toMatchData(parsed.columns, parsed.match);
-    // A matrix question keeps BOTH: the structured columns/key AND the printed multiple-choice options
-    // (each a full matching like "A-i, B-ii, …"), so the operator can click a printed option to fill the
-    // grid. `toOptions` keeps real printed labels/counts while still rejecting leaked prose labels.
-    const extractedOptions = toOptions(parsed.options);
-    // When the columns are stored structurally, remove any duplicate column dump the model left in the
-    // stem so the same lists don't appear twice (question text + match table).
-    const rawStem = cleanString(parsed.stem);
-    const stem = extractedMatch ? stripMatchColumnsFromStem(rawStem) : rawStem;
-    const rawAnswer =
-      cleanString(parsed.answer) || answerFromMarkedOptions(extractedOptions, input.questionType);
-    // A matrix's direct answer map can arrive in `answer` while the visual table arrives separately.
-    // Complete only missing rows, then synthesize selections only when the source printed no choices.
-    const match = extractedMatch ? mergeMatrixKeyWithAnswer(extractedMatch, rawAnswer) : null;
-    const generated =
-      match && extractedOptions.length === 0 ? synthesizeMatrixChoiceOptions(match) : null;
-    const synthesized = generated?.status === 'generated' ? generated : null;
-    const options = synthesized?.options ?? extractedOptions;
-    const answer = synthesized?.answer ?? rawAnswer;
-    const explanation = cleanStringOrNull(parsed.explanation);
+    let response = await this.callVision(prompt, input.png, MAX_TOKENS);
+    let fields = readFields(response.content);
+    // A model can return non-empty prose or malformed JSON, which used to skip callVision's
+    // empty-response retry and immediately surface "could not read". Give that failure shape one
+    // focused retry before asking the operator to intervene.
+    if (!hasUsableFields(fields) || needsMatrixMapping(fields)) {
+      const retryReason = !hasUsableFields(fields)
+        ? 'The prior reply contained no usable fields for the target question. Return the required JSON object only, with at least its stem or matrix columns.'
+        : 'The prior reply did not contain a complete matrix matching key. Re-read the table, solve every readable Column-I relation, and return a non-empty complete "match" object. Do not guess any unreadable or ambiguous relation.';
+      const retryPrompt = `${prompt}\n\nRETRY: ${retryReason} Do not return prose, commentary, or a blank object.`;
+      const retry = await this.callVision(retryPrompt, input.png, MAX_TOKENS);
+      response = {
+        content: retry.content,
+        usage: {
+          model: response.usage.model,
+          promptTokens: response.usage.promptTokens + retry.usage.promptTokens,
+          completionTokens: response.usage.completionTokens + retry.usage.completionTokens,
+          totalTokens: response.usage.totalTokens + retry.usage.totalTokens,
+          callCount: response.usage.callCount + retry.usage.callCount,
+        },
+      };
+      fields = readFields(response.content);
+    }
     // A genuine question always has a stem, options, or a match table; a reply with none means the read
     // failed (bad JSON, wrong page, refusal) rather than a truly blank question — don't hand back a wipe.
-    if (!stem && options.length === 0 && !match && !answer && !explanation) {
+    if (!hasUsableFields(fields)) {
       throw errors.extractionFailed(
         'The model could not read this question from the page. Please try again or edit the field manually.',
       );
     }
     logger.info(
-      { questionNumber: input.questionNumber, options: options.length, match: match !== null },
+      { questionNumber: input.questionNumber, options: fields.options.length, match: fields.match !== null },
       'question re-extract done',
     );
-    return { stem, options, answer, explanation, match, usage };
+    return { ...fields, usage: response.usage };
   }
 
   /**
