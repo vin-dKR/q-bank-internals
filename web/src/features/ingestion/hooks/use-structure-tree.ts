@@ -22,6 +22,8 @@ export type StructureTreeController = {
   tree: StructureTree;
   /** True once the operator has built any structure — drives the empty state. */
   hasNodes: boolean;
+  /** Apply a fully materialized AI proposal without touching operator metadata. */
+  replaceNodes: (nodes: StructureNode[]) => void;
   setMetadata: (patch: Partial<ChapterMetadataDraft>) => void;
   /** Add a child node under `parentId`, or a top-level node when null. Returns the new node's id. */
   addNode: (parentId: string | null, level: NodeLevel | null, label?: string) => string;
@@ -123,6 +125,7 @@ export function useStructureTree(): StructureTreeController {
   return {
     tree,
     hasNodes: nodes.length > 0,
+    replaceNodes: setNodes,
     setMetadata,
     addNode,
     renameNode,

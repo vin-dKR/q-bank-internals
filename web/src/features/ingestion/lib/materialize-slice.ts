@@ -2,18 +2,7 @@ import { PDFDocument } from 'pdf-lib';
 import type { MaterializedArtifact } from '../types/structure-node.js';
 import type { PdfInput } from './cut-pdf.js';
 import { makeId } from './make-id.js';
-
-/** "page 3" / "pages 3–5" (contiguous) / "3 pages" (scattered) — provenance shown on the binding. */
-function labelForPages(pageNumbers: number[]): string {
-  if (pageNumbers.length === 0) return 'no pages';
-  if (pageNumbers.length === 1) return `page ${String(pageNumbers[0])}`;
-  const sorted = [...pageNumbers].sort((a, b) => a - b);
-  const first = sorted[0];
-  const last = sorted[sorted.length - 1];
-  const contiguous =
-    first !== undefined && last !== undefined && last - first === sorted.length - 1;
-  return contiguous ? `pages ${String(first)}–${String(last)}` : `${String(sorted.length)} pages`;
-}
+import { pageRangeLabel } from './page-range.js';
 
 /**
  * Snapshot the given 1-based pages of the working document into a standalone, immutable PDF — the
@@ -34,6 +23,6 @@ export async function materializePages(
     bytes: await out.save(),
     pageCount: pageNumbers.length,
     pageNumbers: [...pageNumbers],
-    sourceLabel: labelForPages(pageNumbers),
+    sourceLabel: pageRangeLabel(pageNumbers),
   };
 }

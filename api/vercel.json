@@ -5,7 +5,7 @@
   "functions": {
     "api/index.ts": {
       "maxDuration": 300,
-      "includeFiles": "node_modules/{.prisma/client,pdfjs-dist}/**"
+      "includeFiles": "node_modules/{.prisma/client,pdfjs-dist,tesseract.js,tesseract.js-core,@tesseract.js-data/eng,bmp-js,wasm-feature-detect}/**"
     }
   },
   "rewrites": [{ "source": "/(.*)", "destination": "/api" }]

@@ -4,14 +4,29 @@ import type {
   Document,
   DriveFile,
   SignedUploadTarget,
+  DetectStructureRequest,
+  DetectStructureResult,
+  StructureDetectionUsage,
+  StructureEstimate,
+  StructureEstimateRequest,
+  StructureCropOcrRequest,
+  StructureCropOcrResult,
 } from '@ingest/contracts';
+import { DetectedStructureSchema } from '@ingest/contracts';
 import { logger } from '../../shared/logger/logger.js';
 import { errors } from '../../shared/errors/error-catalog.js';
+import { AppError } from '../../shared/errors/app-error.js';
 import type { DriveService } from '../drive/index.js';
 import type { CreateDocumentInput, DocumentRepository } from '../documents/index.js';
 import type { SessionsService } from '../sessions/index.js';
 import type { ExtractionService } from '../extraction/index.js';
 import type { UploadStagingStore } from './upload-staging.store.js';
+import type { StructureExtractor } from './structure-extractor.js';
+import type { UsageService } from '../usage/index.js';
+import { validateStructure } from './validate-structure.js';
+import type { StructureRuleResolver } from '../structure-rules/index.js';
+import type { PageOcr, PageOcrSession } from './page-ocr.js';
+import { reusableStructureCrop, structureCropContextKey } from './structure-text-batches.js';
 
 /** What an upload produces: the Drive file that was filed, plus the durable Document row it created. */
 export type UploadChapterResult = { document: Document; driveFile: DriveFile };
@@ -30,7 +45,166 @@ export class IngestionService {
     private readonly sessions: SessionsService,
     private readonly extraction: ExtractionService,
     private readonly staging: UploadStagingStore,
+    private readonly structureExtractor: StructureExtractor,
+    private readonly usage: UsageService,
+    private readonly structureRules: StructureRuleResolver,
+    private readonly cropOcr: PageOcr,
+    private readonly minimumOcrConfidence: number,
   ) {}
+
+  async estimateStructure(input: StructureEstimateRequest): Promise<StructureEstimate> {
+    const rule = await this.structureRules.resolveContext(input.context);
+    return this.structureExtractor.estimate({ ...input, rule });
+  }
+
+  /** OCR runs separately so its text can be corrected and saved before any paid AI call. */
+  async readStructureCrop(input: StructureCropOcrRequest): Promise<StructureCropOcrResult> {
+    let session: PageOcrSession | null = null;
+    try {
+      const png = await this.staging.download(input.storagePath);
+      if (
+        png.length < 24 ||
+        png.length > 10 * 1024 * 1024 ||
+        png.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a' ||
+        png.subarray(12, 16).toString() !== 'IHDR'
+      )
+        throw errors.structureDetectionFailed('Upload a PNG crop smaller than 10 MB.');
+      if (png.readUInt32BE(16) * png.readUInt32BE(20) > 20_000_000)
+        throw errors.structureDetectionFailed(
+          'The crop image is too large. Select a smaller heading region.',
+        );
+      session = await this.cropOcr.open();
+      const lines = (await session.recognize(png)).sort(
+        (a, b) => a.box.top - b.box.top || a.box.left - b.box.left,
+      );
+      const text = lines
+        .map((line) => line.text.trim())
+        .filter(Boolean)
+        .join('\n');
+      if (text.length > 12000)
+        throw errors.structureDetectionFailed(
+          'This crop contains too much text. Select only the heading region.',
+        );
+      const confidence = lines
+        .filter((line) => line.text.trim() && Number.isFinite(line.confidence))
+        .map((line) => line.confidence);
+      const warnings = [...new Set(lines.flatMap((line) => line.warnings ?? []))];
+      if (!text)
+        warnings.push(
+          'No text was recognized. Adjust the crop or enter the printed text manually.',
+        );
+      if (confidence.some((value) => value < this.minimumOcrConfidence))
+        warnings.push(
+          'Some OCR lines have low confidence. Check the crop and correct the text before saving.',
+        );
+      return {
+        cropId: input.cropId,
+        text,
+        confidence: confidence.length
+          ? confidence.reduce((sum, value) => sum + value, 0) / confidence.length
+          : null,
+        warnings,
+      };
+    } catch (error) {
+      if (AppError.is(error)) throw error;
+      throw errors.structureDetectionFailed(
+        'The crop could not be read by Tesseract. Adjust it and run OCR again.',
+      );
+    } finally {
+      try {
+        await session?.close();
+      } finally {
+        await this.staging.remove(input.storagePath).catch((error: unknown) => {
+          logger.warn(
+            { err: error instanceof Error ? error.message : String(error) },
+            'Failed to clean up OCR crop',
+          );
+        });
+      }
+    }
+  }
+
+  /** Text-only detection is pre-upload; no PDF images are sent to the model. */
+  async detectStructure(input: DetectStructureRequest): Promise<DetectStructureResult> {
+    const report: { usage: StructureDetectionUsage | null } = { usage: null };
+    try {
+      if (input.sessionId) await this.sessions.getById(input.sessionId);
+      const rule = await this.structureRules.resolveContext(input.context);
+      const contextKey = structureCropContextKey(input.context, rule);
+      if (
+        input.crops.some(
+          (crop) =>
+            crop.text.trim() &&
+            (input.cropOnly || !reusableStructureCrop(crop, input.savedCrops, contextKey)),
+        )
+      )
+        await this.usage.assertWithinLimit();
+      const raw = await this.structureExtractor.extract({
+        crops: input.crops,
+        pageCount: input.pageCount,
+        context: input.context,
+        rule,
+        ...(input.savedCrops && !input.cropOnly ? { savedCrops: input.savedCrops } : {}),
+        beforeBatch: () => this.usage.assertWithinLimit(),
+        onUsage: async (usage) => {
+          const previous = report.usage;
+          report.usage = previous
+            ? {
+                ...usage,
+                promptTokens: previous.promptTokens + usage.promptTokens,
+                completionTokens: previous.completionTokens + usage.completionTokens,
+                totalTokens: previous.totalTokens + usage.totalTokens,
+                cachedPromptTokens: previous.cachedPromptTokens + usage.cachedPromptTokens,
+                reasoningTokens: previous.reasoningTokens + usage.reasoningTokens,
+                callCount: previous.callCount + usage.callCount,
+                costUsd:
+                  previous.costUsd === null || usage.costUsd === null
+                    ? null
+                    : previous.costUsd + usage.costUsd,
+              }
+            : usage;
+          try {
+            await this.usage.recordUsage({
+              source: 'structure-detection',
+              model: usage.model,
+              promptTokens: usage.promptTokens,
+              completionTokens: usage.completionTokens,
+              totalTokens: usage.totalTokens,
+              callCount: usage.callCount,
+              ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+            });
+          } catch (error) {
+            logger.warn(
+              { err: error instanceof Error ? error.message : String(error) },
+              'Failed to record structure-detection usage',
+            );
+          }
+        },
+      });
+      const parsed = DetectedStructureSchema.safeParse(raw);
+      if (!parsed.success)
+        throw errors.structureDetectionFailed(
+          'The AI returned invalid crop headings. Try extraction again.',
+        );
+      return {
+        version: 1,
+        pageCount: input.pageCount,
+        answerLayout: input.context.answerLayout,
+        rule,
+        ...(input.cropOnly && parsed.data.nodes.length === 0
+          ? { nodes: [], warnings: parsed.data.warnings ?? [] }
+          : validateStructure(raw, input.pageCount, input.context.answerLayout, rule)),
+        cropResults: parsed.data.cropResults ?? [],
+        ...(parsed.data.aiCallCount !== undefined ? { aiCallCount: parsed.data.aiCallCount } : {}),
+        usage: report.usage,
+      };
+    } catch (error) {
+      // A refused, truncated or invalid result can still have consumed tokens.
+      if (report.usage && AppError.is(error))
+        throw errors.structureDetectionChargedFailure(error, report.usage);
+      throw error;
+    }
+  }
 
   /**
    * Mint a signed, single-use slot the browser uploads the PDF straight to. This is what lets a chapter
@@ -73,7 +247,11 @@ export class IngestionService {
     // request-body limit applies here) so a large paper that couldn't fit through the function still files.
     const bytes = await this.staging.download(storagePath);
 
-    const path = { module: metadata.module, chapter: metadata.chapter, section: metadata.sectionName };
+    const path = {
+      module: metadata.module,
+      chapter: metadata.chapter,
+      section: metadata.sectionName,
+    };
     // A PYQ paper may omit the chapter, so fall back to the exam for a still-meaningful file name. This
     // is a DISPLAY label only — the document's identity is the client-minted uploadGroupId, so two
     // uploads of the same file (same derived name) are two distinct documents.

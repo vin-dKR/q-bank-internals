@@ -17,3 +17,4 @@ export * from './usage/index.js';
 export * from './quality/index.js';
 export * from './exam-access/index.js';
 export * from './masters/index.js';
+export * from './structure-rules/index.js';

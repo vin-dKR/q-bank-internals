@@ -13,6 +13,7 @@ import { createUsageRouter } from './modules/usage/index.js';
 import { createIngestionRouter } from './modules/ingestion/index.js';
 import { createPromptsRouter } from './modules/prompts/index.js';
 import { createQualityRouter } from './modules/quality/index.js';
+import { createStructureRulesRouter } from './modules/structure-rules/index.js';
 import type { Container } from './container.js';
 
 /** Mounts every feature router under its base path. The one place the URL map is declared. */
@@ -37,6 +38,7 @@ export function createApiRouter(container: Container): Router {
   router.use('/ingestion', createIngestionRouter(container.ingestionService));
   router.use('/prompts', createPromptsRouter(container.promptsService));
   router.use('/quality', createQualityRouter(container.qualityService));
+  router.use('/structure-rules', createStructureRulesRouter(container.structureRulesService));
 
   return router;
 }

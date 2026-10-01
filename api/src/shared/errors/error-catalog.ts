@@ -1,10 +1,17 @@
 import { AppError } from './app-error.js';
+import type { StructureDetectionUsage } from '@ingest/contracts';
 
 /**
  * Every error the API can produce, in one place. Callers do `throw errors.documentNotFound(id)`,
  * so status codes and error codes never drift. Add new errors here, not inline.
  */
 export const errors = {
+  structureRuleWriteFailed: (): AppError =>
+    new AppError('STRUCTURE_RULE_WRITE_FAILED', 500, 'Could not save structure rules. Try again.'),
+  structureDetectionChargedFailure: (error: AppError, usage: StructureDetectionUsage): AppError =>
+    new AppError(error.code, error.status, error.message, { usage }),
+  structureDetectionFailed: (reason: string): AppError =>
+    new AppError('STRUCTURE_DETECTION_FAILED', 422, `Structure detection failed: ${reason}`),
   validation: (details: unknown): AppError =>
     new AppError('VALIDATION_FAILED', 400, 'Request failed validation.', details),
 

@@ -51,3 +51,11 @@ export function pageRangeText(pages: number[]): string {
   }
   return parts.join(', ');
 }
+
+/** Display every attached page, including gaps, so a page count cannot be mistaken for a page number. */
+export function pageRangeLabel(pages: number[]): string {
+  const range = pageRangeText(pages);
+  if (range.length === 0) return 'no pages';
+  const plural = range.includes('-') || range.includes(',');
+  return `${plural ? 'pages' : 'page'} ${range.replace(/-/g, '–')}`;
+}

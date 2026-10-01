@@ -9,6 +9,7 @@ import { DocumentDataPage } from './pages/document-data-page.js';
 import { TaxonomyPage } from './pages/taxonomy-page.js';
 import { ExamAccessPage } from './pages/exam-access-page.js';
 import { PromptsPage } from './pages/prompts-page.js';
+import { StructureRulesPage } from './pages/structure-rules-page.js';
 import { UsagePage } from './pages/usage-page.js';
 import { QuestionsPage } from './pages/questions-page.js';
 import { QualityPage } from './pages/quality-page.js';
@@ -47,6 +48,7 @@ export const router = createBrowserRouter([
       { path: 'masters/taxonomy', element: <TaxonomyPage />, errorElement },
       { path: 'masters/exam-access', element: <ExamAccessPage />, errorElement },
       { path: 'prompts', element: <PromptsPage />, errorElement },
+      { path: 'structure-rules', element: <StructureRulesPage />, errorElement },
       { path: 'usage', element: <UsagePage />, errorElement },
       { path: 'tools/chapters', element: <ChapterSplitterPage />, errorElement },
       { path: 'tools/cut', element: <PdfCutterPage />, errorElement },

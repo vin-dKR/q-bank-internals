@@ -4,17 +4,51 @@ import type {
   SignedUploadRequest,
   UploadChapterRequest,
   UploadChapterResponse,
+  DetectStructureRequest,
+  DetectStructureResult,
+  StructureEstimate,
+  StructureEstimateRequest,
+  StructureCropOcrResult,
 } from '@ingest/contracts';
 import {
   ExtractPaperMetadataResultSchema,
   SignedUploadTargetSchema,
   UploadChapterResponseSchema,
+  DetectStructureResultSchema,
+  StructureEstimateSchema,
+  StructureCropOcrResultSchema,
 } from '@ingest/contracts';
 import { request } from '../../../shared/api/http-client.js';
 import { uploadToSignedUrl } from '../../../shared/api/signed-upload.js';
 
 /** Feature-scoped call to the ingestion endpoint. The only place this feature hits the network. */
 export const ingestionApi = {
+  estimateStructure: (input: StructureEstimateRequest): Promise<StructureEstimate> =>
+    request('/ingestion/estimate-structure', {
+      method: 'POST',
+      body: input,
+      schema: StructureEstimateSchema,
+    }),
+  /** Each crop is temporary; OCR removes it after returning editable text. */
+  readStructureCrop: async (png: Blob, cropId: string): Promise<StructureCropOcrResult> => {
+    const target = await request('/ingestion/signed-upload', {
+      method: 'POST',
+      body: { fileName: `structure-crop-${cropId}.png` } satisfies SignedUploadRequest,
+      schema: SignedUploadTargetSchema,
+    });
+    await uploadToSignedUrl(target.uploadUrl, png);
+    return request('/ingestion/structure-crop-ocr', {
+      method: 'POST',
+      body: { storagePath: target.path, cropId },
+      schema: StructureCropOcrResultSchema,
+    });
+  },
+  detectStructure: (input: DetectStructureRequest): Promise<DetectStructureResult> =>
+    request('/ingestion/detect-structure', {
+      method: 'POST',
+      body: input,
+      schema: DetectStructureResultSchema,
+    }),
   /**
    * Upload one built chapter PDF in three steps: (1) get a signed slot, (2) PUT the bytes straight to
    * storage with progress, (3) finalize by reference. The bytes never transit our serverless function,

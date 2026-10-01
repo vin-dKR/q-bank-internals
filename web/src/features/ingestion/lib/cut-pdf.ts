@@ -1,4 +1,9 @@
-import { type PDFDocument as PDFDocumentType, type PDFEmbeddedPage, PageSizes } from 'pdf-lib';
+import {
+  type PDFDocument as PDFDocumentType,
+  type PDFEmbeddedPage,
+  type PageBoundingBox,
+  PageSizes,
+} from 'pdf-lib';
 
 /**
  * A rectangular cell of a source page, as 0–1 fractions. `start`/`end` are measured from the top of
@@ -18,6 +23,20 @@ export type PdfInput = ArrayBuffer | Uint8Array;
 
 const EPSILON = 1e-4; // fractions closer than this bound a zero-area cell — nothing to draw
 
+/** The shared clip geometry also lets the cutter embed pages already copied into its output. */
+export function cellBounds(
+  size: { width: number; height: number },
+  slice: Slice,
+): PageBoundingBox | null {
+  const { width, height } = size;
+  const left = width * (slice.x0 ?? 0);
+  const right = width * (slice.x1 ?? 1);
+  // PDF coordinates start at the bottom-left; the crop's fractions start at the top.
+  const bottom = height * (1 - slice.end);
+  const top = height * (1 - slice.start);
+  return right - left <= EPSILON || top - bottom <= EPSILON ? null : { left, bottom, right, top };
+}
+
 /**
  * Embed a source page's cell as a vector form XObject cropped on both axes (the pdf-lib equivalent
  * of PyMuPDF's `show_pdf_page(..., clip=...)`), so text stays selectable rather than rasterised.
@@ -29,14 +48,8 @@ export async function embedCell(
   slice: Slice,
 ): Promise<PDFEmbeddedPage | null> {
   const page = source.getPage(slice.pageNumber - 1);
-  const { width, height } = page.getSize();
-  const left = width * (slice.x0 ?? 0);
-  const right = width * (slice.x1 ?? 1);
-  // PDF coordinates put the origin bottom-left, so a fraction from the top flips into height − f·height.
-  const bottom = height * (1 - slice.end);
-  const top = height * (1 - slice.start);
-  if (right - left <= EPSILON || top - bottom <= EPSILON) return null;
-  return target.embedPage(page, { left, bottom, right, top });
+  const bounds = cellBounds(page.getSize(), slice);
+  return bounds ? target.embedPage(page, bounds) : null;
 }
 
 /** Add one A4 page and draw the embedded cell scaled to fit under an optional top margin. */

@@ -7,6 +7,7 @@ export class ApiError extends Error {
     readonly code: string,
     readonly status: number,
     message: string,
+    readonly details?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -43,8 +44,14 @@ export async function request<S extends z.ZodTypeAny>(
   const payload: unknown = await response.json();
 
   if (!response.ok) {
-    const error = (payload as { error?: { code?: string; message?: string } }).error;
-    throw new ApiError(error?.code ?? 'UNKNOWN', response.status, error?.message ?? 'Request failed');
+    const error = (payload as { error?: { code?: string; message?: string; details?: unknown } })
+      .error;
+    throw new ApiError(
+      error?.code ?? 'UNKNOWN',
+      response.status,
+      error?.message ?? 'Request failed',
+      error?.details,
+    );
   }
 
   const data = (payload as { data: unknown }).data;

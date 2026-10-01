@@ -11,6 +11,7 @@ import {
   type ChapterKind,
   PAPER_METADATA_FIELDS,
   type PaperMetadataKey,
+  structureKindsForLayout,
 } from '@ingest/contracts';
 import {
   Combobox,
@@ -32,9 +33,11 @@ import type { ChapterVocabulary } from '../hooks/use-chapter-vocabulary.js';
 import type { StructureTreeController } from '../hooks/use-structure-tree.js';
 import { cascadeMetadata } from '../lib/metadata-cascade.js';
 import { isPageDrag, readDraggedPages } from '../lib/page-dnd.js';
-import { parsePageRange, pageRangeText } from '../lib/page-range.js';
+import { parsePageRange, pageRangeLabel, pageRangeText } from '../lib/page-range.js';
 import { parseConfig, serializeConfig, type ParsedConfig } from '../lib/structure-config.js';
 import { type NodeLevel, type StructureNode, isLeaf } from '../types/structure-node.js';
+import { AiStructureReview } from './ai-structure-review.js';
+import type { AiStructureController } from '../hooks/use-ai-structure.js';
 
 type StructureTreePanelProps = {
   controller: StructureTreeController;
@@ -53,14 +56,11 @@ type StructureTreePanelProps = {
   onAiFillPaper: () => void;
   /** True while the AI-fill read is in flight, for the button's busy state. */
   aiFillingPaper: boolean;
+  aiStructure: AiStructureController;
+  canDetectStructure: boolean;
 };
 
 const LEVEL_OPTIONS = ['Section', 'Part', 'Topic'] as const;
-const SEPARATE_PART_KINDS: readonly ChapterKind[] = ['question', 'answer', 'solution'];
-/** A grouped Answer + Solution source is a first-class companion, never two ambiguous sibling files. */
-const COMBINED_PART_KINDS: readonly ChapterKind[] = ['question', 'companion'];
-/** Inline-answer papers bind only the combined Question PDF — the answer travels with each question. */
-const INLINE_PART_KINDS: readonly ChapterKind[] = ['question'];
 const KIND_LABEL: Record<ChapterKind, string> = {
   question: 'Question',
   answer: 'Answer',
@@ -90,13 +90,6 @@ const KIND_TONE: Record<ChapterKind, { empty: string; filled: string; chip: stri
     chip: 'bg-brand/10 text-brand',
   },
 };
-
-/** Return exactly the source slots that make sense for the selected answer layout. */
-function partKindsForLayout(layout: AnswerLayout): readonly ChapterKind[] {
-  if (layout === 'inline') return INLINE_PART_KINDS;
-  if (layout === 'combined') return COMBINED_PART_KINDS;
-  return SEPARATE_PART_KINDS;
-}
 
 function toLevel(display: string): NodeLevel | null {
   const value = display.trim().toLowerCase();
@@ -128,6 +121,8 @@ export function StructureTreePanel({
   onImportError,
   onAiFillPaper,
   aiFillingPaper,
+  aiStructure,
+  canDetectStructure,
 }: StructureTreePanelProps): JSX.Element {
   const { tree } = controller;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -191,10 +186,10 @@ export function StructureTreePanel({
         ) : (
           <div className="grid grid-cols-2 gap-2">
             <MetaField
-              label="Module"
+              label={tree.metadata.source === 'textbook' ? 'Textbook / publisher' : 'Module'}
               value={tree.metadata.module}
               options={vocabulary.modules}
-              placeholder="e.g. Allen / PW"
+              placeholder={tree.metadata.source === 'textbook' ? 'e.g. NCERT / textbook title' : 'e.g. Allen / PW'}
               onChange={(v) => {
                 controller.setMetadata(cascadeMetadata('module', v, tree.metadata, vocabulary));
               }}
@@ -286,6 +281,14 @@ export function StructureTreePanel({
             />
           </div>
         </div>
+
+        <AiStructureReview
+          pageCount={maxPages}
+          controller={aiStructure}
+          canDetect={canDetectStructure}
+          hasNodes={controller.hasNodes}
+          metadata={tree.metadata}
+        />
 
         {controller.hasNodes ? (
           <>
@@ -403,7 +406,9 @@ function AnswerLayoutSection({ controller }: { controller: StructureTreeControll
               className={`rounded-lg border p-2 text-left text-[12px] transition-colors ${active ? 'border-brand bg-brand/5 text-ink' : 'border-line text-ink-2 hover:bg-surface-2'}`}
               aria-pressed={active}
               onClick={() => {
-                controller.setMetadata({ answerLayout: option.value });
+                controller.setMetadata({
+                  answerLayout: option.value,
+                });
               }}
             >
               <span className="block font-semibold">{option.label}</span>
@@ -552,7 +557,7 @@ function TreeNodeRow({
   const hasBindings = node.bindings !== undefined && Object.keys(node.bindings).length > 0;
   const collapsible = node.children.length > 0 || hasBindings;
   const isCollapsed = collapsed.has(node.id);
-  const partKinds = partKindsForLayout(controller.tree.metadata.answerLayout);
+  const partKinds = structureKindsForLayout(controller.tree.metadata.answerLayout);
   const slotColumns =
     partKinds.length === 1 ? 'grid-cols-1' : partKinds.length === 2 ? 'grid-cols-2' : 'grid-cols-3';
   // A PYQ-source chapter defaults every leaf's PYQ toggle ON (the operator can still uncheck a leaf) —
@@ -785,8 +790,11 @@ function BindingSlot({
             onClick={onUnbind}
           />
         </div>
-        <span className="truncate text-[12px] text-ink-2" title={artifact.sourceLabel}>
-          {artifact.sourceLabel}
+        <span
+          className="break-words text-[12px] text-ink-2"
+          title={pageRangeLabel(artifact.pageNumbers)}
+        >
+          {pageRangeLabel(artifact.pageNumbers)}
         </span>
       </div>
     );
@@ -832,7 +840,9 @@ function BindingSlot({
           <span className="text-[11px] font-semibold uppercase tracking-wide">
             {KIND_LABEL[kind]}
           </span>
-          <span className="text-ink-3">drop pages</span>
+          <span className="text-ink-3">
+            {kind === 'solution' ? 'optional · explanation pages' : 'drop pages'}
+          </span>
           <PageRangeInput maxPages={maxPages} onCommit={commitPages} />
         </>
       )}
