@@ -39,8 +39,10 @@ const EnvSchema = z.object({
   EXTRACTION_MODEL: z.string().default('gpt-5.4'),
   // Per-run deadline for the extraction worker. A run that exceeds this is aborted (its in-flight
   // vision call is cancelled) and flipped to `failed` so the document can be re-extracted, instead of
-  // hanging forever. Default 5 minutes; raise for very long documents, lower to fail faster.
-  EXTRACTION_TIMEOUT_MS: z.coerce.number().int().positive().default(300000),
+  // hanging forever. Local and standalone workers default to 15 minutes, which accommodates large
+  // PDFs without aborting after their pages have already been read. Vercel's synchronous queue is
+  // capped separately at four minutes so it can persist a result before the platform's hard ceiling.
+  EXTRACTION_TIMEOUT_MS: z.coerce.number().int().positive().default(900000),
   // Age after which a document still `queued`/`extracting` is treated as orphaned and auto-reset to
   // `failed` on the next read. On serverless (and if a worker process dies) nothing else transitions
   // a stuck row, so this is the only self-heal — see `resetStale`. Floored in the container to always

@@ -319,9 +319,16 @@ export function createContainer(): Container {
   const extractor = buildExtractor(loadPromptOverrides, loadMasters);
   const driveService = buildDrive();
 
+  // A Vercel request has a five-minute ceiling. Its synchronous queue needs time after the worker
+  // stops to persist the terminal job and return JSON; otherwise the browser only sees a network
+  // "Failed to fetch" after a nearly-complete run. Reserve the final minute on serverless only.
+  const extractionTimeoutMs = isServerless
+    ? Math.min(env.EXTRACTION_TIMEOUT_MS, 240_000)
+    : env.EXTRACTION_TIMEOUT_MS;
+
   // The age past which a stuck `queued`/`extracting` document is auto-reset on read. Floored to always
   // exceed the run budget (+1min) so the self-heal can never kill a genuinely in-flight extraction.
-  const staleExtractionMs = Math.max(env.STALE_EXTRACTION_MS, env.EXTRACTION_TIMEOUT_MS + 60_000);
+  const staleExtractionMs = Math.max(env.STALE_EXTRACTION_MS, extractionTimeoutMs + 60_000);
 
   const usageService = new UsageService(usage, limits, sessions, documents);
   const documentsService = new DocumentsService(documents, sessions, staleExtractionMs);
@@ -408,7 +415,7 @@ export function createContainer(): Container {
     extractor,
     usageService,
     runRegistry,
-    env.EXTRACTION_TIMEOUT_MS,
+    extractionTimeoutMs,
   );
   const ingestionService = new IngestionService(
     driveService,

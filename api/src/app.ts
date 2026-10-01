@@ -1,9 +1,7 @@
 import cors from 'cors';
 import express, { type Express, type RequestHandler } from 'express';
 import * as helmetModule from 'helmet';
-import { pinoHttp } from 'pino-http';
 import { env } from './config/index.js';
-import { logger } from './shared/logger/logger.js';
 import { errorHandler } from './shared/middleware/error-handler.js';
 import { notFound } from './shared/middleware/not-found.js';
 import { createApiRouter } from './routes.js';
@@ -35,7 +33,6 @@ export function createApp(container: Container): Express {
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.use(cors({ origin: env.WEB_ORIGIN, credentials: true }));
   app.use(express.json({ limit: '2mb' }));
-  app.use(pinoHttp({ logger }));
 
   app.use('/api', createApiRouter(container));
 

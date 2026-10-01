@@ -321,6 +321,9 @@ export class ExtractionWorker {
   async run(payload: ExtractionJobPayload): Promise<void> {
     const now = (): string => new Date().toISOString();
     const { jobId, documentId } = payload;
+    // Page progress can reach 100% while answer mapping or persistence is still running. Keep the
+    // active stage so a terminal job tells the operator exactly which part failed.
+    let stage = 'Preparing the PDF';
 
     const document = await this.documents.findById(documentId);
     if (!document) {
@@ -358,6 +361,7 @@ export class ExtractionWorker {
       const pdf = await this.drive.downloadPdf(document.driveFileId);
       const pages = await this.rasterizer.rasterize(pdf);
       await this.jobs.update(jobId, { pagesTotal: pages.length, pagesDone: 0 });
+      stage = 'Question extraction';
       const { questions: drafts, usage } = await this.extractor.extractQuestions({
         pages,
         document,
@@ -365,15 +369,19 @@ export class ExtractionWorker {
         onProgress: (progress) => this.writeProgress(jobId, progress),
       });
       await this.recordUsage(document, usage);
+      stage = 'Answer and solution mapping';
       const answered = await this.applyAnswers(document, drafts, controller.signal);
-      // The answer/solution phase swallows its own errors (a bad sibling PDF must not sink the
-      // questions), so an abort that lands there would otherwise be lost — re-check the deadline
-      // before persisting so a cancel/timeout still aborts instead of saving a half-answered result.
-      controller.signal.throwIfAborted();
+      // Mapping is enrichment, whereas the question pass is the expensive, essential result. A
+      // user cancellation must still stop everything, but a deadline that lands after every question
+      // page was read must not discard those questions (and the tokens spent on them). Persist the
+      // questions with a clear warning that some answer/solution enrichment may be absent.
+      const mappingTimedOut = controller.signal.aborted && controller.signal.reason === 'timeout';
+      if (!mappingTimedOut) controller.signal.throwIfAborted();
       // Comprehension sub-questions that share a passage are materialized into ONE passage row + N
       // stamped sub-question rows AFTER answers are folded in, so each sub-question keeps its own
       // answer/explanation and carries its group's passageId + order. Passages are persisted alongside
       // the questions in one wholesale replace (passages first, so every passageId resolves).
+      stage = 'Saving extracted questions';
       const { drafts: grouped, passages } = materializePassages(answered, documentId);
       const extraction = { model: usage.model, at: now() };
       const rows = grouped.map((draft) => toNewQuestion(document, draft, extraction));
@@ -384,9 +392,12 @@ export class ExtractionWorker {
         status: 'succeeded',
         questionsFound: count,
         pagesDone: pages.length,
+        ...(mappingTimedOut
+          ? { error: `Answer and solution mapping timed out after ${String(this.timeoutMs)}ms. ${String(count)} question${count === 1 ? '' : 's'} were saved, but some answers or solutions may be missing.` }
+          : {}),
         finishedAt: now(),
       });
-      logger.info({ documentId, questionsFound: count }, 'Extraction complete');
+      logger.info({ documentId, questionsFound: count, mappingTimedOut }, 'Extraction complete');
     } catch (error) {
       // Document returns to a re-runnable state whether the run failed, timed out, or was cancelled.
       await this.documents.updateStatus(documentId, 'failed');
@@ -394,11 +405,12 @@ export class ExtractionWorker {
         await this.jobs.update(jobId, { status: 'cancelled', finishedAt: now() });
         logger.info({ documentId }, 'Extraction cancelled');
       } else {
-        const message = controller.signal.aborted
+        const reason = controller.signal.aborted
           ? errors.extractionTimedOut(this.timeoutMs).message
           : error instanceof Error
             ? error.message
             : String(error);
+        const message = `${stage} failed: ${reason}`;
         await this.jobs.update(jobId, { status: 'failed', error: message, finishedAt: now() });
         logger.error({ documentId, err: message }, 'Extraction failed');
       }
