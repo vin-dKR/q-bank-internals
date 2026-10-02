@@ -1,6 +1,6 @@
 import { type JSX } from 'react';
 import type { Document } from '@ingest/contracts';
-import { Spinner } from '../../../shared/ui/index.js';
+import { Spinner, StatusBadge } from '../../../shared/ui/index.js';
 import {
   useDocumentExtractionJob,
   usePauseDocumentExtraction,
@@ -97,4 +97,10 @@ export function FileExtractionControls({
   }
 
   return null;
+}
+
+/** Prefer the live durable job state over a legacy document row that predates `paused` status. */
+export function FileExtractionStatus({ document }: { document: Document }): JSX.Element {
+  const job = useDocumentExtractionJob(document.id);
+  return <StatusBadge status={job.data?.status === 'paused' ? 'paused' : document.status} />;
 }

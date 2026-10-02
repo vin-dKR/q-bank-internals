@@ -2,6 +2,7 @@
 export { SessionBar } from './components/session-bar.js';
 export { ExtractionProgress } from './components/extraction-progress.js';
 export { FileExtractionControls } from './components/file-extraction-controls.js';
+export { FileExtractionStatus } from './components/file-extraction-controls.js';
 export {
   useSessions,
   useSession,

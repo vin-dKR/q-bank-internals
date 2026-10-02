@@ -5,6 +5,7 @@ import { DocumentStatusSchema } from '@ingest/contracts';
 import {
   ExtractionProgress,
   FileExtractionControls,
+  FileExtractionStatus,
   useDeleteSession,
   useReextractDocument,
   useResetDocumentExtraction,
@@ -308,7 +309,11 @@ export function SessionDetailPage(): JSX.Element {
         ) : items.length === 0 ? (
           <p className="muted">No files match this filter.</p>
         ) : (
-          <DocumentUnitList items={items} renderActions={renderActions} />
+          <DocumentUnitList
+            items={items}
+            renderActions={renderActions}
+            renderStatus={(doc) => doc.kind === 'question' ? <FileExtractionStatus document={doc} /> : <StatusBadge status={doc.status} />}
+          />
         )}
       </div>
 
