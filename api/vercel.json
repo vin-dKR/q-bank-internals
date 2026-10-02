@@ -4,8 +4,19 @@
   "buildCommand": "node scripts/check-env.mjs && npm run prisma:generate && npm run build:contracts",
   "functions": {
     "api/index.ts": {
-      "maxDuration": 300,
+      "maxDuration": 60,
       "includeFiles": "node_modules/{.prisma/client,pdfjs-dist}/**"
+    },
+    "api/extraction-queue.ts": {
+      "maxDuration": 300,
+      "includeFiles": "node_modules/{.prisma/client,pdfjs-dist}/**",
+      "experimentalTriggers": [
+        {
+          "type": "queue/v2beta",
+          "topic": "ingest-extraction",
+          "retryAfterSeconds": 60
+        }
+      ]
     }
   },
   "rewrites": [{ "source": "/(.*)", "destination": "/api" }]

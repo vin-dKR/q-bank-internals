@@ -11,6 +11,7 @@ const QUEUE_NAME = 'extraction';
  * the heavy extraction off the request path is the whole reason the queue exists.
  */
 export class BullMqJobQueue implements JobQueue {
+  readonly usesExternalConsumer = true;
   private readonly connection: Redis;
   private readonly queue: Queue<ExtractionJobPayload>;
   private worker: Worker<ExtractionJobPayload> | null = null;
@@ -22,9 +23,9 @@ export class BullMqJobQueue implements JobQueue {
   }
 
   async enqueue(payload: ExtractionJobPayload): Promise<void> {
-    // Pin the BullMQ job id to our job id so `cancel` can target the queued entry directly.
+    // Pin each page task independently so retries/resumes cannot overwrite a neighbouring page.
     await this.queue.add('extract', payload, {
-      jobId: payload.jobId,
+      jobId: [payload.jobId, payload.task ?? 'prepare', payload.pageNumber ?? 0].join(':'),
       removeOnComplete: true,
       removeOnFail: 100,
     });

@@ -1,6 +1,6 @@
 import type { ExtractionJob } from '@ingest/contracts';
 
-/** Fields the worker updates on a job as it moves queued → running → succeeded/failed/cancelled. */
+/** Fields the worker updates on a job as it moves queued → running → paused/succeeded/failed/cancelled. */
 export type ExtractionJobPatch = Partial<
   Pick<
     ExtractionJob,

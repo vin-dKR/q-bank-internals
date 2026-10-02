@@ -79,6 +79,13 @@ export const errors = {
   extractionJobNotFound: (id: string): AppError =>
     new AppError('EXTRACTION_JOB_NOT_FOUND', 404, `No extraction job with id "${id}".`),
 
+  extractionNotResumable: (documentId: string): AppError =>
+    new AppError(
+      'EXTRACTION_NOT_RESUMABLE',
+      409,
+      `Document "${documentId}" has no paused or failed extraction with saved page checkpoints to resume.`,
+    ),
+
   extractionTimedOut: (ms: number): AppError =>
     new AppError(
       'EXTRACTION_TIMED_OUT',

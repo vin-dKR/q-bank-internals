@@ -7,14 +7,13 @@ import {
   type QuestionOption,
 } from '@ingest/contracts';
 import { logger } from '../../shared/logger/logger.js';
-import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { NewQuestion, QuestionRepository } from '../questions/index.js';
 import type { DriveService } from '../drive/index.js';
 import type { AiTokenUsage, UsageService } from '../usage/index.js';
-import type { ExtractionJobPatch, ExtractionJobStore } from './extraction.repository.js';
-import type { ExtractionRunRegistry } from './extraction-run-registry.js';
-import type { ExtractionJobPayload } from './job-queue.js';
+import type { ExtractionJobStore } from './extraction.repository.js';
+import type { ExtractionDraftStore } from './extraction-draft.repository.js';
+import type { ExtractionJobPayload, JobQueue } from './job-queue.js';
 import type { PdfRasterizer } from './pdf-rasterizer.js';
 import {
   mergeAnswerEntries,
@@ -28,9 +27,6 @@ import {
 import { materializePassages } from './group-comprehension.js';
 import { mergeAnswers } from './merge-answers.js';
 import { topicBindingForPage } from './topic-lookup.js';
-
-/** Statuses that mean "don't touch it" — the guard that makes re-running a job idempotent/resumable. */
-const TERMINAL_OR_ACTIVE = new Set<Document['status']>(['extracting', 'extracted', 'completed']);
 
 const OPTION_RE = /^\s*(?:\(\s*([^()]+?)\s*\)|([A-Za-z0-9]+)\s*[.)])\s*([\s\S]*)$/;
 const TRUE_KEY_RE = /^\s*t(?:rue)?\s*$/i;
@@ -310,127 +306,153 @@ export class ExtractionWorker {
     private readonly documents: DocumentRepository,
     private readonly questions: QuestionRepository,
     private readonly jobs: ExtractionJobStore,
+    private readonly drafts: ExtractionDraftStore,
+    private readonly queue: JobQueue,
     private readonly drive: DriveService,
     private readonly rasterizer: PdfRasterizer,
     private readonly extractor: VisionExtractor,
     private readonly usage: UsageService,
-    private readonly runs: ExtractionRunRegistry,
-    private readonly timeoutMs: number,
+    private readonly pagesPerTask: number,
   ) {}
 
+  /**
+   * Execute one durable extraction task. `prepare` reads only PDF metadata, `question-page` renders
+   * and sends one page to the model, and `finalize` writes the already-checkpointed drafts. The
+   * queue invokes this method at-least-once; every task is therefore deliberately idempotent.
+   */
   async run(payload: ExtractionJobPayload): Promise<void> {
     const now = (): string => new Date().toISOString();
     const { jobId, documentId } = payload;
-    // Page progress can reach 100% while answer mapping or persistence is still running. Keep the
-    // active stage so a terminal job tells the operator exactly which part failed.
-    let stage = 'Preparing the PDF';
-
+    const job = await this.jobs.findById(jobId);
+    if (!job || job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled' || job.status === 'paused') {
+      return;
+    }
     const document = await this.documents.findById(documentId);
     if (!document) {
-      await this.jobs.update(jobId, {
-        status: 'failed',
-        error: `Document ${documentId} not found.`,
-        finishedAt: now(),
-      });
+      await this.fail(jobId, documentId, `Document ${documentId} not found.`, now());
       return;
     }
-
-    // Idempotent resume: never re-extract something already done or in flight (the "don't re-push" rule).
-    if (TERMINAL_OR_ACTIVE.has(document.status)) {
-      logger.info({ documentId, status: document.status }, 'Extraction skipped: already processed');
-      await this.jobs.update(jobId, { status: 'succeeded', finishedAt: now() });
-      return;
-    }
-
-    // Only question PDFs drive extraction; answer/solution PDFs are consumed via their question sibling.
     if (document.kind !== 'question') {
       await this.jobs.update(jobId, { status: 'succeeded', finishedAt: now() });
       return;
     }
 
-    await this.documents.updateStatus(documentId, 'extracting');
-    await this.jobs.update(jobId, { status: 'running', startedAt: now() });
-
-    // The per-run deadline: register an AbortController (so the cancel action can also reach it) and
-    // arm a timer that aborts it once the run exceeds the configured budget. Both cancel and timeout
-    // surface as an aborted signal on the in-flight vision call, handled in the catch below.
-    const controller = this.runs.register(jobId);
-    const timer = setTimeout(() => { controller.abort('timeout'); }, this.timeoutMs);
-
     try {
-      const pdf = await this.drive.downloadPdf(document.driveFileId);
-      const pages = await this.rasterizer.rasterize(pdf);
-      await this.jobs.update(jobId, { pagesTotal: pages.length, pagesDone: 0 });
-      stage = 'Question extraction';
-      const { questions: drafts, usage } = await this.extractor.extractQuestions({
-        pages,
-        document,
-        signal: controller.signal,
-        onProgress: (progress) => this.writeProgress(jobId, progress),
-      });
-      await this.recordUsage(document, usage);
-      stage = 'Answer and solution mapping';
-      const answered = await this.applyAnswers(document, drafts, controller.signal);
-      // Mapping is enrichment, whereas the question pass is the expensive, essential result. A
-      // user cancellation must still stop everything, but a deadline that lands after every question
-      // page was read must not discard those questions (and the tokens spent on them). Persist the
-      // questions with a clear warning that some answer/solution enrichment may be absent.
-      const mappingTimedOut = controller.signal.aborted && controller.signal.reason === 'timeout';
-      if (!mappingTimedOut) controller.signal.throwIfAborted();
-      // Comprehension sub-questions that share a passage are materialized into ONE passage row + N
-      // stamped sub-question rows AFTER answers are folded in, so each sub-question keeps its own
-      // answer/explanation and carries its group's passageId + order. Passages are persisted alongside
-      // the questions in one wholesale replace (passages first, so every passageId resolves).
-      stage = 'Saving extracted questions';
-      const { drafts: grouped, passages } = materializePassages(answered, documentId);
-      const extraction = { model: usage.model, at: now() };
-      const rows = grouped.map((draft) => toNewQuestion(document, draft, extraction));
-      const count = await this.questions.replaceDocument(documentId, passages, rows);
-
-      await this.documents.recordExtraction(documentId, { questionCount: count });
-      await this.jobs.update(jobId, {
-        status: 'succeeded',
-        questionsFound: count,
-        pagesDone: pages.length,
-        ...(mappingTimedOut
-          ? { error: `Answer and solution mapping timed out after ${String(this.timeoutMs)}ms. ${String(count)} question${count === 1 ? '' : 's'} were saved, but some answers or solutions may be missing.` }
-          : {}),
-        finishedAt: now(),
-      });
-      logger.info({ documentId, questionsFound: count, mappingTimedOut }, 'Extraction complete');
-    } catch (error) {
-      // Document returns to a re-runnable state whether the run failed, timed out, or was cancelled.
-      await this.documents.updateStatus(documentId, 'failed');
-      if (controller.signal.aborted && controller.signal.reason === 'cancelled') {
-        await this.jobs.update(jobId, { status: 'cancelled', finishedAt: now() });
-        logger.info({ documentId }, 'Extraction cancelled');
-      } else {
-        const reason = controller.signal.aborted
-          ? errors.extractionTimedOut(this.timeoutMs).message
-          : error instanceof Error
-            ? error.message
-            : String(error);
-        const message = `${stage} failed: ${reason}`;
-        await this.jobs.update(jobId, { status: 'failed', error: message, finishedAt: now() });
-        logger.error({ documentId, err: message }, 'Extraction failed');
+      switch (payload.task ?? 'prepare') {
+        case 'prepare':
+          await this.prepare(jobId, document, now);
+          return;
+        case 'question-page':
+          if (!payload.pageNumber) throw new Error('A question-page task is missing pageNumber.');
+          await this.extractQuestionPage(jobId, document, payload.pageNumber);
+          return;
+        case 'finalize':
+          await this.finalize(jobId, document, now);
+          return;
       }
-    } finally {
-      clearTimeout(timer);
-      this.runs.release(jobId);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      await this.fail(jobId, documentId, `${payload.task ?? 'prepare'} failed: ${reason}`, now());
+      throw error;
     }
   }
 
-  /**
-   * Persist live page progress, best-effort: a progress-write failure is logged, never allowed to
-   * fail the extraction it only measures (mirrors {@link recordUsage}).
-   */
-  private async writeProgress(jobId: string, patch: ExtractionJobPatch): Promise<void> {
-    try {
-      await this.jobs.update(jobId, patch);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.warn({ jobId, err: message }, 'Failed to record extraction progress');
+  private async prepare(jobId: string, document: Document, now: () => string): Promise<void> {
+    await this.documents.updateStatus(document.id, 'extracting');
+    await this.jobs.update(jobId, { status: 'running', startedAt: now(), error: null, finishedAt: null });
+    const pdf = await this.drive.downloadPdf(document.driveFileId);
+    const pagesTotal = await this.rasterizer.pageCount(pdf);
+    const progress = await this.drafts.questionProgress(jobId);
+    await this.jobs.update(jobId, { pagesTotal, pagesDone: progress.pagesDone, questionsFound: progress.questionsFound });
+    const nextPage = await this.firstMissingPage(jobId, pagesTotal);
+    await this.queue.enqueue(
+      nextPage === null
+        ? { jobId, documentId: document.id, task: 'finalize' }
+        : { jobId, documentId: document.id, task: 'question-page', pageNumber: nextPage },
+    );
+  }
+
+  private async extractQuestionPage(
+    jobId: string,
+    document: Document,
+    pageNumber: number,
+  ): Promise<void> {
+    const existing = await this.drafts.findQuestionPages(jobId);
+    const completed = new Set(existing.map((draft) => draft.pageNumber));
+    const jobBeforeBatch = await this.jobs.findById(jobId);
+    if (!jobBeforeBatch) return;
+    const pageNumbers = Array.from(
+      { length: Math.min(this.pagesPerTask, jobBeforeBatch.pagesTotal - pageNumber + 1) },
+      (_, offset) => pageNumber + offset,
+    ).filter((candidate) => !completed.has(candidate));
+    if (pageNumbers.length > 0) {
+      const pdf = await this.drive.downloadPdf(document.driveFileId);
+      const pages = await this.rasterizer.rasterizePages(pdf, pageNumbers);
+      for (const page of pages) {
+        const result = await this.extractor.extractQuestions({ pages: [page], document });
+        await this.recordUsage(document, result.usage);
+        await this.drafts.saveQuestionPage({
+          jobId,
+          documentId: document.id,
+          pageNumber: page.pageNumber,
+          questions: result.questions,
+        });
+        // The document row's timestamp is the stale-run watchdog heartbeat. Touch it once a page is
+        // durably committed so a many-hour PDF is never mistaken for an abandoned extraction.
+        await this.documents.updateStatus(document.id, 'extracting');
+        const live = await this.jobs.findById(jobId);
+        if (!live || (live.status !== 'running' && live.status !== 'queued')) break;
+      }
     }
+    const progress = await this.drafts.questionProgress(jobId);
+    const job = await this.jobs.update(jobId, {
+      pagesDone: progress.pagesDone,
+      questionsFound: progress.questionsFound,
+    });
+    // A page whose model call finished just after Pause was clicked is intentionally retained (the
+    // tokens are already spent), but Pause prevents the chain from scheduling another page.
+    if (job.status !== 'running' && job.status !== 'queued') return;
+    const nextPage = await this.firstMissingPage(jobId, job.pagesTotal);
+    await this.queue.enqueue(
+      nextPage === null
+        ? { jobId, documentId: document.id, task: 'finalize' }
+        : { jobId, documentId: document.id, task: 'question-page', pageNumber: nextPage },
+    );
+    logger.info({ jobId, documentId: document.id, pageNumber, pagesDone: progress.pagesDone }, 'Extraction page checkpointed');
+  }
+
+  private async finalize(jobId: string, document: Document, now: () => string): Promise<void> {
+    const pageDrafts = await this.drafts.findQuestionPages(jobId);
+    const drafts = pageDrafts.flatMap((page) => page.questions);
+    // Answer/solution mapping is enrichment. Question text has already been durably checkpointed,
+    // so a companion failure cannot make completed question pages spend their tokens again.
+    const answered = await this.applyAnswers(document, drafts, new AbortController().signal);
+    const { drafts: grouped, passages } = materializePassages(answered, document.id);
+    const extraction = { model: (await this.jobs.findById(jobId))?.model ?? 'unknown', at: now() };
+    const rows = grouped.map((draft) => toNewQuestion(document, draft, extraction));
+    const count = await this.questions.replaceDocument(document.id, passages, rows);
+    await this.documents.recordExtraction(document.id, { questionCount: count });
+    await this.jobs.update(jobId, {
+      status: 'succeeded',
+      questionsFound: count,
+      pagesDone: pageDrafts.length,
+      finishedAt: now(),
+    });
+    logger.info({ jobId, documentId: document.id, questionsFound: count }, 'Extraction complete from durable page drafts');
+  }
+
+  private async firstMissingPage(jobId: string, pagesTotal: number): Promise<number | null> {
+    const complete = new Set((await this.drafts.findQuestionPages(jobId)).map((draft) => draft.pageNumber));
+    for (let pageNumber = 1; pageNumber <= pagesTotal; pageNumber += 1) {
+      if (!complete.has(pageNumber)) return pageNumber;
+    }
+    return null;
+  }
+
+  private async fail(jobId: string, documentId: string, message: string, at: string): Promise<void> {
+    await this.documents.updateStatus(documentId, 'failed');
+    await this.jobs.update(jobId, { status: 'failed', error: message, finishedAt: at });
+    logger.error({ jobId, documentId, err: message }, 'Extraction task failed; completed page drafts remain resumable');
   }
 
   /**

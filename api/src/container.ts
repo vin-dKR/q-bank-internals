@@ -7,6 +7,7 @@ import {
   ExtractionService,
   ExtractionWorker,
   type ExtractionJobStore,
+  type ExtractionDraftStore,
   type JobQueue,
   type MasterOption,
   type MastersSnapshot,
@@ -40,10 +41,12 @@ import { QualityService, type QuestionAiFixer } from './modules/quality/index.js
 import { InMemoryDocumentRepository } from './infrastructure/database/repositories/document.in-memory-repository.js';
 import { InMemorySessionRepository } from './infrastructure/database/repositories/session.in-memory-repository.js';
 import { InMemoryExtractionJobStore } from './infrastructure/database/repositories/extraction-job.in-memory-store.js';
+import { InMemoryExtractionDraftStore } from './infrastructure/database/repositories/extraction-draft.in-memory-store.js';
 import { InMemoryQuestionRepository } from './infrastructure/database/repositories/question.in-memory-repository.js';
 import { PrismaDocumentRepository } from './infrastructure/database/repositories/document.prisma-repository.js';
 import { PrismaSessionRepository } from './infrastructure/database/repositories/session.prisma-repository.js';
 import { PrismaExtractionJobStore } from './infrastructure/database/repositories/extraction-job.prisma-store.js';
+import { PrismaExtractionDraftStore } from './infrastructure/database/repositories/extraction-draft.prisma-store.js';
 import { PrismaQuestionRepository } from './infrastructure/database/repositories/question.prisma-repository.js';
 import { InMemoryUsageRepository } from './infrastructure/database/repositories/token-usage.in-memory-repository.js';
 import { InMemoryTokenLimitStore } from './infrastructure/database/repositories/token-limit.in-memory-store.js';
@@ -54,8 +57,8 @@ import { GoogleDriveStorage } from './infrastructure/drive/google-drive.storage.
 import { UnconfiguredDriveStorage } from './infrastructure/drive/unconfigured-drive.storage.js';
 import { oauthDrive, serviceAccountDrive } from './infrastructure/drive/google-auth.js';
 import { InProcessJobQueue } from './infrastructure/queue/in-process.job-queue.js';
-import { SynchronousJobQueue } from './infrastructure/queue/synchronous.job-queue.js';
 import { BullMqJobQueue } from './infrastructure/queue/bullmq.job-queue.js';
+import { VercelJobQueue } from './infrastructure/queue/vercel.job-queue.js';
 import { PdfToImgRasterizer } from './infrastructure/pdf/pdf-to-img.rasterizer.js';
 import { OpenAiVisionExtractor } from './infrastructure/ai/openai.vision-extractor.js';
 import { UnconfiguredVisionExtractor } from './infrastructure/ai/unconfigured.vision-extractor.js';
@@ -154,6 +157,7 @@ function buildPersistence(): {
   documents: DocumentRepository;
   sessions: SessionRepository;
   jobs: ExtractionJobStore;
+  drafts: ExtractionDraftStore;
   questions: QuestionRepository;
   usage: UsageRepository;
   limits: TokenLimitStore;
@@ -169,6 +173,7 @@ function buildPersistence(): {
       documents: new PrismaDocumentRepository(prisma),
       sessions: new PrismaSessionRepository(prisma),
       jobs: new PrismaExtractionJobStore(prisma),
+      drafts: new PrismaExtractionDraftStore(prisma),
       questions: new PrismaQuestionRepository(prisma),
       usage: new PrismaUsageRepository(prisma),
       limits: new PrismaTokenLimitStore(prisma),
@@ -181,6 +186,7 @@ function buildPersistence(): {
     documents: new InMemoryDocumentRepository(),
     sessions: new InMemorySessionRepository(),
     jobs: new InMemoryExtractionJobStore(),
+    drafts: new InMemoryExtractionDraftStore(),
     questions: new InMemoryQuestionRepository(),
     usage: new InMemoryUsageRepository(),
     limits: new InMemoryTokenLimitStore(),
@@ -189,9 +195,9 @@ function buildPersistence(): {
 }
 
 /**
- * Queue selection: BullMQ when Redis is configured (durable, drained by the standalone worker);
- * a synchronous in-request queue on serverless (Vercel freezes the function after the response, so
- * detached work would be killed); otherwise the detached in-process queue so dev boots with no Redis.
+ * Queue selection: Vercel Queue in production (durable private push consumer); BullMQ where Redis
+ * is explicitly configured; otherwise the detached in-process queue so local development boots
+ * with no cloud dependency.
  */
 function buildQueue(): JobQueue {
   if (env.REDIS_URL) {
@@ -199,8 +205,8 @@ function buildQueue(): JobQueue {
     return new BullMqJobQueue(env.REDIS_URL);
   }
   if (isServerless) {
-    logger.info('Queue: synchronous in-request (serverless). Extraction runs inline; no background worker.');
-    return new SynchronousJobQueue();
+    logger.info('Queue: Vercel Queue (durable per-page serverless consumer).');
+    return new VercelJobQueue();
   }
   logger.info('Queue: in-process (dev). Set REDIS_URL for a durable BullMQ worker.');
   return new InProcessJobQueue();
@@ -292,7 +298,7 @@ function buildPaperMetadataExtractor(): PaperMetadataExtractor {
 }
 
 export function createContainer(): Container {
-  const { documents, sessions, jobs, questions, usage, limits, prompts } = buildPersistence();
+  const { documents, sessions, jobs, drafts, questions, usage, limits, prompts } = buildPersistence();
   const promptsService = new PromptService(prompts);
   // The prompt builders read edits through this; the service caches it briefly so a multi-page run
   // isn't a DB read per page.
@@ -319,16 +325,9 @@ export function createContainer(): Container {
   const extractor = buildExtractor(loadPromptOverrides, loadMasters);
   const driveService = buildDrive();
 
-  // A Vercel request has a five-minute ceiling. Its synchronous queue needs time after the worker
-  // stops to persist the terminal job and return JSON; otherwise the browser only sees a network
-  // "Failed to fetch" after a nearly-complete run. Reserve the final minute on serverless only.
-  const extractionTimeoutMs = isServerless
-    ? Math.min(env.EXTRACTION_TIMEOUT_MS, 240_000)
-    : env.EXTRACTION_TIMEOUT_MS;
-
-  // The age past which a stuck `queued`/`extracting` document is auto-reset on read. Floored to always
-  // exceed the run budget (+1min) so the self-heal can never kill a genuinely in-flight extraction.
-  const staleExtractionMs = Math.max(env.STALE_EXTRACTION_MS, extractionTimeoutMs + 60_000);
+  // A queue callback is one page, not a whole PDF. Keep the stale threshold independent of document
+  // length: a healthy large extraction advances it on every short page task.
+  const staleExtractionMs = env.STALE_EXTRACTION_MS;
 
   const usageService = new UsageService(usage, limits, sessions, documents);
   const documentsService = new DocumentsService(documents, sessions, staleExtractionMs);
@@ -410,12 +409,13 @@ export function createContainer(): Container {
     documents,
     questions,
     jobs,
+    drafts,
+    jobQueue,
     driveService,
     rasterizer,
     extractor,
     usageService,
-    runRegistry,
-    extractionTimeoutMs,
+    env.EXTRACTION_PAGES_PER_TASK,
   );
   const ingestionService = new IngestionService(
     driveService,
@@ -425,14 +425,12 @@ export function createContainer(): Container {
     buildUploadStaging(),
   );
 
-  // In-process/synchronous queue: the API also consumes, so extraction runs without a separate
-  // worker. BullMQ: the API only enqueues; the dedicated `worker.ts` process registers the consumer.
-  if (!env.REDIS_URL) {
+  // In-process queues consume here. Vercel Queue and BullMQ use their own process/private trigger.
+  if (!jobQueue.usesExternalConsumer) {
     jobQueue.process((payload) => extractionWorker.run(payload));
     // Recover stale in-flight docs from a previous crash — but ONLY off serverless. On serverless
-    // many function instances run concurrently, so a cold-start reset here would flip a document
-    // that a sibling invocation is actively extracting to `failed`. The synchronous queue also
-    // never leaves work orphaned across requests, so there is nothing to recover.
+    // many function instances run concurrently, so a cold-start reset here could flip a document
+    // that a sibling queue invocation is actively checkpointing to `failed`.
     if (!isServerless) {
       void documents.resetInFlight().then((count) => {
         if (count > 0) logger.info(`Recovered ${String(count)} stale extraction(s) → failed`);

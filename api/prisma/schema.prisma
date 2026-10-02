@@ -293,6 +293,28 @@ model ExtractionJob {
   @@map("ingest_extraction_jobs")
 }
 
+// Durable checkpoints for a single extraction job. A page is committed here immediately after the
+// vision response succeeds, before the next page is queued. This is intentionally separate from
+// `Question`: final question rows are written only once all page drafts have been reconciled with
+// answers/solutions, but a timeout, pause, or deployment can never make us pay to read a completed
+// page again. Mongo creates this collection lazily, so deploying the generated client is sufficient.
+model ExtractionPageDraft {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  jobId          String   @db.ObjectId
+  documentId     String   @db.ObjectId
+  phase          String
+  pageNumber     Int
+  scopeKey       String
+  data           Json
+  questionCount  Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([jobId, documentId, phase, pageNumber, scopeKey])
+  @@index([jobId, phase])
+  @@map("ingest_extraction_page_drafts")
+}
+
 // An operator's edit to one AI prompt, keyed by its PromptKey. Absent = the code default is used.
 // Read by the prompt builders (cached briefly) and managed from the prompt-settings screen.
 model PromptOverride {

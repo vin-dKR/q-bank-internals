@@ -103,4 +103,14 @@ export const sessionsApi = {
       schema: DocumentSchema,
     });
   },
+
+  /** Pause after the currently running page is checkpointed; completed pages remain resumable. */
+  pauseExtraction: (jobId: string): Promise<ExtractionJob> => {
+    return request(`/extraction/jobs/${jobId}/pause`, { method: 'POST', schema: ExtractionJobSchema });
+  },
+
+  /** Continue the latest paused or failed extraction from its first unfinished page. */
+  resumeExtraction: (documentId: string): Promise<ExtractionJob> => {
+    return request(`/extraction/documents/${documentId}/resume`, { method: 'POST', schema: ExtractionJobSchema });
+  },
 };

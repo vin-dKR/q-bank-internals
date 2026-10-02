@@ -53,7 +53,7 @@ export function useDocumentExtractionJob(documentId: string): UseQueryResult<Ext
     queryFn: () => sessionsApi.documentJob(documentId),
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      return status === 'succeeded' || status === 'failed' || status === 'cancelled' ? false : 1500;
+      return status === 'succeeded' || status === 'failed' || status === 'cancelled' || status === 'paused' ? false : 1500;
     },
   });
 }
@@ -75,6 +75,38 @@ export function useResetDocumentExtraction(): UseMutationResult<Document, Error,
       void queryClient.invalidateQueries({ queryKey: ['sessions'] });
     },
     onError: (err) => { error('Could not stop extraction', err.message); },
+  });
+}
+
+/** Pause at the next durable page boundary; the worker never throws away an already-paid page. */
+export function usePauseDocumentExtraction(): UseMutationResult<ExtractionJob, Error, string> {
+  const queryClient = useQueryClient();
+  const { success, error } = useToast();
+  return useMutation({
+    mutationFn: (jobId: string) => sessionsApi.pauseExtraction(jobId),
+    onSuccess: () => {
+      success('Extraction paused', 'Completed pages are saved. Resume continues from the next page.');
+      void queryClient.invalidateQueries({ queryKey: ['document-extraction-job'] });
+      void queryClient.invalidateQueries({ queryKey: ['documents'] });
+      void queryClient.invalidateQueries({ queryKey: ['session'] });
+    },
+    onError: (err) => { error('Could not pause extraction', err.message); },
+  });
+}
+
+/** Resume an interrupted run without re-sending page drafts already saved for that job. */
+export function useResumeDocumentExtraction(): UseMutationResult<ExtractionJob, Error, string> {
+  const queryClient = useQueryClient();
+  const { success, error } = useToast();
+  return useMutation({
+    mutationFn: (documentId: string) => sessionsApi.resumeExtraction(documentId),
+    onSuccess: () => {
+      success('Extraction resumed', 'Continuing from the first unfinished page.');
+      void queryClient.invalidateQueries({ queryKey: ['document-extraction-job'] });
+      void queryClient.invalidateQueries({ queryKey: ['documents'] });
+      void queryClient.invalidateQueries({ queryKey: ['session'] });
+    },
+    onError: (err) => { error('Could not resume extraction', err.message); },
   });
 }
 

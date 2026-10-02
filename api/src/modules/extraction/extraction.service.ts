@@ -110,6 +110,42 @@ export class ExtractionService {
   }
 
   /**
+   * Pause after the current durable page checkpoint. A callback already reading a page cannot be
+   * interrupted across serverless instances, but it saves that paid-for response and never queues
+   * the following page. Resume therefore starts at the first missing page with no token replay.
+   */
+  async pause(jobId: string): Promise<ExtractionJob> {
+    const job = await this.jobs.findById(jobId);
+    if (!job) throw errors.extractionJobNotFound(jobId);
+    if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled' || job.status === 'paused') {
+      return job;
+    }
+    this.runs.abort(jobId, 'cancelled');
+    await this.queue.cancel(jobId);
+    const paused = await this.jobs.update(jobId, { status: 'paused', finishedAt: null });
+    await this.documents.updateStatus(job.documentId, 'failed');
+    return paused;
+  }
+
+  /** Resume the latest paused or failed run, retaining all of its persisted page drafts. */
+  async resume(documentId: string): Promise<ExtractionJob> {
+    const document = await this.documents.findById(documentId);
+    if (!document) throw errors.documentNotFound(documentId);
+    const job = await this.jobs.findLatestByDocument(documentId);
+    if (!job || (job.status !== 'paused' && job.status !== 'failed')) {
+      throw errors.extractionNotResumable(documentId);
+    }
+    const resumed = await this.jobs.update(job.id, {
+      status: 'queued',
+      error: null,
+      finishedAt: null,
+    });
+    await this.documents.updateStatus(documentId, 'queued');
+    await this.queue.enqueue({ jobId: job.id, documentId, task: 'prepare' });
+    return resumed;
+  }
+
+  /**
    * Stop a stuck/orphaned extraction by DOCUMENT id — the operator-facing "Stop" any viewer can hit,
    * unlike {@link cancel} which needs the job id the starting tab kept in memory. Best-effort aborts
    * the in-process run and drops a still-queued entry, closes the latest job, and returns the document

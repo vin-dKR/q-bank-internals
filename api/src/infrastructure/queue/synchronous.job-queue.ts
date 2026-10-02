@@ -13,6 +13,7 @@ import type { ExtractionJobPayload, JobQueue } from '../../modules/extraction/in
  * clients see the final status on their next poll.
  */
 export class SynchronousJobQueue implements JobQueue {
+  readonly usesExternalConsumer = false;
   private handler: ((payload: ExtractionJobPayload) => Promise<void>) | null = null;
 
   async enqueue(payload: ExtractionJobPayload): Promise<void> {

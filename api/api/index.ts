@@ -12,9 +12,8 @@ import { createContainer } from '../src/container.js';
  * imported `../src/app.js` (which has no default export), and crashes with "Invalid export found
  * in module .../src/app.js". An inline function gives it nothing to trace.
  *
- * The container is built once per warm instance. There is NO background worker: on serverless the
- * function is frozen the moment the response is sent, so extraction runs synchronously inside the
- * request (the composition root wires the synchronous queue when `VERCEL`/`SERVERLESS` is set).
+ * The container is built once per warm instance. Extraction itself runs in the private Vercel Queue
+ * consumer (`api/extraction-queue.ts`), so this HTTP handler only records and publishes a job.
  */
 const app = createApp(createContainer());
 

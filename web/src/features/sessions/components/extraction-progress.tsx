@@ -1,9 +1,14 @@
 import { type JSX, useEffect, useRef } from 'react';
 import { useToast } from '../../../shared/ui/index.js';
-import { useDocumentExtractionJob, useResetDocumentExtraction } from '../hooks/use-sessions.js';
+import {
+  useDocumentExtractionJob,
+  usePauseDocumentExtraction,
+  useResetDocumentExtraction,
+  useResumeDocumentExtraction,
+} from '../hooks/use-sessions.js';
 
 /** Terminal states, after which the run no longer moves and the bar can be dismissed. */
-const DONE = new Set(['succeeded', 'failed', 'cancelled']);
+const DONE = new Set(['succeeded', 'failed', 'cancelled', 'paused']);
 
 function failureTitle(message: string | null): string {
   if (message?.startsWith('Question extraction failed:')) return 'Question extraction failed';
@@ -32,6 +37,8 @@ export function ExtractionProgress({
 }): JSX.Element | null {
   const job = useDocumentExtractionJob(documentId);
   const reset = useResetDocumentExtraction();
+  const pause = usePauseDocumentExtraction();
+  const resume = useResumeDocumentExtraction();
   const { toast } = useToast();
   const notifiedJobId = useRef<string | null>(null);
 
@@ -49,10 +56,12 @@ export function ExtractionProgress({
       });
     } else if (data.status === 'failed') {
       toast({ title: failureTitle(data.error), description: data.error ?? undefined, tone: 'error' });
+    } else if (data.status === 'paused') {
+      toast({ title: 'Extraction paused', description: 'Completed pages are saved. Resume continues at the next page.', tone: 'info' });
     } else {
       toast({ title: 'Extraction cancelled', tone: 'info' });
     }
-    if (data.status === 'failed' || (data.status === 'succeeded' && data.error)) return undefined;
+    if (data.status === 'failed' || data.status === 'paused' || (data.status === 'succeeded' && data.error)) return undefined;
     const timer = window.setTimeout(onDismiss, 2500);
     return () => { window.clearTimeout(timer); };
   }, [data, toast, onDismiss]);
@@ -64,7 +73,7 @@ export function ExtractionProgress({
   const finalizing = status === 'running' && data.pagesTotal > 0 && data.pagesDone >= data.pagesTotal;
   const hasMappingWarning = status === 'succeeded' && data.error !== null;
   const fillTone =
-    status === 'failed' ? 'bg-bad' : status === 'cancelled' ? 'bg-ink-3' : 'bg-brand';
+    status === 'failed' ? 'bg-bad' : status === 'cancelled' || status === 'paused' ? 'bg-ink-3' : 'bg-brand';
   const prefix = fileName ? `${fileName} — ` : '';
 
   const headline =
@@ -74,6 +83,8 @@ export function ExtractionProgress({
         ? `${prefix}Extraction failed`
         : status === 'cancelled'
           ? `${prefix}Extraction cancelled`
+          : status === 'paused'
+            ? `${prefix}Paused — ${String(data.pagesDone)}/${String(data.pagesTotal)} pages saved`
           : status === 'queued'
             ? `${prefix}Queued…`
             : finalizing
@@ -89,6 +100,15 @@ export function ExtractionProgress({
             {data.pagesTotal > 0 ? `${String(data.pagesDone)}/${String(data.pagesTotal)} pages · ${String(pct)}%` : null}
           </span>
           {running ? (
+            <>
+            <button
+              type="button"
+              className="btn btn--ghost btn--xs"
+              disabled={pause.isPending}
+              onClick={() => { pause.mutate(data.id); }}
+            >
+              Pause
+            </button>
             <button
               type="button"
               className="btn btn--ghost btn--xs btn--danger"
@@ -96,6 +116,16 @@ export function ExtractionProgress({
               onClick={() => { reset.mutate(documentId); }}
             >
               Stop
+            </button>
+            </>
+          ) : status === 'paused' ? (
+            <button
+              type="button"
+              className="btn btn--ghost btn--xs"
+              disabled={resume.isPending}
+              onClick={() => { resume.mutate(documentId); }}
+            >
+              Resume
             </button>
           ) : status === 'failed' || hasMappingWarning ? (
             <button type="button" className="btn btn--ghost btn--xs" onClick={onDismiss}>Dismiss</button>
