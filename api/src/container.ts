@@ -28,7 +28,7 @@ import {
   type TokenLimitStore,
   type UsageRepository,
 } from './modules/usage/index.js';
-import { PagesService } from './modules/pages/index.js';
+import { PagesService, type PagePreviewStore } from './modules/pages/index.js';
 import { PublishService } from './modules/publish/index.js';
 import { BankService } from './modules/bank/index.js';
 import { CatalogService } from './modules/catalog/index.js';
@@ -66,6 +66,8 @@ import { SupabaseImageStore } from './infrastructure/storage/supabase.image-stor
 import { UnconfiguredImageStore } from './infrastructure/storage/unconfigured.image-store.js';
 import { SupabaseUploadStagingStore } from './infrastructure/storage/supabase.upload-staging-store.js';
 import { UnconfiguredUploadStagingStore } from './infrastructure/storage/unconfigured.upload-staging-store.js';
+import { SupabasePagePreviewStore } from './infrastructure/storage/supabase.page-preview-store.js';
+import { UnconfiguredPagePreviewStore } from './infrastructure/storage/unconfigured.page-preview-store.js';
 import { InMemoryPromptOverrideStore } from './infrastructure/database/repositories/prompt-override.in-memory-store.js';
 import { PrismaPromptOverrideStore } from './infrastructure/database/repositories/prompt-override.prisma-store.js';
 import { OpenAiLatexRefiner } from './infrastructure/ai/openai.latex-refiner.js';
@@ -244,6 +246,15 @@ function buildUploadStaging(): UploadStagingStore {
   return new UnconfiguredUploadStagingStore();
 }
 
+/** Persistent page previews make Verify reads CDN-fast instead of rerasterizing a Drive PDF. */
+function buildPagePreviews(): PagePreviewStore {
+  if (env.SUPABASE_SERVICE_KEY) {
+    return new SupabasePagePreviewStore(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY, env.SUPABASE_BUCKET);
+  }
+  logger.info('Source-page previews: unconfigured. Set SUPABASE_SERVICE_KEY to persist Verify previews.');
+  return new UnconfiguredPagePreviewStore();
+}
+
 /** OpenAI-backed "Fix LaTeX" refiner when a key is present; otherwise a null-object. */
 function buildLatexRefiner(loadPromptOverrides: () => Promise<PromptOverrides>): LatexRefiner {
   if (env.OPENAI_API_KEY) {
@@ -332,7 +343,7 @@ export function createContainer(): Container {
   const usageService = new UsageService(usage, limits, sessions, documents);
   const documentsService = new DocumentsService(documents, sessions, staleExtractionMs);
   const sessionsService = new SessionsService(sessions, documents, staleExtractionMs);
-  const pagesService = new PagesService(documents, driveService, rasterizer);
+  const pagesService = new PagesService(documents, driveService, rasterizer, buildPagePreviews());
   // Built before the questions service: deleting a verified question also drops its published bank
   // copy, so the questions service holds this store (and is the read/fix side's dependency too).
   const bankQuestionStore =
@@ -416,6 +427,7 @@ export function createContainer(): Container {
     extractor,
     usageService,
     env.EXTRACTION_PAGES_PER_TASK,
+    pagesService,
   );
   const ingestionService = new IngestionService(
     driveService,

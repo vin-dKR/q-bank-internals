@@ -1,51 +1,78 @@
+import sharp from 'sharp';
+import { logger } from '../../shared/logger/logger.js';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { DriveService } from '../drive/index.js';
-import type { PageImage, PdfRasterizer } from '../extraction/index.js';
+import type { PdfRasterizer } from '../extraction/index.js';
+import type { PagePreviewStore } from './page-preview.store.js';
+
+export type SourcePagePreview = { url: string } | { png: Buffer };
 
 /**
- * Renders a document's source PDF page as a PNG — the crop canvas the verify screen draws on. The
- * rasterized pages are cached per Drive file (small LRU) so paging through a document is cheap.
+ * Serves the Verify crop canvas without ever rasterizing an entire PDF request. Extraction writes
+ * its pages into the persistent preview cache; old documents are migrated lazily on first view.
  */
 export class PagesService {
-  private readonly cache = new Map<string, PageImage[]>();
-  private readonly order: string[] = [];
-  private readonly maxCached = 8;
-
   constructor(
     private readonly documents: DocumentRepository,
     private readonly drive: DriveService,
     private readonly rasterizer: PdfRasterizer,
+    private readonly previews: PagePreviewStore,
   ) {}
 
+  /** Return a public CDN URL when cached, otherwise render and cache only the requested page. */
+  async previewPage(documentId: string, page: number): Promise<SourcePagePreview> {
+    const cached = await this.findCached(documentId, page);
+    if (cached) return { url: cached };
+    const png = await this.renderPage(documentId, page);
+    const url = await this.cacheRenderedPage(documentId, page, png);
+    return url ? { url } : { png };
+  }
+
+  /** Render exactly one PDF page for crop/re-extraction paths that need original PNG pixels. */
   async renderPage(documentId: string, page: number): Promise<Buffer> {
     const document = await this.documents.findById(documentId);
     if (!document) throw errors.documentNotFound(documentId);
-    const pages = await this.pagesFor(document.driveFileId);
-    const match = pages.find((image) => image.pageNumber === page);
-    if (!match) throw errors.pageNotFound(documentId, page);
-    return match.png;
+    const pdf = await this.drive.downloadPdf(document.driveFileId);
+    try {
+      return (await this.rasterizer.rasterizePage(pdf, page)).png;
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('PDF page ')) throw errors.pageNotFound(documentId, page);
+      throw error;
+    }
   }
 
-  /** How many pages a document's PDF has — lets the verify screen build its page selector. */
+  /** Page count is PDF metadata, not a request to generate every image. */
   async pageCount(documentId: string): Promise<number> {
     const document = await this.documents.findById(documentId);
     if (!document) throw errors.documentNotFound(documentId);
-    const pages = await this.pagesFor(document.driveFileId);
-    return pages.length;
+    const pdf = await this.drive.downloadPdf(document.driveFileId);
+    return this.rasterizer.pageCount(pdf);
   }
 
-  private async pagesFor(driveFileId: string): Promise<PageImage[]> {
-    const cached = this.cache.get(driveFileId);
-    if (cached) return cached;
-    const pdf = await this.drive.downloadPdf(driveFileId);
-    const pages = await this.rasterizer.rasterize(pdf);
-    this.cache.set(driveFileId, pages);
-    this.order.push(driveFileId);
-    if (this.order.length > this.maxCached) {
-      const evicted = this.order.shift();
-      if (evicted) this.cache.delete(evicted);
+  /** Called by the extraction queue while the high-resolution page pixels are already in memory. */
+  async cacheRenderedPage(documentId: string, page: number, png: Buffer): Promise<string | null> {
+    try {
+      const webp = await sharp(png).webp({ quality: 84, effort: 4 }).toBuffer();
+      return await this.previews.save(documentId, page, webp);
+    } catch (error) {
+      logger.warn(
+        { documentId, page, err: error instanceof Error ? error.message : String(error) },
+        'Source-page preview cache write failed; serving the rendered page directly',
+      );
+      return null;
     }
-    return pages;
+  }
+
+  private async findCached(documentId: string, page: number): Promise<string | null> {
+    try {
+      return await this.previews.find(documentId, page);
+    } catch (error) {
+      logger.warn(
+        { documentId, page, err: error instanceof Error ? error.message : String(error) },
+        'Source-page preview cache lookup failed; rendering the requested page',
+      );
+      return null;
+    }
   }
 }

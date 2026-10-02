@@ -10,6 +10,7 @@ import { logger } from '../../shared/logger/logger.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { NewQuestion, QuestionRepository } from '../questions/index.js';
 import type { DriveService } from '../drive/index.js';
+import type { PagesService } from '../pages/index.js';
 import type { AiTokenUsage, UsageService } from '../usage/index.js';
 import type { ExtractionJobStore } from './extraction.repository.js';
 import type { ExtractionDraftStore } from './extraction-draft.repository.js';
@@ -313,6 +314,7 @@ export class ExtractionWorker {
     private readonly extractor: VisionExtractor,
     private readonly usage: UsageService,
     private readonly pagesPerTask: number,
+    private readonly pages: PagesService,
   ) {}
 
   /**
@@ -390,7 +392,10 @@ export class ExtractionWorker {
       const pages = await this.rasterizer.rasterizePages(pdf, pageNumbers);
       for (const page of pages) {
         const result = await this.extractor.extractQuestions({ pages: [page], document });
-        await this.recordUsage(document, result.usage);
+        await Promise.all([
+          this.recordUsage(document, result.usage),
+          this.pages.cacheRenderedPage(document.id, page.pageNumber, page.png),
+        ]);
         await this.drafts.saveQuestionPage({
           jobId,
           documentId: document.id,

@@ -16,7 +16,12 @@ export function createPagesController(service: PagesService): {
     render: asyncHandler(async (req, res) => {
       const documentId = requiredParam(req, 'documentId');
       const page = parseOrThrow(PageParamSchema, requiredParam(req, 'page'));
-      const png = await service.renderPage(documentId, page);
+      const preview = await service.previewPage(documentId, page);
+      if ('url' in preview) {
+        res.redirect(302, preview.url);
+        return;
+      }
+      const { png } = preview;
       res.setHeader('Content-Type', 'image/png');
       res.setHeader('Cache-Control', 'private, max-age=300');
       res.send(png);
