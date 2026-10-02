@@ -118,7 +118,7 @@ export function ExtractionProgress({
               Stop
             </button>
             </>
-          ) : status === 'paused' ? (
+          ) : status === 'paused' || status === 'failed' ? (
             <button
               type="button"
               className="btn btn--ghost btn--xs"
@@ -127,7 +127,7 @@ export function ExtractionProgress({
             >
               Resume
             </button>
-          ) : status === 'failed' || hasMappingWarning ? (
+          ) : hasMappingWarning ? (
             <button type="button" className="btn btn--ghost btn--xs" onClick={onDismiss}>Dismiss</button>
           ) : null}
         </div>

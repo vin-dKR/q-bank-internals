@@ -9,6 +9,7 @@ export const DocumentStatusSchema = z.enum([
   'uploaded', // sitting in Drive, not yet extracted
   'queued', // handed to the extractor
   'extracting', // vision model running
+  'paused', // extraction checkpoints saved; resume continues at the first unfinished page
   'extracted', // questions produced by the model, awaiting review/merge
   'needs_review', // drafts produced, awaiting a human
   'approved', // a person accepted the drafts

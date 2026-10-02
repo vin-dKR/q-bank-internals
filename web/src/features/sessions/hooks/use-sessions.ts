@@ -177,7 +177,7 @@ export function useBulkDeleteSessions(): UseMutationResult<{ deleted: number }, 
   });
 }
 
-/** Queues extraction for a whole session, then refreshes views to show progress. */
+/** Queues new session files and resumes interrupted ones, then refreshes views to show progress. */
 export function useRunSessionExtraction(): UseMutationResult<
   { enqueued: number; jobIds: string[] },
   Error,

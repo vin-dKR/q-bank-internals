@@ -22,6 +22,7 @@ enum DocumentStatus {
   uploaded
   queued
   extracting
+  paused
   extracted
   needs_review
   approved

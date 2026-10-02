@@ -54,22 +54,24 @@ export class ExtractionService {
 
   /**
    * Queue extraction for every not-yet-extracted question document in a session — the "run the whole
-   * batch" action. Answer/solution PDFs are pulled in automatically by their question sibling, and
-   * already-extracted files are skipped, so this never re-does completed work.
+   * batch" action. Answer/solution PDFs are pulled in automatically by their question sibling;
+   * paused/failed jobs resume their existing checkpoints, while already-extracted files are skipped.
    */
   async enqueueSession(sessionId: string): Promise<{ enqueued: number; jobIds: string[] }> {
     const documents = await this.documents.listBySession(sessionId);
-    const targets = documents.filter(
-      (document) =>
-        document.kind === 'question' &&
-        (document.status === 'uploaded' || document.status === 'failed'),
-    );
     const jobIds: string[] = [];
-    for (const document of targets) {
-      const job = await this.enqueue(document.id);
+    for (const document of documents) {
+      if (document.kind !== 'question') continue;
+      const latest = await this.jobs.findLatestByDocument(document.id);
+      const job = latest?.status === 'paused' || latest?.status === 'failed'
+        ? await this.resume(document.id)
+        : document.status === 'uploaded' || document.status === 'failed'
+          ? await this.enqueue(document.id)
+          : null;
+      if (!job) continue;
       jobIds.push(job.id);
     }
-    return { enqueued: targets.length, jobIds };
+    return { enqueued: jobIds.length, jobIds };
   }
 
   async getJob(id: string): Promise<ExtractionJob> {
@@ -123,7 +125,7 @@ export class ExtractionService {
     this.runs.abort(jobId, 'cancelled');
     await this.queue.cancel(jobId);
     const paused = await this.jobs.update(jobId, { status: 'paused', finishedAt: null });
-    await this.documents.updateStatus(job.documentId, 'failed');
+    await this.documents.updateStatus(job.documentId, 'paused');
     return paused;
   }
 
