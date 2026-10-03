@@ -26,6 +26,8 @@ import type { PromptOverrides } from '../../modules/prompts/index.js';
  * AND the page's question JSON; the retry doubles it once if the model still truncates.
  */
 const MAX_TOKENS = 16000;
+const SMILES_TAG = /<smiles\b/i;
+const SMILES_AUDIT_PROMPT = 'CHEMISTRY STRUCTURE AUDIT: The candidate JSON below was extracted from the supplied exam-page image. Inspect only every <smiles>…</smiles> value against the drawn structures in the image. Confirm each tag contains one complete connected molecule and that every bond, charge, and aromatic substituent position matches the drawing. For rings, explicitly count ring edges between substituents; do not accept a plausible but wrong ortho/meta/para isomer. Return the complete candidate JSON unchanged when all structures match. Otherwise, change only the incorrect SMILES values and return the complete valid JSON. Do not alter prose, question boundaries, options, answers, or any non-SMILES field.\n\nCANDIDATE JSON:\n';
 
 /** Shape the question prompt asks the model to return, before we enrich with section/page. */
 type RawQuestion = {
@@ -545,6 +547,36 @@ export class OpenAiVisionExtractor implements VisionExtractor {
       maxCompletionTokens *= 2;
     }
 
+    if (!SMILES_TAG.test(content)) return { content };
+
+    const audit = await this.client.chat.completions.create(
+      {
+        model: this.model,
+        max_completion_tokens: MAX_TOKENS,
+        response_format: { type: 'json_object' },
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: SMILES_AUDIT_PROMPT + content },
+            { type: 'image_url', image_url: { url: imageUrl, detail: 'high' } },
+          ],
+        }],
+      },
+      signal ? { signal } : undefined,
+    );
+    usage.promptTokens += audit.usage?.prompt_tokens ?? 0;
+    usage.completionTokens += audit.usage?.completion_tokens ?? 0;
+    usage.totalTokens += audit.usage?.total_tokens ?? 0;
+    usage.callCount += 1;
+    const audited = audit.choices[0]?.message.content?.trim() ?? '';
+    try {
+      if (audit.choices[0]?.finish_reason !== 'length' && audited && typeof JSON.parse(audited) === 'object') {
+        return { content: audited };
+      }
+    } catch (error) {
+      logger.warn({ err: error }, 'SMILES audit returned malformed JSON; preserving first extraction');
+    }
+    logger.warn({ model: this.model }, 'SMILES audit returned no usable JSON; preserving first extraction');
     return { content };
   }
 }
