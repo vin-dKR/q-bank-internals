@@ -37,7 +37,7 @@ function hasChemistrySignal(value: string | null | undefined): boolean {
 }
 
 /** Check every available routing signal: an assembled/PYQ document can carry a generic document subject. */
-function isChemistryContext(document: Document, leafSubject?: string): boolean {
+export function isChemistryContext(document: Document, leafSubject?: string): boolean {
   return [
     document.subject,
     leafSubject,

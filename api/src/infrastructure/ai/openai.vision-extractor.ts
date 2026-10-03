@@ -17,7 +17,7 @@ import { mergeAnswerEntries, type AnswerSource } from '../../modules/extraction/
 import type { AiTokenUsage } from '../../modules/usage/index.js';
 import { errors } from '../../shared/errors/error-catalog.js';
 import { logger } from '../../shared/logger/logger.js';
-import { answerPrompt, companionPrompt, questionPrompt, solutionPrompt } from './prompts/extraction-prompts.js';
+import { answerPrompt, companionPrompt, isChemistryContext, questionPrompt, solutionPrompt } from './prompts/extraction-prompts.js';
 import { sanitizeExtractedLatex } from './latex-sanitizer.js';
 import type { PromptOverrides } from '../../modules/prompts/index.js';
 
@@ -27,7 +27,7 @@ import type { PromptOverrides } from '../../modules/prompts/index.js';
  */
 const MAX_TOKENS = 16000;
 const SMILES_TAG = /<smiles\b/i;
-const SMILES_AUDIT_PROMPT = 'CHEMISTRY STRUCTURE AUDIT: The candidate JSON below was extracted from the supplied exam-page image. Inspect only every <smiles>…</smiles> value against the drawn structures in the image. Confirm each tag contains one complete connected molecule and that every bond, charge, and aromatic substituent position matches the drawing. For rings, explicitly count ring edges between substituents; do not accept a plausible but wrong ortho/meta/para isomer. Return the complete candidate JSON unchanged when all structures match. Otherwise, change only the incorrect SMILES values and return the complete valid JSON. Do not alter prose, question boundaries, options, answers, or any non-SMILES field.\n\nCANDIDATE JSON:\n';
+const SMILES_AUDIT_PROMPT = 'CHEMISTRY STRUCTURE AUDIT: The candidate JSON below was extracted from the supplied exam-page image. First locate every molecule drawn with bonds, rings, or skeletal notation. Each must appear in the candidate as one complete <smiles>RAW_SMILES</smiles> tag, even when the first extraction omitted all tags. Inspect or recover only those SMILES values against the drawing. Confirm every bond, charge, and aromatic substituent position matches; for rings explicitly count edges between substituents, never accepting a plausible but wrong ortho/meta/para isomer. If the image has no drawn molecule, return the complete candidate JSON unchanged. Otherwise, change only the affected SMILES values and return complete valid JSON. Do not alter prose, question boundaries, options, answers, or any non-SMILES field.\n\nCANDIDATE JSON:\n';
 
 /** Shape the question prompt asks the model to return, before we enrich with section/page. */
 type RawQuestion = {
@@ -340,8 +340,16 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     for (const page of input.pages) {
       // Per page: the topic config can bind different pages to different fixed question types.
       const prompt = questionPrompt(input.document, page.pageNumber, overrides, masters);
-      const raws = await this.readPageQuestions(prompt, page, input.document, usage, input.signal);
-      const boundType = topicBindingForPage(input.document.topics, page.pageNumber)?.questionType
+      const binding = topicBindingForPage(input.document.topics, page.pageNumber);
+      const raws = await this.readPageQuestions(
+        prompt,
+        page,
+        input.document,
+        usage,
+        input.signal,
+        isChemistryContext(input.document, binding?.subject),
+      );
+      const boundType = binding?.questionType
         ?? input.document.questionType;
       for (const raw of raws) {
         const questionType = asStringOrNull(raw.question_type);
@@ -454,10 +462,11 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     document: Document,
     usage: AiTokenUsage,
     signal?: AbortSignal,
+    recoverSmiles = false,
   ): Promise<RawQuestion[]> {
-    const first = parseQuestions((await this.call(prompt, page.png, usage, signal)).content);
+    const first = parseQuestions((await this.call(prompt, page.png, usage, signal, recoverSmiles)).content);
     if (first.length > 0) return first;
-    const retry = parseQuestions((await this.call(prompt, page.png, usage, signal)).content);
+    const retry = parseQuestions((await this.call(prompt, page.png, usage, signal, recoverSmiles)).content);
     if (retry.length === 0) {
       logger.warn(
         { documentId: document.id, page: page.pageNumber },
@@ -493,6 +502,7 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     png: Buffer,
     usage: AiTokenUsage,
     signal?: AbortSignal,
+    recoverSmiles = false,
   ): Promise<{ content: string }> {
     const imageUrl = `data:image/png;base64,${png.toString('base64')}`;
     let content = '';
@@ -547,7 +557,7 @@ export class OpenAiVisionExtractor implements VisionExtractor {
       maxCompletionTokens *= 2;
     }
 
-    if (!SMILES_TAG.test(content)) return { content };
+    if (!recoverSmiles && !SMILES_TAG.test(content)) return { content };
 
     const audit = await this.client.chat.completions.create(
       {
