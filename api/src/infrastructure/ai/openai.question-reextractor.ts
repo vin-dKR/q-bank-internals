@@ -34,6 +34,8 @@ import type { PromptOverrides } from '../../modules/prompts/index.js';
  */
 const MAX_TOKENS = 16000;
 const GROUP_MAX_TOKENS = 32000;
+const SMILES_TAG = /<smiles\b/i;
+const SMILES_AUDIT_PROMPT = 'CHEMISTRY STRUCTURE AUDIT: The candidate JSON below was extracted from the supplied exam image. Inspect only every <smiles>…</smiles> value against the drawn structures in the image. Confirm each tag contains one complete connected molecule and that every bond, charge, and aromatic substituent position matches the drawing. For rings, explicitly count ring edges between substituents; do not accept a plausible but wrong ortho/meta/para isomer. Return the complete candidate JSON unchanged when all structures match. Otherwise, change only the incorrect SMILES values and return complete valid JSON. Do not alter prose, question boundaries, options, answers, or any non-SMILES field.\n\nCANDIDATE JSON:\n';
 /** A tight selected field does not need the full-page re-extractor's large reasoning budget. */
 const AREA_TRANSCRIBE_MAX_TOKENS = 4096;
 
@@ -324,6 +326,35 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
       totalTokens,
       callCount,
     };
+    if (!SMILES_TAG.test(content)) return { content, usage };
+    const audit = await this.client.chat.completions.create({
+      model: this.model,
+      max_completion_tokens: startTokens,
+      response_format: { type: 'json_object' },
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: SMILES_AUDIT_PROMPT + content },
+          ...imageUrls.map((url) => ({
+            type: 'image_url' as const,
+            image_url: { url, detail: 'high' as const },
+          })),
+        ],
+      }],
+    });
+    usage.promptTokens += audit.usage?.prompt_tokens ?? 0;
+    usage.completionTokens += audit.usage?.completion_tokens ?? 0;
+    usage.totalTokens += audit.usage?.total_tokens ?? 0;
+    usage.callCount += 1;
+    const audited = audit.choices[0]?.message.content?.trim() ?? '';
+    try {
+      if (audit.choices[0]?.finish_reason !== 'length' && audited && typeof JSON.parse(audited) === 'object') {
+        return { content: audited, usage };
+      }
+    } catch (error) {
+      logger.warn({ err: error }, 'SMILES audit returned malformed JSON; preserving first re-extraction');
+    }
+    logger.warn({ model: this.model }, 'SMILES audit returned no usable JSON; preserving first re-extraction');
     return { content, usage };
   }
 
@@ -447,6 +478,7 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
       'Keep ordinary prose and answer labels outside math delimiters. In mixed prose, wrap only each mathematical expression, not the whole sentence.',
       'Convert clearly readable printed math notation into equivalent valid LaTeX. Use braces for multi-character subscripts and superscripts, for example \\(x_{12}\\), \\(10^{3}\\), and fractions such as \\(\\frac{22}{425}\\).',
       'For chemistry, use the mhchem command inside inline delimiters, for example \\(\\ce{2H2 + O2 -> 2H2O}\\).',
+      'When the crop visibly draws a molecule (bonds, rings, or skeletal structure), do not flatten it to mhchem or prose. Emit the complete molecule as exactly one <smiles>RAW_SMILES</smiles> tag. For a substituted ring, trace the ring edges between substituents before choosing the SMILES isomer; do not guess ortho/meta/para. The tag contains only raw SMILES, never LaTeX or a partial connected molecule.',
       'Never emit bare LaTeX commands such as \\frac, \\sqrt, \\ce, or raw math subscript/superscript syntax outside \\( ... \\). Do not use single-dollar math delimiters.',
       'For compact answer keys, preserve each printed question label and its corresponding answer; use line breaks between entries when visible or needed to keep the mapping unambiguous.',
       'If part of the crop is unreadable, transcribe the readable parts faithfully and do not guess the unreadable content. If the entire crop is unreadable or contains no text, return {"text":""}.',
