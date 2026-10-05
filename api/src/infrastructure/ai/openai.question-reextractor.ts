@@ -1,7 +1,6 @@
 import { OpenAI } from 'openai';
 import {
   mergeMatrixKeyWithAnswer,
-  synthesizeMatrixChoiceOptions,
   type MatchData,
   type QuestionOption,
 } from '@ingest/contracts';
@@ -331,32 +330,34 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     // return an empty JSON object and overwrite an otherwise valid extraction (as happened to Q283).
     // Do not ask it to discover new structures here — the primary prompt owns extraction.
     if (!SMILES_TAG.test(content)) return { content, usage };
-    const audit = await this.client.chat.completions.create({
-      model: this.model,
-      max_completion_tokens: startTokens,
-      response_format: { type: 'json_object' },
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'text', text: SMILES_AUDIT_PROMPT + content },
-          ...imageUrls.map((url) => ({
-            type: 'image_url' as const,
-            image_url: { url, detail: 'high' as const },
-          })),
-        ],
-      }],
-    });
-    usage.promptTokens += audit.usage?.prompt_tokens ?? 0;
-    usage.completionTokens += audit.usage?.completion_tokens ?? 0;
-    usage.totalTokens += audit.usage?.total_tokens ?? 0;
-    usage.callCount += 1;
-    const audited = audit.choices[0]?.message.content?.trim() ?? '';
     try {
+      const audit = await this.client.chat.completions.create({
+        model: this.model,
+        max_completion_tokens: startTokens,
+        response_format: { type: 'json_object' },
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: SMILES_AUDIT_PROMPT + content },
+            ...imageUrls.map((url) => ({
+              type: 'image_url' as const,
+              image_url: { url, detail: 'high' as const },
+            })),
+          ],
+        }],
+      });
+      usage.promptTokens += audit.usage?.prompt_tokens ?? 0;
+      usage.completionTokens += audit.usage?.completion_tokens ?? 0;
+      usage.totalTokens += audit.usage?.total_tokens ?? 0;
+      usage.callCount += 1;
+      const audited = audit.choices[0]?.message.content?.trim() ?? '';
       if (audit.choices[0]?.finish_reason !== 'length' && audited && typeof JSON.parse(audited) === 'object') {
         return { content: audited, usage };
       }
     } catch (error) {
-      logger.warn({ err: error }, 'SMILES audit returned malformed JSON; preserving first re-extraction');
+      // This is a best-effort chemistry correction. A network/model failure here must never throw
+      // away an already valid first read of any question type.
+      logger.warn({ err: error }, 'SMILES audit failed; preserving first re-extraction');
     }
     logger.warn({ model: this.model }, 'SMILES audit returned no usable JSON; preserving first re-extraction');
     return { content, usage };
@@ -393,15 +394,13 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
       const rawAnswer =
         cleanString(parsed.answer) || answerFromMarkedOptions(extractedOptions, input.questionType);
       // A matrix's direct answer map can arrive in `answer` while the visual table arrives separately.
-      // Complete only missing rows, then synthesize selections only when the source printed no choices.
+      // Complete only missing rows, but preserve the source's option panel exactly: no A–D-style
+      // choices may be invented when the page has no readable printed panel.
       const match = extractedMatch ? mergeMatrixKeyWithAnswer(extractedMatch, rawAnswer) : null;
-      const generated =
-        match && extractedOptions.length === 0 ? synthesizeMatrixChoiceOptions(match) : null;
-      const synthesized = generated?.status === 'generated' ? generated : null;
       return {
         stem,
-        options: synthesized?.options ?? extractedOptions,
-        answer: synthesized?.answer ?? rawAnswer,
+        options: extractedOptions,
+        answer: rawAnswer,
         explanation: cleanStringOrNull(parsed.explanation),
         match,
       };
@@ -540,15 +539,12 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
             const match = extractedMatch
               ? mergeMatrixKeyWithAnswer(extractedMatch, rawAnswer)
               : null;
-            const generated =
-              match && extractedOptions.length === 0 ? synthesizeMatrixChoiceOptions(match) : null;
-            const synthesized = generated?.status === 'generated' ? generated : null;
             return {
               memberIndex,
               questionNumber,
               stem: cleanString(raw.stem),
-              options: synthesized?.options ?? extractedOptions,
-              answer: synthesized?.answer ?? rawAnswer,
+              options: extractedOptions,
+              answer: rawAnswer,
               explanation: cleanStringOrNull(raw.explanation),
               // A comprehension group can contain a matrix child. The service admits this shape only onto a
               // stored matrix row, so a model mistake cannot turn another child into a match-table question.
