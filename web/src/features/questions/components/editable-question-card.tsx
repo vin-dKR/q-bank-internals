@@ -286,9 +286,8 @@ type MatrixChoiceState = Pick<QuestionDraft, 'match' | 'options' | 'answer'>;
 
 /**
  * Keep a matrix's selected answer choice honest after the table changes. The synthesis helper only
- * acts on a complete, unambiguous table; source/manual choices are retained verbatim. A generated
- * selected row is replaceable, while a source/manual selected row gets a new generated companion so
- * a teacher's wording is never silently overwritten.
+ * acts on a complete, unambiguous table. Source/manual choices are retained verbatim: their answer
+ * must always be one of the visible printed choices, never a generated fifth option.
  */
 function synchronizeMatrixChoiceState(
   options: readonly QuestionOption[],
@@ -345,19 +344,22 @@ function synchronizeMatrixChoiceState(
     };
   }
 
-  // Existing source/manual choices remain untouched. Add the exact custom map as a labelled generated
-  // choice so every completed table still has one unambiguously correct selectable answer.
-  const label = nextOptionLabel(options);
-  const generated: QuestionOption = {
-    label,
-    body: synthesis.correctMapping,
-    isCorrect: true,
-    generated: true,
-  };
+  // The paper supplied a fixed option panel. Do not append a synthetic fifth choice when the
+  // table's current key does not match any of those choices — that makes the exam's convention
+  // ambiguous. Discard any stale generated helper and retain an existing explicitly selected
+  // printed/custom choice only when there is one; the operator can choose a printed option or
+  // correct the table to reconcile the two.
+  const visibleOptions = options.filter((option) => !isGeneratedMatrixOption(option));
+  const selectedVisibleIndex = selectedMatrixOptionIndex(visibleOptions, answer);
+  const selectedVisible =
+    selectedVisibleIndex >= 0 ? visibleOptions[selectedVisibleIndex] : undefined;
   return {
     match: completedMatch,
-    options: [...withCorrectOptions(options, []), generated],
-    answer: label,
+    options: visibleOptions.map((option) => ({
+      ...option,
+      isCorrect: option.label === selectedVisible?.label,
+    })),
+    answer: selectedVisible?.label ?? '',
   };
 }
 
@@ -1256,6 +1258,14 @@ export function EditableQuestionCard({
   const customMatrixChoiceCount = draft.options.filter(
     (option) => option.generated === false,
   ).length;
+  const hasPrintedMatrixChoices = draft.options.some((option) => !isGeneratedMatrixOption(option));
+  const printedMatrixChoiceMatchesTable =
+    draft.match !== null &&
+    draft.options.some(
+      (option) =>
+        !isGeneratedMatrixOption(option) &&
+        optionMatchesMatrixKey(option, draft.match as MatchData),
+    );
   // A bare true/false question is faster to review as two answer buttons. When the extractor supplied
   // printed choices, it still gets the normal choice-card editor so their wording and figures survive.
   const usesCompactTruthAnswer = draft.questionType === 'true_false' && draft.options.length === 0;
@@ -1876,6 +1886,17 @@ export function EditableQuestionCard({
                 <p className="m-0 text-[13px] leading-relaxed text-ink-3">
                   Generated choices use only the labels in this table. Edit the matching and its
                   generated correct choice stays aligned; source and custom choices are preserved.
+                </p>
+              ) : null}
+              {hasPrintedMatrixChoices &&
+              matrixSynthesis?.status === 'generated' &&
+              !printedMatrixChoiceMatchesTable ? (
+                <p
+                  role="status"
+                  className="m-0 rounded-md border border-warn/30 bg-warn-soft px-2.5 py-2 text-[13px] leading-relaxed text-ink-2"
+                >
+                  The current matching does not equal any printed answer choice. No extra choice is
+                  created — correct the table or select the correct printed option.
                 </p>
               ) : null}
               {draft.options.length === 0 ? (

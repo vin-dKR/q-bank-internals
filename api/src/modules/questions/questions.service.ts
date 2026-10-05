@@ -315,72 +315,6 @@ function selectedMatrixChoiceForMatch(
   return findMatrixChoiceForMatch([selected], match) === selected.label ? selected : null;
 }
 
-/** A generated correct mapping needs a label that cannot shadow a source/manual choice. */
-function nextGeneratedMatrixLabel(options: MatrixDraftState['options']): string {
-  const used = new Set(options.map((option) => option.label.trim().toLocaleLowerCase()));
-  for (let index = 0; index < 26; index += 1) {
-    const label = String.fromCharCode(65 + index);
-    if (!used.has(label.toLocaleLowerCase())) return label;
-  }
-  let ordinal = 1;
-  while (used.has(`option${String(ordinal)}`.toLocaleLowerCase())) ordinal += 1;
-  return `Option${String(ordinal)}`;
-}
-
-/**
- * Keep source/manual choice bodies untouched but guarantee a complete manual table has one visible,
- * selected mapping option. Existing generated rows are replaced as a small fresh choice set (never
- * left stale after a custom key edit); otherwise one generated correct row is appended with a unique
- * label. Source/manual rows retain their bodies, order, and provenance.
- */
-function refreshOrAppendGeneratedMatrixChoice(
-  options: MatrixDraftState['options'],
-  synthesis: Extract<ReturnType<typeof synthesizeMatrixChoiceOptions>, { status: 'generated' }>,
-): { options: MatrixDraftState['options']; answer: string } {
-  const generatedIndexes = options
-    .map((option, index) => (option.generated === true ? index : -1))
-    .filter((index) => index >= 0);
-  if (generatedIndexes.length > 0) {
-    const correct = synthesis.options.find((option) => option.isCorrect);
-    const choices = [correct, ...synthesis.options.filter((option) => !option.isCorrect)].filter(
-      (option): option is NonNullable<typeof option> => option !== undefined,
-    );
-    const selectedIndex = generatedIndexes[0] ?? -1;
-    const selected = options[selectedIndex]?.label ?? '';
-    let generatedPosition = 0;
-    const refreshed: MatrixDraftState['options'] = [];
-    for (const option of options) {
-      if (option.generated !== true) {
-        refreshed.push({ ...option, isCorrect: false });
-        continue;
-      }
-      const replacement = choices[generatedPosition];
-      generatedPosition += 1;
-      // The shared planner returns at most four unique mappings. Drop any surplus stale generated
-      // row rather than duplicating a distractor; source/manual rows above are untouched.
-      if (!replacement) continue;
-      refreshed.push({
-        ...option,
-        body: replacement.body,
-        isCorrect: generatedPosition === 1,
-        generated: true,
-      });
-    }
-    return {
-      answer: selected,
-      options: refreshed,
-    };
-  }
-  const label = nextGeneratedMatrixLabel(options);
-  return {
-    answer: label,
-    options: [
-      ...options.map((option) => ({ ...option, isCorrect: false })),
-      { label, body: synthesis.correctMapping, isCorrect: true, generated: true },
-    ],
-  };
-}
-
 /**
  * Reconcile matrix table/key/choice invariants in one place. A complete, unambiguous table gets a
  * deterministic selectable set only when choices are empty or all carry `generated: true`. Printed
@@ -428,10 +362,24 @@ function normalizeMatrixState(state: MatrixDraftState): MatrixDraftState {
   // make the correct marker agree — without touching bodies/provenance/order.
   const selected = findMatrixChoiceForMatch(state.options, match);
   if (!selected) {
-    const synthesis = synthesizeMatrixChoiceOptions(match);
-    if (synthesis.status !== 'generated') return { ...state, match };
-    const ensured = refreshOrAppendGeneratedMatrixChoice(state.options, synthesis);
-    return { ...state, match, ...ensured };
+    // A printed/manual panel is the source's fixed answer convention. It must remain that panel,
+    // even when a model/table read cannot reconcile the current key to one of its choices. Remove
+    // any stale generated helper instead of adding a fifth option, and preserve a pre-existing
+    // explicit source/manual selection only when it still names a visible choice.
+    const visibleOptions = state.options.filter((option) => option.generated !== true);
+    const existingAnswer = state.answer.trim().toLocaleLowerCase();
+    const preserved =
+      visibleOptions.find((option) => option.label.trim().toLocaleLowerCase() === existingAnswer) ??
+      visibleOptions.find((option) => option.isCorrect);
+    return {
+      ...state,
+      match,
+      answer: preserved?.label ?? '',
+      options: visibleOptions.map((option) => ({
+        ...option,
+        isCorrect: option.label === preserved?.label,
+      })),
+    };
   }
   return {
     ...state,
