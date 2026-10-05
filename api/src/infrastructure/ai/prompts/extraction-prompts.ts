@@ -311,9 +311,9 @@ export function paperMetadataPrompt(): string {
 }
 
 /**
- * Re-extraction has its own compact output shape, so an operator's normal extraction override cannot
- * replace that envelope. It can still add content-reading instructions; only actual overrides are sent,
- * which avoids paying the full base prompt again on every interactive re-read.
+ * Re-extraction has its own compact output shape. The editable prompt overrides are batch-page
+ * contracts (`questions`, `sections`, `solutions`, etc.); injecting any of them lets an override
+ * replace this target-only envelope and makes every re-extract look blank to its parser.
  */
 function reExtractOverrideRules(
   overrides: PromptOverrides,
@@ -323,27 +323,11 @@ function reExtractOverrideRules(
     inlineAnswers?: boolean;
   } = {},
 ): string {
-  const overridesToApply: Array<[keyof PromptOverrides, string]> = [
-    ['extraction', 'EXTRACTION'],
-    ['chemistry', 'CHEMISTRY'],
-    ['smiles', 'DRAWN-STRUCTURE'],
-  ];
-  if (context.sourceKind === 'answer') overridesToApply.push(['answerKey', 'ANSWER-KEY']);
-  if (context.sourceKind === 'solution') overridesToApply.push(['solution', 'SOLUTION']);
-  if (context.sourceKind === 'companion') {
-    if (context.fieldTarget !== 'solution') overridesToApply.push(['answerKey', 'ANSWER-KEY']);
-    if (context.fieldTarget !== 'answer') overridesToApply.push(['solution', 'SOLUTION']);
-  }
-  if (context.sourceKind === 'question' && context.inlineAnswers) {
-    overridesToApply.push(['inlineAnswer', 'INLINE-ANSWER']);
-  }
-  const rules = overridesToApply.flatMap(([key, label]) => {
-    const value = overrides[key]?.trim();
-    return value ? [`${label} OVERRIDE:\n${value}`] : [];
-  });
-  return rules.length > 0
-    ? `OPERATOR PROMPT OVERRIDES — apply their content-reading/pairing rules, but the target-only JSON shape below remains authoritative:\n${rules.join('\n\n')}`
-    : '';
+  // Keep the arguments for the stable prompt-builder API. Dedicated, schema-compatible re-extract
+  // overrides can be introduced later; batch overrides must never cross this boundary.
+  void overrides;
+  void context;
+  return '';
 }
 
 /**
@@ -437,7 +421,7 @@ export function reExtractQuestionPrompt(
 }`,
     `RE-EXTRACT RULES:
 1. Extract ONLY the target question — ignore every other question on the page.
-2. options: one entry per printed choice. Preserve each short printed label and the actual count (A–E, 1–5, I–IV, etc.); normalize 1–4 to A–D only when the layout explicitly presents canonical A–D choices. Never repeat or merge labels, and never use a matrix column label as an option. Set is_correct true only when the page marks that choice as correct, else false.
+2. options: one entry per printed choice. Preserve each short printed label and the actual count exactly as shown (A–E, 1–5, I–IV, E/F, etc.). Do not convert numeric, Roman, or extended labels to A–D. Never repeat or merge labels, and never use a matrix column label as an option. Set is_correct true only when the page marks that choice as correct, else false.
 3. For a question with no options, use an empty array [].
 4. columns/match: leave "columns" as [] and OMIT "match" UNLESS this is a MATRIX MATCH question (see the type-specific rule).
 5. answer: use "" when the page does not indicate the correct answer (question papers usually do not).
@@ -446,7 +430,7 @@ export function reExtractQuestionPrompt(
     sourceRule,
     DRAWN_CHEMISTRY_STRUCTURE_GUARD,
     sourceKind === 'question' && isMatrix
-      ? 'MATRIX MATCH: put ONLY the instruction/stem in "stem" — do NOT copy the columns into it. Fill "columns" — an array of EVERY printed column in order (usually two, sometimes three), each { "title": the heading, "entries": [ { "label": the printed label e.g. "A"/"p"/"t", "body": that entry\'s text with math as LaTeX } ] }. ALSO fill "options" with the printed multiple-choice ANSWERS (usually four), each { "label": one of "A"–"D" in printed order (normalize (1)(2)(3)(4)), "body": that choice\'s FULL matching text EXACTLY as printed, e.g. "A-i, B-ii, C-iii, D-iv, E-v", "is_correct": true only for the choice the page marks correct else false }. Return "match" for EVERY first-column label: copy a printed matching/key if there is one; if none is printed, solve the relations from the readable table and return the complete mapping, e.g. { "A": ["iv"], "B": ["v"] }. Omit match only when the source makes a relation genuinely unreadable or ambiguous; never guess. When printed choices exist, write the canonical "answer" as ONLY the selected choice label (for example "C") when it is visibly marked correct, never the expanded matching. With no printed choices, use mapping text as "answer" only for a genuine direct-response matrix. Never reconstruct or invent unreadable/missing printed choices: return options []; after a complete key is returned, the server generates verified A–D choices.'
+      ? 'MATRIX MATCH: put ONLY the instruction/stem in "stem" — do NOT copy the columns into it. Fill "columns" — an array of EVERY printed column in order (usually two, sometimes three), each { "title": the heading, "entries": [ { "label": the printed label e.g. "A"/"p"/"t", "body": that entry\'s text with math as LaTeX } ] }. ALSO fill "options" with every printed multiple-choice answer in its printed order. Each option label must be that exact source label (for example "1", "5", "E", "F", "I", or "iv"), never a normalized A–D label; its body is that choice\'s full matching text exactly as printed. Return "match" for every relation that is clearly readable: copy a printed key when present, otherwise solve only unambiguous relations from the table. If any relation is unreadable or ambiguous, leave that mapping absent but still return every readable stem, column, and printed option; never return a blank object. When printed choices exist, write "answer" as only the visibly marked source choice label, never the expanded matching. With no printed choices, use mapping text as "answer" only for a genuine direct-response matrix. Never reconstruct or invent unreadable or missing printed choices, and never generate a new option panel.'
       : sourceKind === 'question'
         ? typeRule
           ? `TYPE-SPECIFIC RULE:\n${typeRule}`
