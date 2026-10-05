@@ -442,10 +442,27 @@ export const ReExtractSourceSchema = z.object({
 });
 export type ReExtractSource = z.infer<typeof ReExtractSourceSchema>;
 
+/**
+ * Optional, per-field source pages for a whole-question Verify re-read. The question page remains
+ * the only source of its stem/options; these sibling pages supply the answer and worked solution
+ * for that same selected question.
+ */
+export const ReExtractSupportingSourcesSchema = z.object({
+  answer: ReExtractSourceSchema.optional(),
+  solution: ReExtractSourceSchema.optional(),
+});
+export type ReExtractSupportingSources = z.infer<typeof ReExtractSupportingSourcesSchema>;
+
 export const ReExtractQuestionSchema = z.object({
   documentId: z.string().min(1),
   questionId: z.string().min(1),
   source: ReExtractSourceSchema.optional(),
+  /**
+   * A whole-question re-read may include its already-resolved Answer/Solution pages. Omit this
+   * when reading one explicit field source. Within this object, omitted fields use the question's
+   * safe range-based sibling-source fallback.
+   */
+  supportingSources: ReExtractSupportingSourcesSchema.optional(),
   // Optional question-type override for the re-read: the verify screen sends the type the operator
   // has just selected (before saving the draft) so the model re-extracts with the RIGHT config —
   // e.g. switching a mis-typed question to "matrix" and re-reading yields the match columns, not

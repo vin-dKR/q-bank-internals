@@ -19,6 +19,7 @@ import type {
   ReExtractedSubQuestion,
   ReExtractGroupMode,
   ReExtractSource,
+  ReExtractSupportingSources,
   TranscribeAreaTarget,
   UpdatePassage,
   UpdateQuestion,
@@ -38,7 +39,7 @@ import { logger } from '../../shared/logger/logger.js';
 import { readPngSize } from '../../shared/image/png-size.js';
 import { detectLatexInField } from '../quality/latex-rules.js';
 import { automaticLatexRepair, fullyAutomaticLatexRepair, preservesExtractedContent, questionLatexPatch, stagedLatexFields, stagedLatexIssues, type StagedLatexField } from './staged-latex.js';
-import type { UsageService } from '../usage/index.js';
+import type { AiTokenUsage, UsageService } from '../usage/index.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { BankQuestionStore } from '../bank/index.js';
 import type { DiagramDetector } from './diagram-detector.js';
@@ -47,11 +48,16 @@ import type { ImageStore } from './image-store.js';
 import type { LatexRefiner } from './latex-refiner.js';
 import type { PageRenderer } from './page-renderer.js';
 import type { PaperMetadataExtractor } from './paper-metadata-extractor.js';
-import type { QuestionReExtractor, ReExtractSourceKind } from './question-reextractor.js';
+import type {
+  QuestionReExtraction,
+  QuestionReExtractor,
+  ReExtractSourceKind,
+} from './question-reextractor.js';
 import type { QuestionRepository } from './questions.repository.js';
 import {
   questionPageBelongsToBindings,
   topicNames,
+  topicSourceBindings,
   topicScopeForSourcePage,
   type SourceTopicScope,
   type TopicSourceKind,
@@ -145,6 +151,62 @@ function isSiblingReExtractSource(owner: Document, candidate: Document): boolean
     samePath &&
     sameGroup
   );
+}
+
+/** The first page in this question block's configured supporting-source span, or a legacy fallback. */
+function defaultSupportingSourcePage(
+  owner: Document,
+  candidate: Document,
+  questionPage: number,
+  sourceKind: Extract<ReExtractSourceKind, 'answer' | 'solution' | 'companion'>,
+): number | null {
+  const bindings = topicSourceBindings(owner, sourceKind);
+  if (bindings.length > 0) {
+    const matching = bindings.filter((item) => questionPageBelongsToBindings(questionPage, [item]));
+    // A configured source map must identify exactly one sibling range. Picking the first overlapping
+    // binding could apply a same-number answer from a different topic.
+    return matching.length === 1 ? (matching[0]?.sourcePageRange.from ?? null) : null;
+  }
+  return candidate.pageRange?.from ?? 1;
+}
+
+/** A source-specific read is valid only for the field it was requested to enrich. */
+function sourceCanSupplyField(
+  source: ReExtractPageSource,
+  field: 'answer' | 'solution',
+): boolean {
+  return source.sourceKind === field ||
+    (source.sourceKind === 'companion' && source.fieldTarget === field);
+}
+
+/** Sum successful vision reads into the one usage record attached to the selected question. */
+function combinedUsage(
+  primary: AiTokenUsage,
+  supplemental: readonly (QuestionReExtraction | null)[],
+): AiTokenUsage {
+  return supplemental.reduce<AiTokenUsage>(
+    (total, read) =>
+      read === null
+        ? total
+        : {
+            model: total.model,
+            promptTokens: total.promptTokens + read.usage.promptTokens,
+            completionTokens: total.completionTokens + read.usage.completionTokens,
+            totalTokens: total.totalTokens + read.usage.totalTokens,
+            callCount: total.callCount + read.usage.callCount,
+          },
+    primary,
+  );
+}
+
+function firstNonBlank(...values: readonly string[]): string {
+  return values.find((value) => value.trim().length > 0) ?? '';
+}
+
+function firstExplanation(
+  ...values: readonly (string | null)[]
+): string | null {
+  return values.find((value): value is string => value !== null && value.trim().length > 0) ?? null;
 }
 
 /** Reclassify source-PDF figures after their printed number has been mapped to the owner question. */
@@ -936,18 +998,148 @@ export class QuestionsService {
   }
 
   /**
+   * Resolve the matching Answer/Solution page for this one question when Verify did not send its
+   * currently displayed source page. Topic bindings are authoritative; legacy uploads retain the
+   * same first-page fallback used by the Verify source pane.
+   */
+  private async defaultSupportingSources(
+    owner: Document,
+    questionPage: number,
+  ): Promise<ReExtractSupportingSources> {
+    if (owner.answerLayout === 'inline' || !owner.sessionId) return {};
+    const documents = await this.documents.listBySession(owner.sessionId);
+    const siblings = documents.filter((candidate) => isSiblingReExtractSource(owner, candidate));
+    if (owner.answerLayout === 'combined') {
+      const companion = siblings.find((candidate) => candidate.kind === 'companion');
+      if (!companion) return {};
+      const page = defaultSupportingSourcePage(owner, companion, questionPage, 'companion');
+      if (page === null) return {};
+      return {
+        answer: { documentId: companion.id, page, target: 'answer' },
+        solution: { documentId: companion.id, page, target: 'solution' },
+      };
+    }
+
+    const answer = siblings.find((candidate) => candidate.kind === 'answer');
+    const solution = siblings.find((candidate) => candidate.kind === 'solution');
+    const answerPage = answer
+      ? defaultSupportingSourcePage(owner, answer, questionPage, 'answer')
+      : null;
+    const solutionPage = solution
+      ? defaultSupportingSourcePage(owner, solution, questionPage, 'solution')
+      : null;
+    return {
+      ...(answer && answerPage !== null
+        ? {
+            answer: {
+              documentId: answer.id,
+              page: answerPage,
+            },
+          }
+        : {}),
+      ...(solution && solutionPage !== null
+        ? {
+            solution: {
+              documentId: solution.id,
+              page: solutionPage,
+            },
+          }
+        : {}),
+    };
+  }
+
+  /**
+   * Resolve the Answer/Solution pages used only by a whole selected-question re-read. A UI-provided
+   * page wins over the range default, while any field not supplied by the UI is still discovered from
+   * the question document's linked sibling PDFs.
+   */
+  private async resolveSupportingReExtractSources(
+    documentId: string,
+    owner: Document,
+    questionPage: number,
+    supportingSources: ReExtractSupportingSources,
+  ): Promise<{ answer: ReExtractPageSource | null; solution: ReExtractPageSource | null }> {
+    const defaults = await this.defaultSupportingSources(owner, questionPage);
+    const sources = { ...defaults, ...supportingSources };
+    const resolve = async (
+      field: 'answer' | 'solution',
+      source: ReExtractSource | undefined,
+    ): Promise<ReExtractPageSource | null> => {
+      if (!source) return null;
+      const resolved = await this.resolveReExtractSource(documentId, source, questionPage, [questionPage]);
+      if (!sourceCanSupplyField(resolved, field)) {
+        throw errors.validation({
+          message: `The selected ${field} source does not match this question's ${field} PDF.`,
+        });
+      }
+      return resolved;
+    };
+    const [answer, solution] = await Promise.all([
+      resolve('answer', sources.answer),
+      resolve('solution', sources.solution),
+    ]);
+    return { answer, solution };
+  }
+
+  /** Render and read one already-validated page while keeping source grammar out of the caller. */
+  private async readReExtractSource(
+    question: Question,
+    source: ReExtractPageSource,
+    questionType: string | null,
+  ): Promise<QuestionReExtraction> {
+    const png = await this.pages.renderPage(source.documentId, source.page);
+    return this.reExtractor.reExtract({
+      png,
+      questionNumber: question.questionNumber,
+      stemHint: question.stem,
+      questionType,
+      sourceKind: source.sourceKind,
+      ...(source.fieldTarget ? { fieldTarget: source.fieldTarget } : {}),
+      ...(source.inlineAnswers ? { inlineAnswers: true } : {}),
+    });
+  }
+
+  /** A missing/illegible optional supporting page must never discard the selected question's read. */
+  private async tryReadSupportingSource(
+    question: Question,
+    source: ReExtractPageSource | null,
+    questionType: string | null,
+    field: 'answer' | 'solution',
+  ): Promise<QuestionReExtraction | null> {
+    if (!source) return null;
+    try {
+      return await this.readReExtractSource(question, source, questionType);
+    } catch (error) {
+      logger.warn(
+        {
+          questionId: question.id,
+          questionNumber: question.questionNumber,
+          field,
+          sourceDocumentId: source.documentId,
+          sourcePage: source.page,
+          err: error instanceof Error ? error.message : String(error),
+        },
+        'Supporting source re-extract failed; preserving the selected question read',
+      );
+      return null;
+    }
+  }
+
+  /**
    * Re-read one already-extracted question's source page and return its fields afresh (stem,
    * options, answer, explanation) — the verify screen's "read the page again" action. The question
    * is resolved from its document (which also gives its identity: number/stem/type). By default the
    * page read is the question's own source page; `source` redirects it to another document + page —
    * the sibling answer/solution PDF for this topic — so an answer/explanation re-read reads from that
-   * sheet, not the question paper. Answer/explanation are best-effort, since a paper rarely prints them.
+   * sheet, not the question paper. A whole-card request may also provide `supportingSources`: those
+   * linked pages enrich only this question's answer/explanation without changing its source structure.
    */
   async reExtractQuestion(
     documentId: string,
     questionId: string,
     source?: ReExtractSource,
     questionTypeOverride?: string | null,
+    supportingSources?: ReExtractSupportingSources,
   ): Promise<ReExtractedQuestion> {
     const questions = await this.questions.findByDocument(documentId);
     const question = questions.find((candidate) => candidate.id === questionId);
@@ -958,19 +1150,55 @@ export class QuestionsService {
       question.sourceRegion.page,
       [question.sourceRegion.page],
     );
-    const png = await this.pages.renderPage(resolvedSource.documentId, resolvedSource.page);
     // When the operator has changed the type in verify (not yet saved), honour that choice so the
     // model extracts the right shape for it; otherwise fall back to the question's stored type.
     const questionType = questionTypeOverride ?? question.questionType;
-    const { stem, options, answer, explanation, match, usage } = await this.reExtractor.reExtract({
-      png,
-      questionNumber: question.questionNumber,
-      stemHint: question.stem,
-      questionType,
-      sourceKind: resolvedSource.sourceKind,
-      ...(resolvedSource.fieldTarget ? { fieldTarget: resolvedSource.fieldTarget } : {}),
-      ...(resolvedSource.inlineAnswers ? { inlineAnswers: true } : {}),
-    });
+    const primary = await this.readReExtractSource(question, resolvedSource, questionType);
+    let answerRead: QuestionReExtraction | null = null;
+    let solutionRead: QuestionReExtraction | null = null;
+    // A whole-card Verify re-read is still scoped to this ONE question. The question PDF owns
+    // structure; linked source PDFs enrich only its answer/explanation. Per-field reads omit this
+    // object and therefore retain their existing one-source behavior.
+    if (supportingSources !== undefined && resolvedSource.sourceKind === 'question') {
+      const owner = await this.documents.findById(documentId);
+      if (owner && owner.deletedAt === null) {
+        try {
+          const supporting = await this.resolveSupportingReExtractSources(
+            documentId,
+            owner,
+            question.sourceRegion.page,
+            supportingSources,
+          );
+          [answerRead, solutionRead] = await Promise.all([
+            this.tryReadSupportingSource(question, supporting.answer, questionType, 'answer'),
+            this.tryReadSupportingSource(question, supporting.solution, questionType, 'solution'),
+          ]);
+        } catch (error) {
+          logger.warn(
+            {
+              questionId: question.id,
+              questionNumber: question.questionNumber,
+              err: error instanceof Error ? error.message : String(error),
+            },
+            'Supporting sources could not be resolved; preserving the selected question read',
+          );
+        }
+      }
+    }
+    const usage = combinedUsage(primary.usage, [answerRead, solutionRead]);
+    const merged: ReExtractedQuestion = {
+      stem: primary.stem,
+      options: primary.options,
+      // The answer key is canonical, then a solution can backfill it, then retain an inline/marked
+      // question-page answer. Worked solutions are the best explanation source.
+      answer: firstNonBlank(answerRead?.answer ?? '', solutionRead?.answer ?? '', primary.answer),
+      explanation: firstExplanation(
+        solutionRead?.explanation ?? null,
+        answerRead?.explanation ?? null,
+        primary.explanation,
+      ),
+      match: primary.match,
+    };
     try {
       await this.usage.recordUsage({ source: 'reextract', documentId, ...usage });
     } catch (error) {
@@ -979,7 +1207,7 @@ export class QuestionsService {
     }
     return normalizeMatrixReExtract(
       question,
-      { stem, options, answer, explanation, match },
+      merged,
       questionType,
       resolvedSource.sourceKind,
     );
