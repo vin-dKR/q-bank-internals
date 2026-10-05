@@ -1,4 +1,4 @@
-import { type JSX, useEffect, useMemo, useState } from 'react';
+import { type JSX, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AI_FIX_FIELDS,
@@ -20,7 +20,6 @@ import {
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { refineLatex } from '../../../shared/api/refine.js';
 import {
-  Badge,
   Button,
   EmptyState,
   IconCheck,
@@ -35,7 +34,7 @@ import {
   useToast,
 } from '../../../shared/ui/index.js';
 import { cn } from '../../../shared/lib/cn.js';
-import { SEVERITY_TONE, formatDateTime } from '../lib/anomaly-display.js';
+import { formatDateTime } from '../lib/anomaly-display.js';
 import { planForQuestion } from '../lib/rule-fields.js';
 
 /** The editable fields, in the order the panel shows them. */
@@ -171,8 +170,8 @@ function AiBadge({ mark }: { mark: AiMark | null }): JSX.Element | null {
     <span
       title={mark.title}
       className={cn(
-        'ml-1.5 inline-flex items-center gap-0.5 rounded px-1 py-px align-middle text-[10px] font-semibold uppercase tracking-wide [&>svg]:size-3',
-        mark.pending ? 'border border-dashed border-brand text-brand' : 'bg-brand-soft text-brand',
+        'ml-1.5 inline-flex items-center gap-0.5 rounded px-1 py-px align-middle text-[10px] font-medium uppercase tracking-wide text-ink-3 [&>svg]:size-3',
+        mark.pending ? 'border border-dashed border-line-strong' : 'bg-surface-2',
       )}
     >
       <IconSparkle /> AI{mark.pending ? ' · on save' : ''}
@@ -197,7 +196,7 @@ function FieldLabel({ label, flagged, ai = null }: { label: string; flagged: boo
  * rendered at rest, raw source on click — so a question is never shown twice, once to read and once to edit.
  */
 function Editable({ flagged, children }: { flagged: boolean; children: JSX.Element }): JSX.Element {
-  return <div className={cn('rounded-lg', flagged && 'ring-2 ring-bad/40')}>{children}</div>;
+  return <div className={cn('rounded-lg', flagged && 'ring-1 ring-line-strong')}>{children}</div>;
 }
 
 /** One labelled input; `flagged` marks a field an open anomaly points at. */
@@ -225,7 +224,7 @@ function Field({
         value={value}
         list={list}
         onChange={(event) => { onChange(event.target.value); }}
-        className={cn(INPUT, flagged ? 'border-bad' : 'border-line')}
+        className={cn(INPUT, 'border-line')}
       />
     </label>
   );
@@ -249,9 +248,11 @@ function AiFixBar({
   questionType,
   reason,
   busy,
+  refining,
   onToggle,
   onRun,
   onRunWithType,
+  onRefine,
 }: {
   selected: Set<PanelAiField>;
   suggestion: AiFixSuggestion | null;
@@ -260,10 +261,12 @@ function AiFixBar({
   /** The question's stored type, named in the "ask again" button. */
   questionType: string | null;
   busy: boolean;
+  refining: boolean;
   onToggle: (field: PanelAiField) => void;
   onRun: () => void;
   /** Re-run with the stored type confirmed, so the answer must fit it. */
   onRunWithType: () => void;
+  onRefine: () => void;
 }): JSX.Element {
   // Every requested field came back null — the run cost tokens and changed nothing, which the operator
   // must see rather than infer from an unchanged form.
@@ -275,74 +278,81 @@ function AiFixBar({
     suggestion.level === null;
 
   return (
-    <section className="flex flex-col gap-2 rounded-xl border border-line bg-surface-2 p-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="text-xs font-semibold uppercase tracking-wide text-ink-3">Fix with AI</span>
-        {PANEL_AI_FIELDS.map((field) => (
-          <label key={field} className="flex cursor-pointer items-center gap-1.5 text-sm text-ink-2">
-            <input
-              type="checkbox"
-              className="size-4 w-auto accent-brand"
-              checked={selected.has(field)}
-              onChange={() => { onToggle(field); }}
-            />
-            {AI_FIELD_LABELS[field]}
-          </label>
-        ))}
-        <Button
-          variant="primary"
-          size="xs"
-          disabled={busy || selected.size === 0}
-          title={selected.size === 0 ? 'Tick a field for the AI to work out' : undefined}
-          onClick={onRun}
-        >
-          {busy ? <Spinner /> : <IconSparkle />}
-          {busy ? 'Solving…' : `Run on ${String(selected.size)} field${selected.size === 1 ? '' : 's'}`}
-        </Button>
-        {suggestion ? null : <span className="text-xs text-ink-3">{reason}</span>}
-      </div>
-      {suggestion ? (
-        <div className="flex flex-col gap-1 border-t border-line pt-2 text-xs">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge tone={suggestion.confidence >= 0.75 ? 'success' : suggestion.confidence >= 0.5 ? 'progress' : 'danger'}>
-              {Math.round(suggestion.confidence * 100)}% confident
-            </Badge>
-            {filledNothing ? <Badge tone="danger">nothing filled in</Badge> : null}
-            {suggestion.usedImage ? <Badge tone="info">read the figure</Badge> : null}
-            {suggestion.topicScope !== null ? (
-              <span className="text-ink-3">
-                topic chosen from {suggestion.topicChoices} in {suggestion.topicScope}
-              </span>
-            ) : null}
-            <span className="text-ink-3">
-              {filledNothing ? 'Nothing was accepted — see why below.' : 'Filled in below — check it, then Save.'}
-            </span>
-          </div>
-          {suggestion.notes.trim() !== '' ? <p className="m-0 text-ink-2">{suggestion.notes}</p> : null}
-          {suggestion.answerWarnings.length > 0 ? (
-            <div className="flex flex-col gap-1.5 rounded-lg border border-warn/40 bg-warn-soft px-2.5 py-2">
-              <div className="flex items-start gap-1.5 text-warn [&>svg]:mt-0.5 [&>svg]:size-3.5 [&>svg]:flex-none">
-                <IconWarning />
-                <div className="flex flex-col gap-0.5">
-                  <span className="font-semibold">The suggested answer does not fit this question — check it before saving</span>
-                  {suggestion.answerWarnings.map((warning) => (
-                    <span key={warning.kind} className="text-ink-2">{warning.detail}</span>
-                  ))}
-                </div>
-              </div>
-              {questionType !== null ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button size="xs" disabled={busy} onClick={onRunWithType}>
-                    <IconSparkle /> It is {questionType.replace(/_/g, ' ').toLowerCase()} — ask the AI again
-                  </Button>
-                  <span className="text-ink-3">or correct the Answer or Question type below yourself.</span>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+    <details className="rounded-lg border border-line bg-surface">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-sm focus-visible:ring-2 focus-visible:ring-brand-soft [&::-webkit-details-marker]:hidden">
+        <span className="flex items-center gap-2 font-medium text-ink"><IconSparkle /> AI assistance</span>
+        <span className="text-xs text-ink-3">{suggestion ? 'Suggestion ready · review before saving' : 'Optional'}</span>
+      </summary>
+      <div className="flex flex-col gap-3 border-t border-line px-3 py-3">
+        <p className="m-0 text-xs text-ink-2">
+          Choose the fields to suggest. Nothing is saved until you review the values and press Save.
+        </p>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          {PANEL_AI_FIELDS.map((field) => (
+            <label key={field} className="flex cursor-pointer items-center gap-1.5 text-sm text-ink-2">
+              <input
+                type="checkbox"
+                className="size-4 w-auto accent-ink"
+                checked={selected.has(field)}
+                disabled={busy}
+                onChange={() => { onToggle(field); }}
+              />
+              {AI_FIELD_LABELS[field]}
+            </label>
+          ))}
+          <Button
+            size="xs"
+            disabled={busy || selected.size === 0}
+            title={selected.size === 0 ? 'Select a field for the AI to work out' : undefined}
+            onClick={onRun}
+          >
+            {busy ? <Spinner /> : <IconSparkle />}
+            {busy ? 'Working…' : `Suggest ${String(selected.size)} field${selected.size === 1 ? '' : 's'}`}
+          </Button>
+          <Button
+            size="xs"
+            disabled={refining}
+            title="Wrap the question's maths in delimiters; review the preview before saving"
+            onClick={onRefine}
+          >
+            {refining ? <Spinner /> : null}
+            {refining ? 'Refining…' : 'Refine LaTeX'}
+          </Button>
         </div>
-      ) : null}
-    </section>
+        {suggestion ? (
+          <div className="flex flex-col gap-2 border-t border-line pt-3 text-xs">
+            <p className="m-0 text-ink-2">
+              {Math.round(suggestion.confidence * 100)}% confidence
+              {suggestion.usedImage ? ' · Figure reviewed' : ''}
+              {suggestion.topicScope !== null ? ` · Topic chosen from ${String(suggestion.topicChoices)} in ${suggestion.topicScope}` : ''}
+              {filledNothing ? ' · No fields filled' : ' · Check the updated fields before saving'}
+            </p>
+            {suggestion.notes.trim() !== '' ? <p className="m-0 text-ink-2">{suggestion.notes}</p> : null}
+            {suggestion.answerWarnings.length > 0 ? (
+              <div className="flex flex-col gap-2 rounded-md border border-line px-3 py-2">
+                <div className="flex items-start gap-2 text-xs text-ink-2 [&>svg]:mt-0.5 [&>svg]:size-3.5 [&>svg]:flex-none">
+                  <IconWarning />
+                  <div className="flex flex-col gap-1">
+                    <span className="font-medium text-warn">The suggested answer needs review before saving.</span>
+                    {suggestion.answerWarnings.map((warning) => (
+                      <span key={warning.kind}>{warning.detail}</span>
+                    ))}
+                  </div>
+                </div>
+                {questionType !== null ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button size="xs" disabled={busy} onClick={onRunWithType}>
+                      Ask again using {questionType.replace(/_/g, ' ').toLowerCase()} type
+                    </Button>
+                    <span className="text-ink-3">You can also edit the answer or question type yourself.</span>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : <p className="m-0 text-xs text-ink-3">{reason}</p>}
+      </div>
+    </details>
   );
 }
 
@@ -360,6 +370,8 @@ export function FixPanel({
   summary,
   saving,
   aiBusy,
+  saveRevision,
+  onDirtyChange,
   onSave,
   onAiFix,
   onIgnore,
@@ -375,6 +387,9 @@ export function FixPanel({
   summary: QualitySummary;
   saving: boolean;
   aiBusy: boolean;
+  /** Incremented after a successful save, when the new server values should replace the draft. */
+  saveRevision: number;
+  onDirtyChange: (dirty: boolean) => void;
   /** `ai` names the fields saved with exactly the value the AI suggested, so they are tagged as AI-filled. */
   onSave: (fix: QuestionFix, andNext: boolean, ai: AiFillClaim | undefined) => void;
   /** `respectType`: the stored question type is confirmed, so the suggested answer must fit it. */
@@ -386,6 +401,8 @@ export function FixPanel({
   const [refining, setRefining] = useState(false);
   const [aiFields, setAiFields] = useState<Set<PanelAiField>>(new Set());
   const [suggestion, setSuggestion] = useState<AiFixSuggestion | null>(null);
+  const [moreDetailsOpen, setMoreDetailsOpen] = useState(false);
+  const draftSource = useRef<string | null>(null);
   const { success, error } = useToast();
 
   // What the AI is asked for by default: what THIS question is missing, narrowed to the rule being worked on
@@ -396,12 +413,24 @@ export function FixPanel({
     [target, ruleKind, ruleGroup],
   );
 
-  // A new question replaces the draft; editing keeps it. Keyed on the id so an unsaved draft is never
-  // carried onto a different question.
+  // Background refetches update the target without replacing unsaved edits. Only a different question or
+  // an explicit successful save starts a new draft.
   useEffect(() => {
-    setDraft(target ? toDraft(target) : null);
+    if (questionId === null) {
+      draftSource.current = null;
+      setDraft(null);
+      setSuggestion(null);
+      setMoreDetailsOpen(false);
+      return;
+    }
+    if (!target || target.questionId !== questionId) return;
+    const source = `${questionId}:${String(saveRevision)}`;
+    if (draftSource.current === source) return;
+    draftSource.current = source;
+    setDraft(toDraft(target));
     setSuggestion(null);
-  }, [target]);
+    setMoreDetailsOpen(false);
+  }, [questionId, target, saveRevision]);
 
   // Re-ticked whenever the question or the selected rule changes; hand-ticked boxes survive until then.
   useEffect(() => {
@@ -417,16 +446,23 @@ export function FixPanel({
     return fields;
   }, [target]);
 
+  const currentTarget = target?.questionId === questionId ? target : undefined;
+  const draftReady = questionId !== null && draftSource.current === `${questionId}:${String(saveRevision)}`;
+  const fix = currentTarget && draft && draftReady ? toFix(draft, currentTarget) : null;
+  const dirty = fix !== null && Object.keys(fix).length > 0;
+  useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
+
   if (questionId === null) {
     return <EmptyState title="Pick a question" body="Choose a question from the queue to fix it here." />;
   }
-  if (isPending || !draft || !target) return <LoadingState label="Loading question…" />;
-  if (isError) return <p className="error">Could not load this question. It may no longer be in the live bank.</p>;
+  if (isError && !currentTarget) return <p className="error">Could not load this question. It may no longer be in the live bank.</p>;
+  if (isPending || !draft || !target || target.questionId !== questionId || !fix) return <LoadingState label="Loading question…" />;
 
-  const fix = toFix(draft, target);
-  const dirty = Object.keys(fix).length > 0;
-  const patch = (changes: Partial<Draft>): void => { setDraft({ ...draft, ...changes }); };
+  const patch = (changes: Partial<Draft>): void => {
+    setDraft((current) => current ? { ...current, ...changes } : current);
+  };
   const save = (andNext: boolean): void => { if (dirty) onSave(fix, andNext, aiClaim(draft, fix, suggestion)); };
+  const verifyUrl = target.documentId === null ? null : `/verify?documentId=${encodeURIComponent(target.documentId)}&restore=1`;
 
   /**
    * The AI badge for one field. Saved data keeps its badge while the value is untouched; a value the AI just
@@ -443,8 +479,13 @@ export function FixPanel({
 
   /** Run the AI on the ticked fields and fill in only what it actually decided; a null leaves a field as it was. */
   const runAi = (respectType: boolean): void => {
+    const source = draftSource.current;
     void onAiFix([...aiFields], respectType).then((result) => {
+      if (draftSource.current !== source) return;
       setSuggestion(result);
+      if ((result.topic !== null && !flagged.has('topic')) || (result.level !== null && !flagged.has('level'))) {
+        setMoreDetailsOpen(true);
+      }
       patch({
         ...(result.topic !== null && { topic: result.topic }),
         ...(result.answer !== null && { answer: result.answer }),
@@ -460,6 +501,7 @@ export function FixPanel({
    * every suggestion is reviewed in the rendered preview first.
    */
   const refineWithAi = async (): Promise<void> => {
+    const source = draftSource.current;
     setRefining(true);
     try {
       const [questionText, answer, ...options] = await Promise.all([
@@ -467,6 +509,7 @@ export function FixPanel({
         draft.answer.trim() === '' ? Promise.resolve(draft.answer) : refineLatex(draft.answer),
         ...draft.options.map((option) => refineLatex(option)),
       ]);
+      if (draftSource.current !== source) return;
       patch({ questionText, answer, options });
       success('AI suggestion ready', 'Check the preview, then Save to keep it.');
     } catch (caught) {
@@ -475,6 +518,69 @@ export function FixPanel({
       setRefining(false);
     }
   };
+
+  const metadataControls: { name: keyof Draft; control: JSX.Element }[] = [
+    {
+      name: 'topic',
+      control: <Field label="Topic" value={draft.topic} flagged={flagged.has('topic')} ai={aiMark('topic')}
+        list={suggestion && suggestion.topicOptions.length > 0 ? 'quality-topics' : undefined}
+        onChange={(topic) => { patch({ topic }); }} />,
+    },
+    {
+      name: 'subject',
+      control: <Field label="Subject" value={draft.subject} flagged={flagged.has('subject')} list="quality-subjects"
+        onChange={(subject) => { patch({ subject }); }} />,
+    },
+    {
+      name: 'chapter',
+      control: <Field label="Chapter" value={draft.chapter} flagged={flagged.has('chapter')} list="quality-chapters"
+        onChange={(chapter) => { patch({ chapter }); }} />,
+    },
+    {
+      name: 'exam',
+      control: <Field label="Exam" value={draft.exam} flagged={flagged.has('exam')}
+        onChange={(exam) => { patch({ exam }); }} />,
+    },
+    {
+      name: 'questionType',
+      control: (
+        <label className="flex flex-col gap-1">
+          <FieldLabel label="Question type" flagged={flagged.has('questionType')} />
+          <select
+            value={KNOWN_QUESTION_TYPES.some((type) => type === draft.questionType) ? draft.questionType : ''}
+            onChange={(event) => { patch({ questionType: event.target.value }); }}
+            className={cn(INPUT, 'border-line')}
+          >
+            <option value="">{draft.questionType === '' ? '— not set —' : `keep "${draft.questionType}"`}</option>
+            {KNOWN_QUESTION_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+          </select>
+        </label>
+      ),
+    },
+    {
+      name: 'sectionName',
+      control: <Field label="Section" value={draft.sectionName} flagged={flagged.has('sectionName')}
+        onChange={(sectionName) => { patch({ sectionName }); }} />,
+    },
+    {
+      name: 'level',
+      control: (
+        <label className="flex flex-col gap-1">
+          <FieldLabel label="Level" flagged={flagged.has('level')} ai={aiMark('level')} />
+          <select
+            value={draft.level}
+            onChange={(event) => { patch({ level: event.target.value }); }}
+            className={cn(INPUT, 'border-line')}
+          >
+            <option value="">— not graded —</option>
+            {QUESTION_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
+          </select>
+        </label>
+      ),
+    },
+  ];
+  const flaggedMetadata = metadataControls.filter(({ name }) => flagged.has(name));
+  const otherMetadata = metadataControls.filter(({ name }) => !flagged.has(name));
 
   return (
     // The question scrolls; the Save row does not. It sits outside the scroll area, so it is reachable at any
@@ -486,6 +592,11 @@ export function FixPanel({
       }}
     >
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+        {isError ? (
+          <p role="alert" className="m-0 rounded-lg border border-line bg-surface-2 px-3 py-2 text-xs text-ink-2">
+            Could not refresh this question. Your unsaved edits are still here; retry the connection before saving.
+          </p>
+        ) : null}
         <header className="flex flex-wrap items-start justify-between gap-2 border-b border-line pb-3">
           <div className="flex min-w-0 flex-col gap-0.5">
             <span className="text-sm font-semibold text-ink">
@@ -509,19 +620,14 @@ export function FixPanel({
             >
               <IconCopy /> Copy id
             </Button>
-            <Button
-              size="xs"
-              disabled={refining}
-              title="Wrap this question's maths in \( \) using the AI refiner — fills the form, saves nothing"
-              onClick={() => { void refineWithAi(); }}
-            >
-              {refining ? <Spinner /> : <IconSparkle />}
-              {refining ? 'Asking AI…' : 'Fix LaTeX with AI'}
-            </Button>
-            {target.documentId !== null ? (
+            {verifyUrl !== null ? (
               <Link
-                to={`/verify?documentId=${encodeURIComponent(target.documentId)}&restore=1`}
+                to={verifyUrl}
                 className={buttonClasses('default', 'xs')}
+                aria-disabled={saving}
+                onClick={(event) => {
+                  if (saving) { event.preventDefault(); return; }
+                }}
               >
                 Open in Verify
               </Link>
@@ -529,88 +635,51 @@ export function FixPanel({
           </div>
         </header>
 
-        <AiFixBar
-          selected={aiFields}
-          suggestion={suggestion}
-          busy={aiBusy}
-          onToggle={(field) => {
-            setAiFields((prev) => {
-              const next = new Set(prev);
-              if (next.has(field)) next.delete(field);
-              else next.add(field);
-              return next;
-            });
-          }}
-          questionType={target.questionType}
-          reason={plan?.reason ?? ''}
-          onRun={() => { runAi(false); }}
-          onRunWithType={() => { runAi(true); }}
-        />
-
-        <section className="flex flex-col gap-1.5">
+        <section className="flex flex-col gap-2" aria-label="Open issues">
           {target.anomalies.length === 0 ? (
-            <p className="m-0 text-sm text-ok">No problems left on this question.</p>
+            <p className="m-0 text-sm text-ink-3">No open issues on this question.</p>
           ) : (
-            target.anomalies.map((anomaly) => (
-              <div key={anomaly.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-2 px-3 py-2">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <Badge tone={SEVERITY_TONE[anomaly.severity]}>{anomaly.severity}</Badge>
-                  <span className="text-[13px] font-medium text-ink">{ANOMALY_KINDS[anomaly.kind].label}</span>
-                  <span className="text-xs text-ink-2">{anomaly.detail}</span>
-                </div>
-                <Button variant="ghost" size="xs" onClick={() => { onIgnore(anomaly.id); }}>
-                  <IconCheck /> Ignore
-                </Button>
+            <>
+              <h3 className="m-0 text-xs font-semibold uppercase tracking-wide text-ink-3">
+                {target.anomalies.length} open issue{target.anomalies.length === 1 ? '' : 's'}
+              </h3>
+              <div className="divide-y divide-line rounded-lg border border-line">
+                {target.anomalies.map((anomaly) => (
+                  <div key={anomaly.id} className="flex flex-wrap items-start justify-between gap-2 px-3 py-2.5">
+                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <div className="flex flex-wrap items-center gap-x-2 text-sm">
+                        <span className="font-medium text-ink">{ANOMALY_KINDS[anomaly.kind].label}</span>
+                        <span className={cn('text-xs capitalize', anomaly.severity === 'high' ? 'text-bad' : 'text-ink-3')}>
+                          {anomaly.severity}
+                        </span>
+                      </div>
+                      <span className="text-xs leading-relaxed text-ink-2">{anomaly.detail}</span>
+                    </div>
+                    <Button variant="ghost" size="xs" onClick={() => { onIgnore(anomaly.id); }}>
+                      <IconCheck /> Ignore
+                    </Button>
+                  </div>
+                ))}
               </div>
-            ))
+            </>
           )}
         </section>
 
-        <section className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-2">
-          <Field
-            label="Topic"
-            value={draft.topic}
-            flagged={flagged.has('topic')}
-            ai={aiMark('topic')}
-            list={suggestion && suggestion.topicOptions.length > 0 ? 'quality-topics' : undefined}
-            onChange={(topic) => { patch({ topic }); }}
-          />
-          {suggestion && suggestion.topicOptions.length > 0 ? (
-            <datalist id="quality-topics">
-              {suggestion.topicOptions.map((topic) => <option key={topic} value={topic} />)}
-            </datalist>
-          ) : null}
-          <Field label="Subject" value={draft.subject} flagged={flagged.has('subject')} list="quality-subjects" onChange={(subject) => { patch({ subject }); }} />
-          <Field label="Chapter" value={draft.chapter} flagged={flagged.has('chapter')} list="quality-chapters" onChange={(chapter) => { patch({ chapter }); }} />
-          <Field label="Exam" value={draft.exam} flagged={flagged.has('exam')} onChange={(exam) => { patch({ exam }); }} />
-          <label className="flex flex-col gap-1">
-            <span className={cn('text-xs font-medium', flagged.has('questionType') ? 'text-bad' : 'text-ink-2')}>
-              Question type{flagged.has('questionType') ? ' — needs fixing' : ''}
-            </span>
-            <select
-              value={KNOWN_QUESTION_TYPES.some((type) => type === draft.questionType) ? draft.questionType : ''}
-              onChange={(event) => { patch({ questionType: event.target.value }); }}
-              className={cn(INPUT, flagged.has('questionType') ? 'border-bad' : 'border-line')}
-            >
-              <option value="">{draft.questionType === '' ? '— not set —' : `keep "${draft.questionType}"`}</option>
-              {KNOWN_QUESTION_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
-            </select>
-          </label>
-          <Field label="Section" value={draft.sectionName} flagged={flagged.has('sectionName')} onChange={(sectionName) => { patch({ sectionName }); }} />
-          <label className="flex flex-col gap-1">
-            <FieldLabel label="Level" flagged={flagged.has('level')} ai={aiMark('level')} />
-            <select
-              value={draft.level}
-              onChange={(event) => { patch({ level: event.target.value }); }}
-              className={cn(INPUT, flagged.has('level') ? 'border-bad' : 'border-line')}
-            >
-              <option value="">— not graded —</option>
-              {QUESTION_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
-            </select>
-          </label>
-          <datalist id="quality-subjects">{summary.subjects.map((s) => <option key={s} value={s} />)}</datalist>
-          <datalist id="quality-chapters">{summary.chapters.map((c) => <option key={c} value={c} />)}</datalist>
-        </section>
+        {flaggedMetadata.length > 0 ? (
+          <section className="flex flex-col gap-2" aria-label="Flagged question details">
+            <h3 className="m-0 text-xs font-semibold uppercase tracking-wide text-ink-3">Details to correct</h3>
+            <div className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
+              {flaggedMetadata.map(({ name, control }) => <div key={name}>{control}</div>)}
+            </div>
+          </section>
+        ) : null}
+        {suggestion && suggestion.topicOptions.length > 0 ? (
+          <datalist id="quality-topics">
+            {suggestion.topicOptions.map((topic) => <option key={topic} value={topic} />)}
+          </datalist>
+        ) : null}
+        <datalist id="quality-subjects">{summary.subjects.map((subject) => <option key={subject} value={subject} />)}</datalist>
+        <datalist id="quality-chapters">{summary.chapters.map((chapter) => <option key={chapter} value={chapter} />)}</datalist>
 
         <section className="flex flex-col gap-1">
           <FieldLabel label="Question text" flagged={flagged.has('questionText')} />
@@ -683,28 +752,67 @@ export function FixPanel({
             </span>
           </div>
           <div className="flex flex-col gap-1">
-            <FieldLabel label="Explanation" flagged={false} ai={aiMark('solution')} />
-            <EditableLatexValue
-              multiline
-              value={draft.explanation}
-              placeholder="Click to write the worked solution"
-              onChange={(explanation) => { patch({ explanation }); }}
-            />
+            <FieldLabel label="Explanation" flagged={flagged.has('explanation')} ai={aiMark('solution')} />
+            <Editable flagged={flagged.has('explanation')}>
+              <EditableLatexValue
+                multiline
+                value={draft.explanation}
+                placeholder="Click to write the worked solution"
+                onChange={(explanation) => { patch({ explanation }); }}
+              />
+            </Editable>
           </div>
         </section>
+
+        {otherMetadata.length > 0 ? (
+          <details
+            className="rounded-lg border border-line"
+            open={moreDetailsOpen}
+            onToggle={(event) => { setMoreDetailsOpen(event.currentTarget.open); }}
+          >
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-sm focus-visible:ring-2 focus-visible:ring-brand-soft [&::-webkit-details-marker]:hidden">
+              <span className="font-medium text-ink">Other question details</span>
+              <span className="text-xs text-ink-3">{otherMetadata.length} editable field{otherMetadata.length === 1 ? '' : 's'}</span>
+            </summary>
+            <div className="grid grid-cols-3 gap-3 border-t border-line px-3 py-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
+              {otherMetadata.map(({ name, control }) => <div key={name}>{control}</div>)}
+            </div>
+          </details>
+        ) : null}
+
+        <AiFixBar
+          key={`${target.questionId}:${String(saveRevision)}`}
+          selected={aiFields}
+          suggestion={suggestion}
+          busy={aiBusy}
+          refining={refining}
+          onToggle={(field) => {
+            setAiFields((prev) => {
+              const next = new Set(prev);
+              if (next.has(field)) next.delete(field);
+              else next.add(field);
+              return next;
+            });
+          }}
+          questionType={target.questionType}
+          reason={plan?.reason ?? ''}
+          onRun={() => { runAi(false); }}
+          onRunWithType={() => { runAi(true); }}
+          onRefine={() => { void refineWithAi(); }}
+        />
       </div>
 
       <footer className="flex flex-none flex-wrap items-center gap-2 border-t border-line bg-surface px-4 py-3">
-        <Button variant="primary" disabled={!dirty || saving} onClick={() => { save(false); }}>
+        <Button disabled={!dirty || saving} onClick={() => { save(false); }}>
           {saving ? 'Saving…' : 'Save'}
         </Button>
         <Button disabled={!dirty || saving} onClick={() => { save(true); }}>Save & next</Button>
-        <Button variant="ghost" onClick={onNext}>Skip →</Button>
+        <Button variant="ghost" disabled={saving} onClick={onNext}>Skip →</Button>
         {dirty ? (
-          <Button variant="ghost" size="xs" onClick={() => { setDraft(toDraft(target)); }}>Discard changes</Button>
+          <Button variant="ghost" size="xs" disabled={saving} onClick={() => { setDraft(toDraft(target)); }}>Discard changes</Button>
         ) : null}
         <span className="ml-auto text-xs text-ink-3">
-          {dirty ? 'Unsaved changes · Ctrl+Enter to save' : 'Saved to the bank and its staging copy'}
+          {dirty ? 'Unsaved changes · Ctrl+Enter to save' : 'No unsaved changes'}
         </span>
       </footer>
     </div>
