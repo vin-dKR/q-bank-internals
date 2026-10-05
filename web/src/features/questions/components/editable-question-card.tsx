@@ -285,9 +285,8 @@ function selectedMatrixOptionIndex(options: readonly QuestionOption[], answer: s
 type MatrixChoiceState = Pick<QuestionDraft, 'match' | 'options' | 'answer'>;
 
 /**
- * Keep a matrix's selected answer choice honest after the table changes. The synthesis helper only
- * acts on a complete, unambiguous table. Source/manual choices are retained verbatim: their answer
- * must always be one of the visible printed choices, never a generated fifth option.
+ * Keep a matrix's selected answer choice honest after the table changes. A direct-response table
+ * remains table-only; when a paper printed choices, the answer must be one of those visible choices.
  */
 function synchronizeMatrixChoiceState(
   options: readonly QuestionOption[],
@@ -298,48 +297,30 @@ function synchronizeMatrixChoiceState(
   // structured key. Merge it before validation so opening Verify repairs the
   // row instead of requiring an unreliable full-page re-extract.
   const completedMatch = mergeMatrixKeyWithAnswer(match, answer);
+  const visibleOptions = options.filter((option) => !isGeneratedMatrixOption(option));
+  if (visibleOptions.length === 0) {
+    // A table without a printed option panel is a valid direct-response matrix. Keep its raw mapping
+    // if present, but do not invent the conventional A–D rows.
+    const hasDirectMap = Object.keys(
+      parseOptionMatching(answer, targetLabelsForMatch(completedMatch)),
+    ).length > 0;
+    return { match: completedMatch, options: [], answer: hasDirectMap ? answer : '' };
+  }
   const synthesis = synthesizeMatrixChoiceOptions(completedMatch);
   if (synthesis.status === 'blocked') {
-    // An incomplete table must not leave a generated "correct" answer looking trustworthy. Printed
-    // answer choices, however, remain source evidence and are deliberately preserved.
-    if (options.length > 0 && options.every(isGeneratedMatrixOption)) {
-      return {
-        match: completedMatch,
-        options: options.map((option) => ({ ...option, isCorrect: false })),
-        answer: '',
-      };
-    }
-    return { match: completedMatch, options: [...options], answer };
+    // An incomplete table does not alter the source choice panel.
+    return { match: completedMatch, options: visibleOptions, answer };
   }
 
-  // A pristine generated set is disposable as a unit. Rebuild all distractors as well as the correct
-  // choice so a manual table edit never leaves choices derived from the old relationship behind.
-  if (options.length === 0 || options.every(isGeneratedMatrixOption)) {
-    return { match: completedMatch, options: synthesis.options, answer: synthesis.answer };
-  }
-
-  const matchingIndex = options.findIndex((option) => optionMatchesMatrixKey(option, completedMatch));
-  const matchingOption = matchingIndex >= 0 ? options[matchingIndex] : undefined;
+  const matchingIndex = visibleOptions.findIndex((option) =>
+    optionMatchesMatrixKey(option, completedMatch),
+  );
+  const matchingOption = matchingIndex >= 0 ? visibleOptions[matchingIndex] : undefined;
   if (matchingOption) {
     const selected = matchingOption;
     return {
       match: completedMatch,
-      options: withCorrectOptions(options, [selected.label]),
-      answer: selected.label,
-    };
-  }
-
-  const selectedIndex = selectedMatrixOptionIndex(options, answer);
-  const selectedOption = selectedIndex >= 0 ? options[selectedIndex] : undefined;
-  if (selectedOption && isGeneratedMatrixOption(selectedOption)) {
-    const selected = selectedOption;
-    return {
-      match: completedMatch,
-      options: options.map((option, index) =>
-        index === selectedIndex
-          ? { ...option, body: synthesis.correctMapping, isCorrect: true, generated: true }
-          : { ...option, isCorrect: false },
-      ),
+      options: withCorrectOptions(visibleOptions, [selected.label]),
       answer: selected.label,
     };
   }
@@ -349,7 +330,6 @@ function synchronizeMatrixChoiceState(
   // ambiguous. Discard any stale generated helper and retain an existing explicitly selected
   // printed/custom choice only when there is one; the operator can choose a printed option or
   // correct the table to reconcile the two.
-  const visibleOptions = options.filter((option) => !isGeneratedMatrixOption(option));
   const selectedVisibleIndex = selectedMatrixOptionIndex(visibleOptions, answer);
   const selectedVisible =
     selectedVisibleIndex >= 0 ? visibleOptions[selectedVisibleIndex] : undefined;
@@ -871,18 +851,6 @@ export function EditableQuestionCard({
       key: {},
     });
   };
-  // Existing sessions can predate generated matrix choices. As soon as their saved table contains a
-  // complete unambiguous key, create the deterministic choice set locally so opening Verify is enough
-  // to repair the legacy direct-response shape. Incomplete tables remain untouched and show guidance.
-  useEffect(() => {
-    if (!draft.match || draft.options.length > 0) return;
-    if (synthesizeMatrixChoiceOptions(mergeMatrixKeyWithAnswer(draft.match, draft.answer)).status !== 'generated') return;
-    onDraftUpdate((prev) => {
-      if (!prev.match || prev.options.length > 0) return prev;
-      const synced = synchronizeMatrixChoiceState(prev.options, prev.answer, prev.match);
-      return { ...prev, ...synced };
-    });
-  }, [draft.match, draft.options.length, onDraftUpdate, question.id]);
   /** Keep the draft structurally valid when the teacher changes its type before re-extracting it. */
   const setQuestionType = (questionType: string): void => {
     onDraftUpdate((prev) => {
@@ -905,24 +873,11 @@ export function EditableQuestionCard({
       return selectExistingMatrixOption(prev, label, body);
     });
   };
-  /**
-   * Generated choice sets stay complete: deleting one of an untouched all-generated set simply
-   * rebuilds the deterministic four choices. Editing a generated row first turns it into manual
-   * content, after which removal behaves like any teacher-authored choice.
-   */
+  /** Removing a choice never manufactures a replacement; source-panel format remains explicit. */
   const removeMatrixOption = (index: number): void => {
     onDraftUpdate((prev) => {
       const remaining = prev.options.filter((_, optionIndex) => optionIndex !== index);
       if (!prev.match) return { ...prev, options: remaining };
-      const wasEntireGeneratedSet =
-        prev.options.length > 0 && prev.options.every(isGeneratedMatrixOption);
-      if (wasEntireGeneratedSet) {
-        const match = mergeMatrixKeyWithAnswer(prev.match, prev.answer);
-        const synthesis = synthesizeMatrixChoiceOptions(match);
-        if (synthesis.status === 'generated') {
-          return { ...prev, match, options: synthesis.options, answer: synthesis.answer };
-        }
-      }
       const nextAnswer = selectedMatrixOptionIndex(remaining, prev.answer) >= 0 ? prev.answer : '';
       const synced = synchronizeMatrixChoiceState(remaining, nextAnswer, prev.match);
       return { ...prev, ...synced };
@@ -1049,8 +1004,8 @@ export function EditableQuestionCard({
         if (fresh.stem.trim() !== '') next.stem = fresh.stem;
         const profile = choiceProfile(next.questionType, fresh.options.length);
         if (profile === 'matrix') {
-          // A matrix keeps its structured table plus source choices. If the page had no choice panel,
-          // the shared deterministic synthesis creates one only after it has validated the whole key.
+          // A matrix keeps its structured table plus source choices. A page with no printed choice
+          // panel remains table-only; Verify never invents a conventional A–D panel.
           next.match = fresh.match;
           if (fresh.match) {
             const synced = synchronizeMatrixChoiceState(fresh.options, fresh.answer, fresh.match);

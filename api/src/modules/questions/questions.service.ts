@@ -14,7 +14,6 @@ import type {
   Question,
   QuestionBatchUpdate,
   QuestionListResponse,
-  QuestionOption,
   ReExtractedGroup,
   ReExtractedQuestion,
   ReExtractedSubQuestion,
@@ -26,11 +25,9 @@ import type {
 } from '@ingest/contracts';
 import {
   findMatrixChoiceForMatch,
-  hasOnlyGeneratedMatrixChoices,
   matrixChoiceMappingText,
   mergeMatrixKeyWithAnswer,
   parseMatchKey,
-  synthesizeMatrixChoiceOptions,
 } from '@ingest/contracts';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
@@ -296,64 +293,23 @@ function sameJson(left: unknown, right: unknown): boolean {
 }
 
 /**
- * Return the explicitly selected existing choice only when its body is the exact supplied table key.
- * This is intentionally checked before generated-set synthesis: selecting B in Verify is a user
- * decision about this particular option order/label, not a request for the server to reshuffle a
- * mathematically equivalent set while saving the matching table.
- */
-function selectedMatrixChoiceForMatch(
-  options: readonly QuestionOption[],
-  answer: string,
-  match: NonNullable<Question['match']>,
-): QuestionOption | null {
-  const selectedLabel = answer.trim().toLocaleLowerCase();
-  if (!selectedLabel) return null;
-  const selected = options.find(
-    (option) => option.label.trim().toLocaleLowerCase() === selectedLabel,
-  );
-  if (!selected) return null;
-  return findMatrixChoiceForMatch([selected], match) === selected.label ? selected : null;
-}
-
-/**
- * Reconcile matrix table/key/choice invariants in one place. A complete, unambiguous table gets a
- * deterministic selectable set only when choices are empty or all carry `generated: true`. Printed
- * and hand-edited (`generated: false`) choices are never replaced. If a manual key becomes unsafe,
- * stale generated choices are cleared instead of silently pointing at the old mapping.
+ * Reconcile matrix table/key/choice invariants in one place. Choices must preserve the source panel:
+ * a direct-response matrix stays table-only, and printed/manual choices are never replaced or
+ * supplemented with AI-generated alternatives.
  */
 function normalizeMatrixState(state: MatrixDraftState): MatrixDraftState {
   if (state.questionType !== 'matrix' || state.match === null) return state;
   const match = mergeMatrixKeyWithAnswer(state.match, state.answer);
-  const selectedExisting = selectedMatrixChoiceForMatch(state.options, state.answer, match);
-  if (selectedExisting?.generated === true) {
-    // Preserve every submitted generated choice body/order/label exactly; only the correct marker
-    // follows the explicit selected label. This lets selecting an existing generated option update
-    // the matching table without the save path synthesizing a different A–D arrangement.
-    return {
-      ...state,
-      match,
-      answer: selectedExisting.label,
-      options: state.options.map((option) => ({
-        ...option,
-        isCorrect: option.label === selectedExisting.label,
-      })),
-    };
-  }
-  const replaceableChoices =
-    state.options.length === 0 || hasOnlyGeneratedMatrixChoices(state.options);
-  if (replaceableChoices) {
-    const synthesis = synthesizeMatrixChoiceOptions(match);
-    if (synthesis.status === 'generated') {
-      return { ...state, match, options: synthesis.options, answer: synthesis.answer };
-    }
-    // `C` from a previous generated set is no longer meaningful after an incomplete/ambiguous manual
-    // table edit. Preserve a typed mapping if one exists; otherwise mirror the currently known table.
+  const visibleOptions = state.options.filter((option) => option.generated !== true);
+  if (visibleOptions.length === 0) {
+    // No choice panel is a valid direct-response layout. Keep the actual matching table/key and
+    // never materialize an A–D fallback that did not exist in the source image.
     const hasDirectMap = Object.keys(parseMatchKey(state.answer)).length > 0;
     return {
       ...state,
       match,
-      options: hasOnlyGeneratedMatrixChoices(state.options) ? [] : state.options,
       answer: hasDirectMap ? state.answer : matrixChoiceMappingText(match.key),
+      options: [],
     };
   }
 
@@ -366,7 +322,6 @@ function normalizeMatrixState(state: MatrixDraftState): MatrixDraftState {
     // even when a model/table read cannot reconcile the current key to one of its choices. Remove
     // any stale generated helper instead of adding a fifth option, and preserve a pre-existing
     // explicit source/manual selection only when it still names a visible choice.
-    const visibleOptions = state.options.filter((option) => option.generated !== true);
     const existingAnswer = state.answer.trim().toLocaleLowerCase();
     const preserved =
       visibleOptions.find((option) => option.label.trim().toLocaleLowerCase() === existingAnswer) ??
