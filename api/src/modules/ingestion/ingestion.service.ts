@@ -27,6 +27,36 @@ function fileNameForUpload(metadata: ChapterUploadMetadata): string {
   return `${base}-${uploadLabel}-${metadata.kind}.pdf`;
 }
 
+/** The supporting parts a question upload explicitly declares through its bound page ranges. */
+function requiredSupportingKinds(question: Document): Array<'answer' | 'solution' | 'companion'> {
+  if (question.answerLayout === 'inline') return [];
+  const hasRange = (kind: 'answer' | 'solution' | 'companion'): boolean => question.topics.some((topic) =>
+    topic.types.some((block) =>
+      kind === 'answer'
+        ? block.answerPageRange !== undefined
+        : kind === 'solution'
+          ? block.solutionPageRange !== undefined
+          : block.companionPageRange !== undefined,
+    ),
+  );
+  if (question.answerLayout === 'combined') return hasRange('companion') ? ['companion'] : [];
+  return [
+    ...(hasRange('answer') ? ['answer' as const] : []),
+    ...(hasRange('solution') ? ['solution' as const] : []),
+  ];
+}
+
+/** A support document must belong to the exact upload when ids exist; legacy rows retain path pairing. */
+function belongsToQuestionUpload(question: Document, candidate: Document): boolean {
+  if (question.uploadGroupId && candidate.uploadGroupId)
+    return question.uploadGroupId === candidate.uploadGroupId;
+  return (
+    question.path.module === candidate.path.module &&
+    question.path.chapter === candidate.path.chapter &&
+    question.path.section === candidate.path.section
+  );
+}
+
 /**
  * Orchestrates filing a cut chapter PDF into Drive AND recording it as a durable, session-scoped
  * Document — the breakable checkpoint that lets Phase 1 finish without waiting on Phase 2. It
@@ -50,6 +80,45 @@ export class IngestionService {
    */
   async createSignedUpload(fileName: string): Promise<SignedUploadTarget> {
     return this.staging.createSignedUpload(fileName);
+  }
+
+  /**
+   * Auto-run must begin only after the question's explicitly bound sources exist. Otherwise a
+   * question-first browser upload can finish before its Answer/Solution PDFs are durable, leaving
+   * Verify permanently without those fields. Legacy uploads without source page ranges retain their
+   * previous immediate behaviour because they do not declare which supporting parts are expected.
+   */
+  private async enqueueReadyQuestion(sessionId: string, uploaded: Document): Promise<void> {
+    const documents = await this.documents.listBySession(sessionId);
+    const supportKind = uploaded.kind === 'question' ? null : uploaded.kind;
+    const question = supportKind === null
+      ? uploaded
+      : documents.find((candidate) =>
+          candidate.kind === 'question' &&
+          belongsToQuestionUpload(candidate, uploaded) &&
+          requiredSupportingKinds(candidate).includes(supportKind),
+        );
+    if (!question || question.status !== 'uploaded') return;
+    const required = requiredSupportingKinds(question);
+    const missing = required.filter((kind) =>
+      !documents.some((candidate) => candidate.kind === kind && belongsToQuestionUpload(question, candidate)),
+    );
+    if (missing.length > 0) {
+      logger.info(
+        { documentId: question.id, missing, uploadGroupId: question.uploadGroupId },
+        'Auto-run is waiting for explicitly bound answer/solution sources',
+      );
+      return;
+    }
+    try {
+      await this.extraction.enqueue(question.id);
+    } catch (error) {
+      // Never fail an upload because auto-enqueue hiccuped; the file is safely persisted either way.
+      logger.warn(
+        { documentId: question.id, err: error instanceof Error ? error.message : String(error) },
+        'Auto-run enqueue failed; document left as uploaded',
+      );
+    }
   }
 
   /**
@@ -144,19 +213,9 @@ export class IngestionService {
       module: metadata.module,
     });
 
-    // Pipeline mode: kick off extraction now for question PDFs. It runs on the worker, so the upload
-    // response is not delayed — the "don't wait on Phase 2" guarantee still holds.
-    if (session.autoRun && document.kind === 'question') {
-      try {
-        await this.extraction.enqueue(document.id);
-      } catch (error) {
-        // Never fail an upload because auto-enqueue hiccuped; the file is safely persisted either way.
-        logger.warn(
-          { documentId: document.id, err: error instanceof Error ? error.message : String(error) },
-          'Auto-run enqueue failed; document left as uploaded',
-        );
-      }
-    }
+    // Pipeline mode: queue the question only once every source it explicitly binds is durable. A
+    // support upload can be the final part, so it is allowed to trigger its paired question.
+    if (session.autoRun) await this.enqueueReadyQuestion(metadata.sessionId, document);
 
     // The staged object has served its purpose now the Document + Drive file exist; drop it best-effort
     // so a failed cleanup can never fail an upload that already succeeded.
