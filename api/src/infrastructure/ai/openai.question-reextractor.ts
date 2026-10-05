@@ -34,7 +34,8 @@ import type { PromptOverrides } from '../../modules/prompts/index.js';
  */
 const MAX_TOKENS = 16000;
 const GROUP_MAX_TOKENS = 32000;
-const SMILES_AUDIT_PROMPT = 'CHEMISTRY STRUCTURE AUDIT: The candidate JSON below was extracted from the supplied exam image. First locate every molecule drawn with bonds, rings, or skeletal notation. Each must appear in the candidate as one complete <smiles>RAW_SMILES</smiles> tag, even when the first extraction omitted all tags. Inspect or recover only those SMILES values against the drawing. Confirm every bond, charge, and aromatic substituent position matches; for rings explicitly count edges between substituents, never accepting a plausible but wrong ortho/meta/para isomer. If the image has no drawn molecule, return the complete candidate JSON unchanged. Otherwise, change only the affected SMILES values and return complete valid JSON. Do not alter prose, question boundaries, options, answers, or any non-SMILES field.\n\nCANDIDATE JSON:\n';
+const SMILES_TAG = /<smiles\b/i;
+const SMILES_AUDIT_PROMPT = 'CHEMISTRY STRUCTURE AUDIT: The candidate JSON below was extracted from the supplied exam image. Inspect only every <smiles>…</smiles> value against the drawn structures in the image. Confirm each tag contains one complete connected molecule and that every bond, charge, and aromatic substituent position matches the drawing. For rings, explicitly count ring edges between substituents; do not accept a plausible but wrong ortho/meta/para isomer. Return the complete candidate JSON unchanged when all structures match. Otherwise, change only the incorrect SMILES values and return the complete valid JSON. Do not alter prose, question boundaries, options, answers, or any non-SMILES field.\n\nCANDIDATE JSON:\n';
 /** A tight selected field does not need the full-page re-extractor's large reasoning budget. */
 const AREA_TRANSCRIBE_MAX_TOKENS = 4096;
 
@@ -325,6 +326,11 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
       totalTokens,
       callCount,
     };
+    // The chemistry audit is a correction pass for an already-extracted SMILES tag. Running it
+    // on every question adds a second, unrelated vision read; for non-chemistry questions it can
+    // return an empty JSON object and overwrite an otherwise valid extraction (as happened to Q283).
+    // Do not ask it to discover new structures here — the primary prompt owns extraction.
+    if (!SMILES_TAG.test(content)) return { content, usage };
     const audit = await this.client.chat.completions.create({
       model: this.model,
       max_completion_tokens: startTokens,
