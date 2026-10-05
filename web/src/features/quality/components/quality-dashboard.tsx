@@ -1,6 +1,6 @@
-import { type JSX, useState } from 'react';
+import { type JSX, type ReactNode, useState } from 'react';
 import { ANOMALY_KINDS } from '@ingest/contracts';
-import { Card, EmptyState, IconEdit, IconGrid, IconScan, IconSparkle, LoadingState } from '../../../shared/ui/index.js';
+import { Button, Card, EmptyState, IconScan, LoadingState } from '../../../shared/ui/index.js';
 import { cn } from '../../../shared/lib/cn.js';
 import { useAnomalies, useQualitySummary, useUpdateAnomaly } from '../hooks/use-quality.js';
 import { EMPTY_QUALITY_FILTERS, type QualityFilterState } from '../types.js';
@@ -9,7 +9,6 @@ import { AiWorkspace } from './ai-workspace.js';
 import { AnomalyFilters } from './anomaly-filters.js';
 import { AnomalyList } from './anomaly-list.js';
 import { BulkFixCard } from './bulk-fix-card.js';
-import { FixAllButton } from './fix-all-button.js';
 import { FixWorkspace } from './fix-workspace.js';
 import { GroupBreakdown } from './group-breakdown.js';
 import { PlaceBreakdown } from './place-breakdown.js';
@@ -17,90 +16,98 @@ import { QualityOverview } from './quality-overview.js';
 import { RunScanButton } from './run-scan-button.js';
 import { ScanHistory } from './scan-history.js';
 
-/**
- * The page has two modes over the same tracked set: the dashboard answers "how bad is it, and where", the
- * fix workspace is where the corrections are actually made. One switcher at the top chooses between them so
- * neither half buries the other.
- */
-export type QualityMode = 'dashboard' | 'fix' | 'ai';
+export type QualityMode = 'overview' | 'fix' | 'ai';
 
-/**
- * Apply a filter change, keeping the selection coherent: a rule that no longer belongs to the picked group
- * is dropped, and a broader taxonomy choice clears the narrower ones it scopes — so you can never hold a
- * chapter from a different subject, or a subject from a different exam.
- */
+/** A quiet navigation row; the count appears only where there is work waiting. */
+export function ModeSwitch({
+  mode,
+  onChange,
+  questionCount,
+  pendingProposals,
+  aiRunning,
+}: {
+  mode: QualityMode;
+  onChange: (mode: QualityMode) => void;
+  questionCount: number;
+  pendingProposals: number;
+  aiRunning: boolean;
+}): JSX.Element {
+  const tabs: { mode: QualityMode; label: string; count?: number }[] = [
+    { mode: 'overview', label: 'Overview' },
+    { mode: 'fix', label: 'Fix questions', count: questionCount },
+    { mode: 'ai', label: 'AI suggestions', count: pendingProposals },
+  ];
+  return (
+    <nav className="flex flex-wrap gap-6 border-b border-line" aria-label="Data quality sections">
+      {tabs.map((tab) => (
+        <button
+          key={tab.mode}
+          type="button"
+          aria-current={mode === tab.mode ? 'page' : undefined}
+          disabled={aiRunning && tab.mode !== mode}
+          title={aiRunning && tab.mode !== mode ? 'Stop the AI run before switching sections' : undefined}
+          onClick={() => { onChange(tab.mode); }}
+          className={cn(
+            '-mb-px inline-flex cursor-pointer items-center gap-2 border-b-2 px-1 pb-3 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+            mode === tab.mode ? 'border-ink text-ink' : 'border-transparent text-ink-2 hover:text-ink',
+          )}
+        >
+          {tab.label}
+          {tab.mode === 'ai' && aiRunning ? <span className="text-xs font-normal text-ink-3">Running</span> : null}
+          {tab.count !== undefined && tab.count > 0 ? (
+            <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-xs tabular-nums text-ink-2">
+              {tab.count.toLocaleString()}
+            </span>
+          ) : null}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+/** Keep a secondary view one click away without making the working path a long dashboard. */
+function DetailSection({ title, description, children }: { title: string; description: string; children: ReactNode }): JSX.Element {
+  return (
+    <details className="group rounded-xl border border-line bg-surface">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 rounded-xl px-5 py-4 marker:hidden focus-visible:ring-2 focus-visible:ring-brand-soft [&::-webkit-details-marker]:hidden">
+        <span className="flex flex-col gap-0.5">
+          <span className="text-sm font-semibold text-ink">{title}</span>
+          <span className="text-xs text-ink-2">{description}</span>
+        </span>
+        <span aria-hidden="true" className="text-ink-3 transition-transform group-open:rotate-180">⌄</span>
+      </summary>
+      <div className="border-t border-line px-5 py-5">{children}</div>
+    </details>
+  );
+}
+
+/** Broader choices clear their descendants so filters cannot silently contradict one another. */
 function applyPatch(prev: QualityFilterState, patch: Partial<QualityFilterState>): QualityFilterState {
   const next = { ...prev, ...patch };
   if (patch.group !== undefined && next.kind !== '' && next.group !== '' && ANOMALY_KINDS[next.kind].group !== next.group) {
     next.kind = '';
   }
   if ('exam' in patch) { next.subject = ''; next.chapter = ''; }
-  if ('subject' in patch) { next.chapter = ''; }
-  // A rule fixes its own severity; a leftover severity choice could only contradict it and match nothing.
+  if ('subject' in patch) next.chapter = '';
   if (patch.kind !== undefined && patch.kind !== '') next.severity = '';
   return next;
 }
 
-/**
- * The mode switcher: two segmented buttons, each with its live count. Lives in the page header so the
- * working screen starts as high as possible.
- */
-export function ModeSwitch({
+export function QualityDashboard({
   mode,
-  onChange,
-  openCount,
-  questionCount,
-  pendingProposals,
+  onModeChange,
+  fixDirty,
+  onFixDirtyChange,
+  aiRunning,
+  onAiRunningChange,
 }: {
   mode: QualityMode;
-  onChange: (mode: QualityMode) => void;
-  openCount: number;
-  questionCount: number;
-  /** AI proposals waiting for a decision — the reason to visit the third tab. */
-  pendingProposals: number;
+  onModeChange: (mode: QualityMode) => void;
+  fixDirty: boolean;
+  onFixDirtyChange: (dirty: boolean) => void;
+  aiRunning: boolean;
+  onAiRunningChange: (running: boolean) => void;
 }): JSX.Element {
-  const tabs: { mode: QualityMode; label: string; count: number; icon: JSX.Element }[] = [
-    { mode: 'dashboard', label: 'Dashboard', count: openCount, icon: <IconGrid /> },
-    { mode: 'fix', label: 'Fix questions', count: questionCount, icon: <IconEdit /> },
-    { mode: 'ai', label: 'Fix with AI', count: pendingProposals, icon: <IconSparkle /> },
-  ];
-  return (
-    <div className="flex w-fit items-center gap-1 rounded-xl border border-line bg-surface-2 p-1">
-      {tabs.map((tab) => (
-        <button
-          key={tab.mode}
-          type="button"
-          aria-pressed={mode === tab.mode}
-          onClick={() => { onChange(tab.mode); }}
-          className={cn(
-            'inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors [&>svg]:size-4',
-            mode === tab.mode ? 'bg-brand text-white shadow-sm' : 'text-ink-2 hover:bg-surface hover:text-ink',
-          )}
-        >
-          {tab.icon}
-          {tab.label}
-          <span
-            className={cn(
-              'rounded-full px-1.5 py-px text-[11px] tabular-nums',
-              mode === tab.mode ? 'bg-white/20 text-white' : 'bg-surface text-ink-3',
-            )}
-          >
-            {tab.count.toLocaleString()}
-          </span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/**
- * Data quality over the live shared bank. `dashboard` shows where the problems are (totals, groups, the
- * full problem list, scan history); `fix` is the working mode (automatic fixes, then the queue + editor).
- * Both read the same filters, so narrowing in one mode carries into the other.
- */
-export function QualityDashboard({ mode, onModeChange }: { mode: QualityMode; onModeChange: (mode: QualityMode) => void }): JSX.Element {
-  // Each mode keeps its OWN filters: narrowing the dashboard's problem list is a way of reading the data,
-  // and must never silently change what the fix workspace offers (or vice versa).
   const [listFilters, setListFilters] = useState<QualityFilterState>(EMPTY_QUALITY_FILTERS);
   const [fixFilters, setFixFilters] = useState<QualityFilterState>(EMPTY_QUALITY_FILTERS);
   const [aiFilters, setAiFilters] = useState<QualityFilterState>(EMPTY_QUALITY_FILTERS);
@@ -109,36 +116,97 @@ export function QualityDashboard({ mode, onModeChange }: { mode: QualityMode; on
   const review = useUpdateAnomaly();
 
   if (summary.isPending) return <LoadingState label="Loading data quality…" />;
-  if (summary.isError) return <p className="error">Could not reach the API. Is it running on :4000?</p>;
-
+  if (!summary.data) return <p className="error">Could not load data quality. Check the connection and try again.</p>;
   if (summary.data.lastScan === null) {
     return (
       <EmptyState
         icon={<IconScan />}
-        title="No scan has run yet"
-        body="A scan checks every question live on Eduents (the shared bank every organisation sees) for missing answers, topics and metadata, broken LaTeX, missing images, and duplicates, and keeps tracking them from then on. Ingest sessions and unpublished questions are not scanned."
+        title="Start with a scan"
+        body="A scan checks published questions for missing information, damaged content, and duplicates. You can review and fix the results here."
         action={<RunScanButton />}
       />
     );
   }
 
-  /** Open the fix workspace already narrowed to one group — the dashboard's only action. */
   const fixGroup = (group: QualityFilterState['group']): void => {
     setFixFilters({ ...EMPTY_QUALITY_FILTERS, group });
     onModeChange('fix');
   };
 
-  return (
-    <div className={cn('flex flex-col gap-4', mode === 'fix' && 'min-h-0 flex-1')}>
-      {mode === 'dashboard' ? (
-        <>
-          <QualityOverview summary={summary.data} />
-          <AiFilledCard />
-          <GroupBreakdown summary={summary.data} onFixGroup={fixGroup} />
-          <PlaceBreakdown summary={summary.data} />
+  const fixQuestion = (questionId: string): void => {
+    setFixFilters({ ...EMPTY_QUALITY_FILTERS, q: questionId });
+    onModeChange('fix');
+  };
 
-          <Card>
-            <div className="card__title">Browse every problem</div>
+  if (mode === 'fix') {
+    return (
+      <div className="flex flex-col gap-4">
+        <div>
+          <h2>Work through questions</h2>
+          <p className="m-0 mt-1 text-sm text-ink-2">Choose a question, correct its flagged fields, then save. This queue shows open issues only.</p>
+        </div>
+        <Card className="h-[calc(100dvh-240px)] min-h-[680px] gap-4 p-4 max-[900px]:h-auto max-[900px]:min-h-0">
+          <AnomalyFilters
+            filters={fixFilters}
+            summary={summary.data}
+            showStatusTabs={false}
+            disabled={fixDirty}
+            onChange={(patch) => { setFixFilters((prev) => applyPatch(prev, patch)); }}
+            onClear={() => { setFixFilters(EMPTY_QUALITY_FILTERS); }}
+          />
+          <FixWorkspace
+            filters={fixFilters}
+            summary={summary.data}
+            onDirtyChange={onFixDirtyChange}
+          />
+        </Card>
+        <DetailSection
+          title="Automatic fixes across the bank"
+          description="Preview rule-based corrections, then apply them to every affected published question. Run a scan afterward."
+        >
+          <BulkFixCard />
+        </DetailSection>
+      </div>
+    );
+  }
+
+  if (mode === 'ai') {
+    return (
+      <div className="flex flex-col gap-4">
+        <div>
+          <h2>AI suggestions</h2>
+          <p className="m-0 mt-1 text-sm text-ink-2">Generate suggestions for open issues, then approve them individually or in a confirmed high-confidence batch.</p>
+        </div>
+        <AiWorkspace
+          filters={aiFilters}
+          summary={summary.data}
+          aiRunning={aiRunning}
+          onAiRunningChange={onAiRunningChange}
+          onChange={(patch) => { setAiFilters((prev) => applyPatch(prev, patch)); }}
+          onClear={() => { setAiFilters(EMPTY_QUALITY_FILTERS); }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <QualityOverview summary={summary.data} />
+      <Card className="gap-4">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2>Choose where to start</h2>
+            <p className="m-0 mt-1 text-sm text-ink-2">Problem areas are ordered by the number of open issues.</p>
+          </div>
+          {summary.data.questionsWithOpen > 0 ? (
+            <Button onClick={() => { fixGroup(''); }}>Open question queue</Button>
+          ) : null}
+        </div>
+        <GroupBreakdown summary={summary.data} onFixGroup={fixGroup} />
+      </Card>
+      <div className="flex flex-col gap-2" aria-label="More data quality details">
+        <DetailSection title="Browse issue records" description="Inspect individual issues, including ignored and resolved records.">
+          <div className="flex flex-col gap-4">
             <AnomalyFilters
               filters={listFilters}
               summary={summary.data}
@@ -149,48 +217,20 @@ export function QualityDashboard({ mode, onModeChange }: { mode: QualityMode; on
               query={anomalies}
               onReview={(id, status) => { review.mutate({ id, update: { status } }); }}
               pendingId={review.isPending ? review.variables.id : null}
+              onFixQuestion={fixQuestion}
             />
-          </Card>
-
-          <Card>
-            <div className="card__title">Fix automatically — no typing needed</div>
-            <BulkFixCard />
-          </Card>
-
-          <Card>
-            <div className="card__title">Scan history</div>
-            <ScanHistory />
-          </Card>
-        </>
-      ) : mode === 'ai' ? (
-        // Bulk AI: narrow with the same filters, run over everything that matches, review what comes back.
-        <Card className="gap-3">
-          <AiWorkspace
-            filters={aiFilters}
-            summary={summary.data}
-            onChange={(patch) => { setAiFilters((prev) => applyPatch(prev, patch)); }}
-            onClear={() => { setAiFilters((prev) => ({ ...EMPTY_QUALITY_FILTERS, status: prev.status })); }}
-          />
-        </Card>
-      ) : (
-        // The working screen: filters on one line, then the workspace filling the rest of the viewport, so
-        // a question is read and corrected without the page scrolling.
-        <Card className="min-h-0 flex-1 gap-3">
-          <AnomalyFilters
-            filters={fixFilters}
-            summary={summary.data}
-            showRulePicker={false}
-            actions={<FixAllButton kind={fixFilters.kind} group={fixFilters.group} />}
-            onChange={(patch) => { setFixFilters((prev) => applyPatch(prev, patch)); }}
-            onClear={() => { setFixFilters((prev) => ({ ...EMPTY_QUALITY_FILTERS, status: prev.status })); }}
-          />
-          <FixWorkspace
-            filters={fixFilters}
-            summary={summary.data}
-            onFilterChange={(patch) => { setFixFilters((prev) => applyPatch(prev, patch)); }}
-          />
-        </Card>
-      )}
+          </div>
+        </DetailSection>
+        <DetailSection title="Where issues occur" description="See the subjects and chapters with the most open issues.">
+          <PlaceBreakdown summary={summary.data} />
+        </DetailSection>
+        <DetailSection title="Scan history" description="Review recent scans and how the issue set changed.">
+          <ScanHistory />
+        </DetailSection>
+        <DetailSection title="AI-filled values" description="See which published questions contain approved AI-written values.">
+          <AiFilledCard />
+        </DetailSection>
+      </div>
     </div>
   );
 }
