@@ -734,6 +734,12 @@ export function VerifyWorkspace({
   }, []);
 
   const [page, setPage] = useState(initialPage ?? 1);
+  // Keep the page number editable so an operator can jump directly to a distant page instead of
+  // stepping through the PDF one page at a time.
+  const [pageJump, setPageJump] = useState(String(initialPage ?? 1));
+  useEffect(() => {
+    setPageJump(String(page));
+  }, [page]);
   // A figure can continue onto the page after its question begins. Remember owners discovered by the
   // detector so that continuation page shows the real question card instead of an empty panel.
   const [continuationOwnersByPage, setContinuationOwnersByPage] = useState<
@@ -1499,6 +1505,16 @@ export function VerifyWorkspace({
     requestAnimationFrame(() => {
       panelRef.current?.scrollTo({ top: 0 });
     });
+  };
+
+  const submitPageJump = (): void => {
+    const next = Number(pageJump);
+    const total = pageCount.data ?? 1;
+    if (!Number.isInteger(next) || next < 1 || next > total) {
+      setPageJump(String(page));
+      return;
+    }
+    if (next !== page) goToPage(next);
   };
 
   // A LaTeX issue can belong to a question on another PDF page. Switch pages first, then focus the
@@ -3167,10 +3183,26 @@ export function VerifyWorkspace({
                   goToPage(page - 1);
                 }}
               />
-              <span className="verify__rail-count">
-                {page}
-                <br />/ {totalPages}
-              </span>
+              <label className="verify__rail-page" title={`Jump to a page (1–${String(totalPages)})`}>
+                <span className="sr-only">Go to page</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={totalPages}
+                  inputMode="numeric"
+                  aria-label={`Go to page, from 1 to ${String(totalPages)}`}
+                  value={pageJump}
+                  onChange={(event) => { setPageJump(event.target.value); }}
+                  onBlur={() => { setPageJump(String(page)); }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      submitPageJump();
+                    }
+                  }}
+                />
+                <span>/ {totalPages}</span>
+              </label>
               <IconButton
                 icon={<IconChevronRight />}
                 label="Next page"
