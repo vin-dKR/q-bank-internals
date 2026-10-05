@@ -4,6 +4,8 @@ import type { Document, DocumentStatus } from '@ingest/contracts';
 import { DocumentStatusSchema } from '@ingest/contracts';
 import {
   ExtractionProgress,
+  FileExtractionControls,
+  FileExtractionStatus,
   useDeleteSession,
   useReextractDocument,
   useResetDocumentExtraction,
@@ -18,9 +20,7 @@ import { Badge, IconTrash, IconWarning, LoadingState, PageHeader, Spinner, Statu
 
 type StatusFilter = DocumentStatus | 'all';
 const ACTIVE_STATUSES = new Set<DocumentStatus>(['queued', 'extracting']);
-function canRun(doc: Document): boolean {
-  return doc.kind === 'question' && (doc.status === 'uploaded' || doc.status === 'failed');
-}
+const PROGRESS_STATUSES = new Set<DocumentStatus>(['queued', 'extracting', 'paused']);
 function isExtracted(doc: Document): boolean {
   return doc.status === 'extracted' || doc.status === 'needs_review' || doc.status === 'approved'
     || doc.status === 'completed' || doc.status === 'published';
@@ -44,9 +44,8 @@ export function SessionDetailPage(): JSX.Element {
   const [status, setStatus] = useState<StatusFilter>('all');
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState('');
-  // Document ids whose live progress bar is shown. Seeded from the shared documents list (any file that
-  // is queued/extracting), so a run started here OR by another operator surfaces the same bar; each bar
-  // prunes itself a moment after its run ends.
+  // Document ids whose live progress bar is shown. Queued, extracting, and paused files all remain
+  // visible at the session level; the same controls are also available directly on their file rows.
   const [shownDocIds, setShownDocIds] = useState<string[]>([]);
   const dismissBar = (id: string): void => {
     setShownDocIds((prev) => prev.filter((docId) => docId !== id));
@@ -57,10 +56,10 @@ export function SessionDetailPage(): JSX.Element {
     { idlePollMs: 5000 },
   );
 
-  // Track every currently-active file so its bar appears — including runs another operator started.
+  // Track every active or paused file so its session-level bar appears — including runs another operator started.
   useEffect(() => {
     const activeIds = (documents.data?.items ?? [])
-      .filter((doc) => ACTIVE_STATUSES.has(doc.status))
+      .filter((doc) => PROGRESS_STATUSES.has(doc.status))
       .map((doc) => doc.id);
     setShownDocIds((prev) => {
       let next = prev;
@@ -75,6 +74,7 @@ export function SessionDetailPage(): JSX.Element {
   const s = session.data;
   const items = documents.data?.items ?? [];
   const busy = items.some((doc) => ACTIVE_STATUSES.has(doc.status));
+  const hasPausedFiles = items.some((doc) => doc.status === 'paused');
   const pending = s.documentCount - s.extractedCount;
   const firstExtracted = items.find(isExtracted);
 
@@ -168,24 +168,14 @@ export function SessionDetailPage(): JSX.Element {
             </button>
           )}
         </>
-      ) : canRun(doc) ? (
-        <button
-          type="button"
-          className="btn btn--xs"
-          disabled={runDoc.isPending}
-          onClick={() => { runDoc.mutate(doc.id); }}
-        >
-          Run
-        </button>
-      ) : ACTIVE_STATUSES.has(doc.status) ? (
-        <button
-          type="button"
-          className="btn btn--xs btn--danger"
-          disabled={resetDoc.isPending}
-          onClick={() => { stopExtraction(doc); }}
-        >
-          Stop
-        </button>
+      ) : doc.kind === 'question' ? (
+        <FileExtractionControls
+          document={doc}
+          onRun={(target) => { runDoc.mutate(target.id); }}
+          onStop={stopExtraction}
+          runPending={runDoc.isPending}
+          stopPending={resetDoc.isPending}
+        />
       ) : null}
       {doc.kind === 'question' ? (
         <button
@@ -283,7 +273,7 @@ export function SessionDetailPage(): JSX.Element {
             disabled={runSession.isPending || busy || pending === 0}
             onClick={() => { runSession.mutate(s.id); }}
           >
-            {busy ? <><Spinner /> Extracting…</> : 'Run extraction on all pending'}
+            {busy ? <><Spinner /> Extracting…</> : hasPausedFiles ? 'Resume all pending' : 'Run extraction on all pending'}
           </button>
         </div>
 
@@ -319,7 +309,11 @@ export function SessionDetailPage(): JSX.Element {
         ) : items.length === 0 ? (
           <p className="muted">No files match this filter.</p>
         ) : (
-          <DocumentUnitList items={items} renderActions={renderActions} />
+          <DocumentUnitList
+            items={items}
+            renderActions={renderActions}
+            renderStatus={(doc) => doc.kind === 'question' ? <FileExtractionStatus document={doc} /> : <StatusBadge status={doc.status} />}
+          />
         )}
       </div>
 

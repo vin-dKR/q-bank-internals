@@ -7,6 +7,7 @@ import type { ExtractionJobPayload, JobQueue } from '../../modules/extraction/in
  * the API response is never blocked — the same "don't wait on Phase 2" guarantee BullMQ gives.
  */
 export class InProcessJobQueue implements JobQueue {
+  readonly usesExternalConsumer = false;
   private handler: ((payload: ExtractionJobPayload) => Promise<void>) | null = null;
 
   enqueue(payload: ExtractionJobPayload): Promise<void> {

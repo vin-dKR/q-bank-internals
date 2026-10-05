@@ -22,6 +22,8 @@ export type {
   QuestionReExtractor,
   ReExtractedSubDraft,
   ReExtractInput,
+  SourceAreaTranscription,
+  SourceAreaTranscriptionInput,
   TranscribeRegionInput,
 } from './question-reextractor.js';
 export type {

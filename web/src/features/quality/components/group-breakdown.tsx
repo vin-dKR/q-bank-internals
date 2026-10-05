@@ -1,15 +1,8 @@
 import type { JSX } from 'react';
 import { ANOMALY_GROUP_LABELS, ANOMALY_KINDS, type AnomalyGroup, type QualitySummary } from '@ingest/contracts';
-import { Button } from '../../../shared/ui/index.js';
 import { countByGroup } from '../lib/anomaly-display.js';
 
-const TOP_KINDS = 3;
-
-/**
- * A card per anomaly group showing what is open and which rules fired most — the dashboard's read-only
- * breakdown. "Fix these" is the one action: it opens the fix workspace already narrowed to that group, so
- * the dashboard never silently changes what the fix side is showing.
- */
+/** One ranked list turns the scan breakdown into the next action. */
 export function GroupBreakdown({
   summary,
   onFixGroup,
@@ -17,41 +10,38 @@ export function GroupBreakdown({
   summary: QualitySummary;
   onFixGroup: (group: AnomalyGroup) => void;
 }): JSX.Element {
-  const groups = countByGroup(summary.byKind, 'open');
+  const groups = countByGroup(summary.byKind, 'open')
+    .filter((row) => row.count > 0)
+    .sort((a, b) => b.count - a.count);
+
+  if (groups.length === 0) {
+    return <p className="m-0 rounded-lg border border-line bg-surface-2 px-4 py-5 text-sm text-ink-2">No open issues were found in the last scan.</p>;
+  }
 
   return (
-    <div className="grid grid-cols-4 gap-3 max-[1100px]:grid-cols-2 max-[560px]:grid-cols-1">
+    <ul className="m-0 list-none divide-y divide-line overflow-hidden rounded-lg border border-line p-0">
       {groups.map(({ group, count, kinds }) => (
-        <div
-          key={group}
-          className={`flex flex-col gap-2 rounded-xl border border-line bg-surface p-4 shadow-sm ${count === 0 ? 'opacity-60' : ''}`}
-        >
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="text-sm font-semibold text-ink">{ANOMALY_GROUP_LABELS[group]}</span>
-            <span className="text-lg font-semibold tabular-nums text-ink">{count.toLocaleString()}</span>
-          </div>
-          {kinds.length === 0 ? (
-            <span className="text-xs text-ink-3">Nothing open</span>
-          ) : (
-            <>
-              <ul className="m-0 flex list-none flex-col gap-1 p-0">
-                {kinds.slice(0, TOP_KINDS).map(({ kind, count: kindCount }) => (
-                  <li key={kind} className="flex justify-between gap-2 text-xs text-ink-2">
-                    <span className="truncate" title={ANOMALY_KINDS[kind].label}>{ANOMALY_KINDS[kind].label}</span>
-                    <span className="tabular-nums">{kindCount.toLocaleString()}</span>
-                  </li>
-                ))}
-                {kinds.length > TOP_KINDS ? (
-                  <li className="text-xs text-ink-3">+{String(kinds.length - TOP_KINDS)} more rule(s)</li>
-                ) : null}
-              </ul>
-              <Button size="xs" className="self-start" onClick={() => { onFixGroup(group); }}>
-                Fix these →
-              </Button>
-            </>
-          )}
-        </div>
+        <li key={group}>
+          <button
+            type="button"
+            onClick={() => { onFixGroup(group); }}
+            className="flex w-full cursor-pointer items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-surface-2 focus-visible:bg-surface-2 max-[640px]:flex-wrap"
+            aria-label={`Fix questions with ${ANOMALY_GROUP_LABELS[group]} issues`}
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-ink">{ANOMALY_GROUP_LABELS[group]}</span>
+              <span className="mt-0.5 block truncate text-xs text-ink-2">
+                {kinds.slice(0, 2).map((row) => ANOMALY_KINDS[row.kind].label).join(' · ')}
+                {kinds.length > 2 ? ` · ${String(kinds.length - 2)} more types` : ''}
+              </span>
+            </span>
+            <span className="w-24 flex-none text-right text-sm font-semibold tabular-nums text-ink">
+              {count.toLocaleString()} <span className="text-xs font-normal text-ink-3">issues</span>
+            </span>
+            <span className="w-16 flex-none text-right text-xs font-medium text-ink-2">Review →</span>
+          </button>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }

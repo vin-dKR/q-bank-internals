@@ -8,7 +8,9 @@ import {
 } from 'react';
 import {
   type AnswerLayout,
+  CBSE_CLASS_NAMES,
   type ChapterKind,
+  shouldCollectClassName,
   PAPER_METADATA_FIELDS,
   type PaperMetadataKey,
   structureKindsForLayout,
@@ -130,6 +132,7 @@ export function StructureTreePanel({
   // The paper-details panel only applies to previous-year-question uploads; it stays hidden for the
   // module/textbook sources, which carry no whole-paper provenance.
   const isPyq = tree.metadata.source.trim().toLowerCase() === 'pyq';
+  const showClass = shouldCollectClassName(tree.metadata.exam, tree.metadata.module);
 
   const toggleCollapse = (id: string): void => {
     setCollapsed((prev) => {
@@ -203,6 +206,17 @@ export function StructureTreePanel({
                 controller.setMetadata(cascadeMetadata('exam', v, tree.metadata, vocabulary));
               }}
             />
+            {showClass ? (
+              <MetaField
+                label="Class"
+                value={tree.metadata.className}
+                options={CBSE_CLASS_NAMES}
+                placeholder="Select class"
+                onChange={(v) => {
+                  controller.setMetadata({ className: v });
+                }}
+              />
+            ) : null}
             <MetaField
               label="Subject"
               value={tree.metadata.subject}
@@ -445,12 +459,19 @@ function PaperDetailsSection({
 }: PaperDetailsSectionProps): JSX.Element {
   const { metadata } = controller.tree;
   const [collapsed, setCollapsed] = useState(false);
+  const showClass = shouldCollectClassName(metadata.exam, metadata.module);
   const setPaperField = (key: PaperMetadataKey, value: string): void => {
     controller.setMetadata({
       paper: { ...metadata.paper, [key]: value },
       // The exam name here is the paper's exam — it also fills the document's main exam, since a PYQ
       // paper files under it (there is no separate Exam field in the chapter form for PYQ).
-      ...(key === 'pyqExamName' ? { exam: value } : {}),
+      ...(key === 'pyqExamName'
+        ? {
+            exam: value,
+            // Do not carry a grade from a prior CBSE paper into a different exam.
+            ...(!shouldCollectClassName(value, metadata.module) ? { className: '' } : {}),
+          }
+        : {}),
     });
   };
 
@@ -520,6 +541,20 @@ function PaperDetailsSection({
                 )}
               </label>
             ))}
+            {showClass ? (
+              <label className="field">
+                <span>Class</span>
+                <Combobox
+                  value={metadata.className}
+                  options={CBSE_CLASS_NAMES}
+                  placeholder="Select class"
+                  onChange={(value) => {
+                    controller.setMetadata({ className: value });
+                  }}
+                  allowCustom={false}
+                />
+              </label>
+            ) : null}
           </div>
         </>
       ) : null}

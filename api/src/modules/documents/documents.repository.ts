@@ -34,8 +34,9 @@ export type CreateDocumentInput = {
   kind: ChapterKind;
   sectionName: string | null;
   questionType: QuestionType | null;
-  /** Exam + subject the operator picked for this chapter; null when unknown (legacy/register). */
+  /** Exam + CBSE grade + subject the operator picked for this chapter; null when unknown (legacy/register). */
   exam: string | null;
+  className: string | null;
   subject: string | null;
   /** PYQ provenance: whether the chapter is previous-year questions, plus the exam + year asked. */
   pyq: boolean;

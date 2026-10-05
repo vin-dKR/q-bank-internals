@@ -1,7 +1,6 @@
 import { type JSX, useState } from 'react';
 import type { BulkFixPlan, BulkFixPlanId, BulkFixSample } from '@ingest/contracts';
 import { RenderLatex } from '../../../shared/lib/latex.js';
-import { cn } from '../../../shared/lib/cn.js';
 import { Button, LoadingState, Spinner, useConfirm } from '../../../shared/ui/index.js';
 import { useApplyBulkFix, useBulkFixes } from '../hooks/use-quality.js';
 import { clampLatex, showControlChars } from '../lib/anomaly-display.js';
@@ -24,7 +23,7 @@ function SampleRow({ sample }: { sample: BulkFixSample }): JSX.Element {
         <div className="text-xs text-ink-3">{sample.subject ?? 'no subject'}</div>
         <div className="mt-1 text-[11px] text-ink-3">{field}</div>
       </td>
-      <td className="align-top font-mono text-[12px] text-bad">
+      <td className="align-top font-mono text-[12px] text-ink-2">
         {showControlChars(clampLatex(before, PREVIEW_LENGTH)) || '(empty)'}
       </td>
       <td className="align-top">
@@ -37,34 +36,35 @@ function SampleRow({ sample }: { sample: BulkFixSample }): JSX.Element {
   );
 }
 
-/** One plan as a tile: what it does, how many questions it touches, and its two actions. */
-function PlanTile({
+/** One plan as a row: the scope and the two available actions stay together. */
+function PlanRow({
   plan,
   busy,
+  applying,
   open,
   onPreview,
   onApply,
 }: {
   plan: BulkFixPlan;
   busy: boolean;
+  applying: boolean;
   open: boolean;
   onPreview: () => void;
   onApply: () => void;
 }): JSX.Element {
   return (
-    <div
-      className={cn(
-        'flex flex-col gap-2 rounded-xl border bg-surface p-4 shadow-sm transition-colors',
-        open ? 'border-brand ring-2 ring-brand-soft' : 'border-line',
-      )}
-    >
-      <span className="text-sm font-semibold text-ink">{plan.label}</span>
-      <span className="text-2xl font-semibold tabular-nums text-ink">{plan.affected.toLocaleString()}</span>
-      <span className="line-clamp-3 text-xs text-ink-2" title={plan.description}>{plan.description}</span>
-      <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">
-        <Button size="xs" onClick={onPreview}>{open ? 'Hide preview' : 'Preview'}</Button>
-        <Button variant="primary" size="xs" disabled={busy} onClick={onApply}>
-          {busy ? <Spinner /> : null} Fix all
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+      <div className="min-w-[220px] flex-1">
+        <span className="text-sm font-semibold text-ink">{plan.label}</span>
+        <p className="m-0 mt-0.5 text-xs text-ink-2">{plan.description}</p>
+      </div>
+      <span className="min-w-24 text-right text-sm font-semibold tabular-nums text-ink">
+        {plan.affected.toLocaleString()} <span className="text-xs font-normal text-ink-3">questions</span>
+      </span>
+      <div className="flex items-center gap-2">
+        <Button size="xs" onClick={onPreview}>{open ? 'Hide preview' : 'Preview changes'}</Button>
+        <Button size="xs" disabled={applying || !open} title={!open ? 'Preview changes before applying' : undefined} onClick={onApply}>
+          {busy ? <Spinner /> : null} Apply to all
         </Button>
       </div>
     </div>
@@ -74,7 +74,7 @@ function PlanTile({
 /** The chosen plan's full before/after, shown under the tiles where it has the page width to be readable. */
 function PlanPreview({ plan }: { plan: BulkFixPlan }): JSX.Element {
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-4">
+    <div className="flex flex-col gap-2 rounded-lg border border-line bg-surface-2 p-4">
       <div className="text-sm font-semibold text-ink">{plan.label} — preview</div>
       {plan.groups.length > 0 ? (
           <div className="flex flex-col gap-1">
@@ -89,8 +89,8 @@ function PlanPreview({ plan }: { plan: BulkFixPlan }): JSX.Element {
                 <tbody>
                   {plan.groups.map((group) => (
                     <tr key={`${group.before}-${group.after}`}>
-                      <td className="font-mono text-[12px] text-bad">{group.before || '(empty)'}</td>
-                      <td className="font-mono text-[12px] text-ok">{group.after}</td>
+                      <td className="font-mono text-[12px] text-ink-2">{group.before || '(empty)'}</td>
+                      <td className="font-mono text-[12px] text-ink">{group.after}</td>
                       <td className="num">{group.questions.toLocaleString()}</td>
                     </tr>
                   ))}
@@ -142,7 +142,7 @@ export function BulkFixCard(): JSX.Element {
   const run = async (plan: BulkFixPlan): Promise<void> => {
     const confirmed = await confirm({
       title: `${plan.label}?`,
-      body: `${plan.affected.toLocaleString()} live questions will be rewritten, along with their ingest staging copies. Preview a few first if you have not already.`,
+      body: `${plan.affected.toLocaleString()} published questions across the bank will be rewritten, along with their ingest staging copies. This action is not limited by the filters above. Review the preview before applying.`,
       confirmLabel: `Fix ${plan.affected.toLocaleString()}`,
     });
     if (confirmed) apply.mutate(plan.plan);
@@ -152,13 +152,15 @@ export function BulkFixCard(): JSX.Element {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-4 gap-3 max-[1100px]:grid-cols-2 max-[560px]:grid-cols-1">
+      <p className="m-0 text-xs text-ink-2">Each fix applies to every affected published question, regardless of the current queue filters.</p>
+      <div className="divide-y divide-line overflow-hidden rounded-lg border border-line">
         {available.map((plan) => (
-          <PlanTile
+          <PlanRow
             key={plan.plan}
             plan={plan}
             open={previewed === plan.plan}
             busy={apply.isPending && apply.variables === plan.plan}
+            applying={apply.isPending}
             onPreview={() => { setPreviewed(previewed === plan.plan ? null : plan.plan); }}
             onApply={() => { void run(plan); }}
           />

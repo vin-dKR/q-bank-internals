@@ -20,15 +20,20 @@ export function cellsForPage(
   splits: SplitPoint[],
   order: ReadingOrder = 'column',
 ): Slice[] {
-  const cols = boundaries(splits.filter((s) => s.orientation === 'vertical').map((s) => s.position));
-  const rows = boundaries(splits.filter((s) => s.orientation === 'horizontal').map((s) => s.position));
+  const cols = boundaries(
+    splits.filter((s) => s.orientation === 'vertical').map((s) => s.position),
+  );
+  const rows = boundaries(
+    splits.filter((s) => s.orientation === 'horizontal').map((s) => s.position),
+  );
 
   const cell = (c: number, r: number): Slice | null => {
     const x0 = cols[c];
     const x1 = cols[c + 1];
     const start = rows[r];
     const end = rows[r + 1];
-    if (x0 === undefined || x1 === undefined || start === undefined || end === undefined) return null;
+    if (x0 === undefined || x1 === undefined || start === undefined || end === undefined)
+      return null;
     return { pageNumber, x0, x1, start, end };
   };
 

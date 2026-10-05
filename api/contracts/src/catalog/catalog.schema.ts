@@ -19,6 +19,8 @@ export const CatalogQuestionSchema = z.object({
   // none or on legacy rows. Surfaced so the browse renders the same complete question the bank stores.
   explanation: z.string().nullable(),
   exam: z.string().nullable(),
+  /** CBSE grade stamped by ingest at publish; null for non-CBSE and legacy rows. */
+  className: z.string().nullable(),
   subject: z.string().nullable(),
   chapter: z.string().nullable(),
   section: z.string().nullable(),

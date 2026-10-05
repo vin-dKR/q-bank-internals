@@ -17,7 +17,7 @@ import { mergeAnswerEntries, type AnswerSource } from '../../modules/extraction/
 import type { AiTokenUsage } from '../../modules/usage/index.js';
 import { errors } from '../../shared/errors/error-catalog.js';
 import { logger } from '../../shared/logger/logger.js';
-import { answerPrompt, companionPrompt, questionPrompt, solutionPrompt } from './prompts/extraction-prompts.js';
+import { answerPrompt, companionPrompt, isChemistryContext, questionPrompt, solutionPrompt } from './prompts/extraction-prompts.js';
 import { sanitizeExtractedLatex } from './latex-sanitizer.js';
 import type { PromptOverrides } from '../../modules/prompts/index.js';
 
@@ -26,6 +26,8 @@ import type { PromptOverrides } from '../../modules/prompts/index.js';
  * AND the page's question JSON; the retry doubles it once if the model still truncates.
  */
 const MAX_TOKENS = 16000;
+const SMILES_TAG = /<smiles\b/i;
+const SMILES_AUDIT_PROMPT = 'CHEMISTRY STRUCTURE AUDIT: The candidate JSON below was extracted from the supplied exam-page image. First locate every molecule drawn with bonds, rings, or skeletal notation. Each must appear in the candidate as one complete <smiles>RAW_SMILES</smiles> tag, even when the first extraction omitted all tags. Inspect or recover only those SMILES values against the drawing. Confirm every bond, charge, and aromatic substituent position matches; for rings explicitly count edges between substituents, never accepting a plausible but wrong ortho/meta/para isomer. If the image has no drawn molecule, return the complete candidate JSON unchanged. Otherwise, change only the affected SMILES values and return complete valid JSON. Do not alter prose, question boundaries, options, answers, or any non-SMILES field.\n\nCANDIDATE JSON:\n';
 
 /** Shape the question prompt asks the model to return, before we enrich with section/page. */
 type RawQuestion = {
@@ -39,6 +41,8 @@ type RawQuestion = {
   question_type?: unknown;
   /** The question's difficulty, classified by the model — one of KNOWN_LEVELS (easy/medium/hard). */
   difficulty?: unknown;
+  /** The model's 0–1 confidence in its difficulty classification. */
+  difficulty_confidence?: unknown;
   /** Only present for matrix-match questions — the ordered columns and (optionally) the answer key. */
   columns?: unknown;
   match?: unknown;
@@ -74,6 +78,16 @@ function cleanStringOrNull(value: unknown): string | null {
 function normalizeDifficulty(value: unknown): string | null {
   const text = asString(value).trim().toLowerCase();
   return (KNOWN_LEVELS as readonly string[]).includes(text) ? text : null;
+}
+
+/** A model-reported 0–1 difficulty confidence, or null for legacy/custom prompt replies. */
+function normalizeDifficultyConfidence(value: unknown): number | null {
+  const numeric = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && /^0(?:\.\d+)?$|^1(?:\.0+)?$/.test(value.trim())
+      ? Number(value)
+      : Number.NaN;
+  return Number.isFinite(numeric) && numeric >= 0 && numeric <= 1 ? numeric : null;
 }
 
 /**
@@ -326,8 +340,16 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     for (const page of input.pages) {
       // Per page: the topic config can bind different pages to different fixed question types.
       const prompt = questionPrompt(input.document, page.pageNumber, overrides, masters);
-      const raws = await this.readPageQuestions(prompt, page, input.document, usage, input.signal);
-      const boundType = topicBindingForPage(input.document.topics, page.pageNumber)?.questionType
+      const binding = topicBindingForPage(input.document.topics, page.pageNumber);
+      const raws = await this.readPageQuestions(
+        prompt,
+        page,
+        input.document,
+        usage,
+        input.signal,
+        isChemistryContext(input.document, binding?.subject),
+      );
+      const boundType = binding?.questionType
         ?? input.document.questionType;
       for (const raw of raws) {
         const questionType = asStringOrNull(raw.question_type);
@@ -350,6 +372,7 @@ export class OpenAiVisionExtractor implements VisionExtractor {
           // nothing usable — toNewQuestion falls back to the operator's binding for the type.
           questionType,
           level: normalizeDifficulty(raw.difficulty),
+          difficultyConfidence: normalizeDifficultyConfidence(raw.difficulty_confidence),
           sourcePage: page.pageNumber,
           pyqExam: asStringOrNull(raw.pyq_exam),
           pyqYear: asStringOrNull(raw.pyq_year),
@@ -439,10 +462,11 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     document: Document,
     usage: AiTokenUsage,
     signal?: AbortSignal,
+    recoverSmiles = false,
   ): Promise<RawQuestion[]> {
-    const first = parseQuestions((await this.call(prompt, page.png, usage, signal)).content);
+    const first = parseQuestions((await this.call(prompt, page.png, usage, signal, recoverSmiles)).content);
     if (first.length > 0) return first;
-    const retry = parseQuestions((await this.call(prompt, page.png, usage, signal)).content);
+    const retry = parseQuestions((await this.call(prompt, page.png, usage, signal, recoverSmiles)).content);
     if (retry.length === 0) {
       logger.warn(
         { documentId: document.id, page: page.pageNumber },
@@ -478,6 +502,7 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     png: Buffer,
     usage: AiTokenUsage,
     signal?: AbortSignal,
+    recoverSmiles = false,
   ): Promise<{ content: string }> {
     const imageUrl = `data:image/png;base64,${png.toString('base64')}`;
     let content = '';
@@ -532,6 +557,36 @@ export class OpenAiVisionExtractor implements VisionExtractor {
       maxCompletionTokens *= 2;
     }
 
+    if (!recoverSmiles && !SMILES_TAG.test(content)) return { content };
+
+    const audit = await this.client.chat.completions.create(
+      {
+        model: this.model,
+        max_completion_tokens: MAX_TOKENS,
+        response_format: { type: 'json_object' },
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: SMILES_AUDIT_PROMPT + content },
+            { type: 'image_url', image_url: { url: imageUrl, detail: 'high' } },
+          ],
+        }],
+      },
+      signal ? { signal } : undefined,
+    );
+    usage.promptTokens += audit.usage?.prompt_tokens ?? 0;
+    usage.completionTokens += audit.usage?.completion_tokens ?? 0;
+    usage.totalTokens += audit.usage?.total_tokens ?? 0;
+    usage.callCount += 1;
+    const audited = audit.choices[0]?.message.content?.trim() ?? '';
+    try {
+      if (audit.choices[0]?.finish_reason !== 'length' && audited && typeof JSON.parse(audited) === 'object') {
+        return { content: audited };
+      }
+    } catch (error) {
+      logger.warn({ err: error }, 'SMILES audit returned malformed JSON; preserving first extraction');
+    }
+    logger.warn({ model: this.model }, 'SMILES audit returned no usable JSON; preserving first extraction');
     return { content };
   }
 }

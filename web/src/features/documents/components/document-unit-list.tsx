@@ -7,6 +7,8 @@ type DocumentUnitListProps = {
   items: Document[];
   /** Per-document action buttons, decided by the page (Run / View / Configs / Publish / delete). */
   renderActions: (doc: Document) => ReactNode;
+  /** Optional live status display, for consumers that also own a document-level job state. */
+  renderStatus?: (doc: Document) => ReactNode;
 };
 
 /**
@@ -14,12 +16,17 @@ type DocumentUnitListProps = {
  * question part carries the unit's real status and count; answer/solution appear as quiet bound-context
  * rows — never with an extraction status or a "0 questions" that reads as failed.
  */
-export function DocumentUnitList({ items, renderActions }: DocumentUnitListProps): JSX.Element {
+export function DocumentUnitList({ items, renderActions, renderStatus }: DocumentUnitListProps): JSX.Element {
   const units = useMemo(() => groupByUnit(items), [items]);
   return (
     <div className="unit-list">
       {units.map((unit) => (
-        <UnitRow key={unit.key} unit={unit} renderActions={renderActions} />
+        <UnitRow
+          key={unit.key}
+          unit={unit}
+          renderActions={renderActions}
+          {...(renderStatus ? { renderStatus } : {})}
+        />
       ))}
     </div>
   );
@@ -28,9 +35,11 @@ export function DocumentUnitList({ items, renderActions }: DocumentUnitListProps
 function UnitRow({
   unit,
   renderActions,
+  renderStatus,
 }: {
   unit: DocumentUnit;
   renderActions: (doc: Document) => ReactNode;
+  renderStatus?: (doc: Document) => ReactNode;
 }): JSX.Element {
   const primary = unit.questions[0];
   const totalQuestions = unit.questions.reduce((sum, doc) => sum + doc.questionCount, 0);
@@ -50,7 +59,7 @@ function UnitRow({
           {supportingKinds.has('solution') ? <span className="chip is-solution">Solution</span> : null}
         </div>
         {primary ? (
-          <StatusBadge status={primary.status} />
+          renderStatus ? renderStatus(primary) : <StatusBadge status={primary.status} />
         ) : (
           <span className="badge badge--neutral">uploaded</span>
         )}
@@ -68,7 +77,7 @@ function UnitRow({
                 {unit.questions.map((doc) => (
                   <tr key={doc.id}>
                     <td>{doc.fileName}</td>
-                    <td><StatusBadge status={doc.status} /></td>
+                    <td>{renderStatus ? renderStatus(doc) : <StatusBadge status={doc.status} />}</td>
                     <td>{doc.questionCount}</td>
                     <td className="cell-actions">
                       <div className="row row--end">

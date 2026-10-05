@@ -15,6 +15,7 @@ export const StructureDetectionContextSchema = z
   .object({
     source: z.string(),
     exam: z.string(),
+    className: z.string().default(''),
     subject: z.string(),
     module: z.string(),
     chapter: z.string(),

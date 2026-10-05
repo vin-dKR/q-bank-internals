@@ -86,6 +86,13 @@ export const errors = {
   extractionJobNotFound: (id: string): AppError =>
     new AppError('EXTRACTION_JOB_NOT_FOUND', 404, `No extraction job with id "${id}".`),
 
+  extractionNotResumable: (documentId: string): AppError =>
+    new AppError(
+      'EXTRACTION_NOT_RESUMABLE',
+      409,
+      `Document "${documentId}" has no paused or failed extraction with saved page checkpoints to resume.`,
+    ),
+
   extractionTimedOut: (ms: number): AppError =>
     new AppError(
       'EXTRACTION_TIMED_OUT',
@@ -128,7 +135,11 @@ export const errors = {
     new AppError('UPLOAD_STAGING_FAILED', 502, `Direct upload to storage failed: ${reason}`),
 
   uploadStagingInvalidPath: (): AppError =>
-    new AppError('UPLOAD_STAGING_INVALID_PATH', 400, 'The upload reference is not a staged object.'),
+    new AppError(
+      'UPLOAD_STAGING_INVALID_PATH',
+      400,
+      'The upload reference is not a staged object.',
+    ),
 
   promptMissingTokens: (key: string, tokens: string[]): AppError =>
     new AppError(
@@ -173,10 +184,18 @@ export const errors = {
     new AppError('ANOMALY_NOT_FOUND', 404, `No quality anomaly with id "${id}".`),
 
   aiProposalNotPending: (id: string): AppError =>
-    new AppError('AI_PROPOSAL_NOT_PENDING', 404, `No pending AI proposal with id "${id}" — it may already have been applied or discarded.`),
+    new AppError(
+      'AI_PROPOSAL_NOT_PENDING',
+      404,
+      `No pending AI proposal with id "${id}" — it may already have been applied or discarded.`,
+    ),
 
   aiCouldNotDecide: (detail: string): AppError =>
-    new AppError('AI_COULD_NOT_DECIDE', 422, `The AI could not decide an answer that fits: ${detail || 'no reason given.'}`),
+    new AppError(
+      'AI_COULD_NOT_DECIDE',
+      422,
+      `The AI could not decide an answer that fits: ${detail || 'no reason given.'}`,
+    ),
 
   /** A topic was asked for on a question whose subject is unset or has no topics in Question taxonomy. */
   topicNotMatchable: (reason: string): AppError => new AppError('TOPIC_NOT_MATCHABLE', 422, reason),
@@ -223,6 +242,13 @@ export const errors = {
       `"${name}" is used by ${String(count)} bank question(s) and cannot be deleted. Reassign them first.`,
     ),
 
+  dictionaryEntryHasChildren: (name: string, child: string, count: number): AppError =>
+    new AppError(
+      'DICTIONARY_ENTRY_HAS_CHILDREN',
+      409,
+      `"${name}" still has ${String(count)} ${child} entr${count === 1 ? 'y' : 'ies'} and cannot be deleted. Move or delete them first.`,
+    ),
+
   dictionaryDimensionClosed: (dimension: string): AppError =>
     new AppError(
       'DICTIONARY_DIMENSION_CLOSED',
@@ -231,13 +257,32 @@ export const errors = {
     ),
 
   dictionaryFieldNotAllowed: (dimension: string, field: string): AppError =>
-    new AppError('DICTIONARY_FIELD_NOT_ALLOWED', 400, `"${field}" cannot be set on a ${dimension} entry.`),
+    new AppError(
+      'DICTIONARY_FIELD_NOT_ALLOWED',
+      400,
+      `"${field}" cannot be set on a ${dimension} entry.`,
+    ),
 
   dictionaryParentNotFound: (parent: string, id: string): AppError =>
-    new AppError('DICTIONARY_PARENT_NOT_FOUND', 400, `No ${parent} with id "${id}" to scope this entry to.`),
+    new AppError(
+      'DICTIONARY_PARENT_NOT_FOUND',
+      400,
+      `No ${parent} with id "${id}" to scope this entry to.`,
+    ),
+
+  dictionaryParentRequired: (dimension: string, parent: string): AppError =>
+    new AppError(
+      'DICTIONARY_PARENT_REQUIRED',
+      400,
+      `A ${parent} is required when creating or moving a ${dimension}.`,
+    ),
 
   dictionaryWriteFailed: (reason: string): AppError =>
-    new AppError('DICTIONARY_WRITE_FAILED', 502, `Writing the taxonomy dictionary failed: ${reason}`),
+    new AppError(
+      'DICTIONARY_WRITE_FAILED',
+      502,
+      `Writing the taxonomy dictionary failed: ${reason}`,
+    ),
 
   taxonomyUnavailable: (): AppError =>
     new AppError(

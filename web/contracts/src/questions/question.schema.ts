@@ -73,7 +73,10 @@ export function matchKeyToAnswer(key: Record<string, readonly string[]>): string
  * resolves to `p`, `t` when those are the known labels. Unparseable input yields `{}` so the operator
  * can fill the matching in verify.
  */
-function parseCompactMatchTargets(rest: string, knownTargetLabels: readonly string[] | undefined): string[] {
+function parseCompactMatchTargets(
+  rest: string,
+  knownTargetLabels: readonly string[] | undefined,
+): string[] {
   if (!knownTargetLabels || knownTargetLabels.length === 0) {
     // Preserve obvious scalar identifiers even without table context. Otherwise `II` and `T31`
     // would be corrupted into individual characters, while the established compact `A→pt` dialect
@@ -82,12 +85,14 @@ function parseCompactMatchTargets(rest: string, knownTargetLabels: readonly stri
     return Array.from(rest);
   }
 
-  const labels = [...new Map(
-    knownTargetLabels
-      .map((label) => label.trim())
-      .filter(Boolean)
-      .map((label) => [label.toLocaleLowerCase(), label]),
-  ).entries()].map(([key, label]) => ({ key, label }));
+  const labels = [
+    ...new Map(
+      knownTargetLabels
+        .map((label) => label.trim())
+        .filter(Boolean)
+        .map((label) => [label.toLocaleLowerCase(), label]),
+    ).entries(),
+  ].map(([key, label]) => ({ key, label }));
   const compact = rest.toLocaleLowerCase();
   const exact = labels.find((candidate) => candidate.key === compact);
   if (exact) return [exact.label];
@@ -118,6 +123,33 @@ function parseCompactMatchTargets(rest: string, knownTargetLabels: readonly stri
 }
 
 /**
+ * Matrix papers commonly print identifiers as `(A)` / `(p)`, while the stored
+ * key needs the identifier itself. Remove one balanced wrapper (and wrappers
+ * around individual targets) without accepting arbitrary punctuation as a
+ * label. This keeps a table's display label intact but lets an answer such as
+ * `(A) → (p, r, s)` complete that table's key.
+ */
+function unwrapMatchLabel(value: string): string {
+  const raw = value.trim();
+  const wrapped = /^([([{])\s*([A-Za-z0-9]+)\s*([)\]}])$/.exec(raw);
+  const closingFor: Record<string, string> = { '(': ')', '[': ']', '{': '}' };
+  return wrapped && closingFor[wrapped[1] ?? ''] === wrapped[3]
+    ? (wrapped[2] ?? '')
+    : raw;
+}
+
+/** Remove display wrappers before splitting a matrix row's target list. */
+function unwrapMatchTargets(value: string): string {
+  let text = value.trim();
+  const grouped = /^([([{])\s*([\s\S]+?)\s*([)\]}])$/.exec(text);
+  const closingFor: Record<string, string> = { '(': ')', '[': ']', '{': '}' };
+  if (grouped && closingFor[grouped[1] ?? ''] === grouped[3]) text = grouped[2] ?? '';
+  return text.replace(/([([{])\s*([A-Za-z0-9]+)\s*([)\]}])/g, (whole, open, label, close) =>
+    closingFor[open] === close ? label : whole,
+  );
+}
+
+/**
  * Semicolons/newlines always separate source rows. A comma does too only when the following text
  * visibly starts another `source → target` pair; otherwise it remains the one-to-many delimiter in
  * `A-p,t`. This admits ordinary printed options such as `A-i, B-ii, C-iii` without breaking a
@@ -126,21 +158,25 @@ function parseCompactMatchTargets(rest: string, knownTargetLabels: readonly stri
 function splitMatchAnswerSegments(answer: string): string[] {
   return answer
     .split(/[;\n]+/)
-    .flatMap((segment) => segment.split(/,\s*(?=[A-Za-z0-9]+\s*[-–—>:→=]+)/));
+    .flatMap((segment) => segment.split(/,\s*(?=(?:[([{]\s*)?[A-Za-z0-9]+(?:\s*[)\]}])?\s*[-–—>:→=]+)/));
 }
 
-export function parseMatchKey(answer: string, knownTargetLabels?: readonly string[]): Record<string, string[]> {
+export function parseMatchKey(
+  answer: string,
+  knownTargetLabels?: readonly string[],
+): Record<string, string[]> {
   const key: Record<string, string[]> = {};
   for (const segment of splitMatchAnswerSegments(answer)) {
-    const match = /^\s*([A-Za-z0-9]+)\s*(?:[-–—>:→=]+|\s)\s*(.+)$/.exec(segment.trim());
+    const match = /^\s*(?:[([{]\s*([A-Za-z0-9]+)\s*[)\]}]|([A-Za-z0-9]+))\s*(?:[-–—>:→=]+|\s)\s*(.+)$/.exec(segment.trim());
     if (!match) continue;
-    const label = (match[1] ?? '').trim();
-    const rest = (match[2] ?? '').trim();
+    const label = (match[1] ?? match[2] ?? '').trim();
+    const rest = unwrapMatchTargets((match[3] ?? '').trim());
     if (!label || !rest) continue;
     const targets = /[,\s]/.test(rest)
-      ? rest.split(/[,\s]+/).filter(Boolean)
+      ? rest.split(/[,\s]+/).map(unwrapMatchLabel).filter(Boolean)
       : parseCompactMatchTargets(rest, knownTargetLabels);
-    if (targets.length > 0) key[label] = targets;
+    const normalizedTargets = targets.map(unwrapMatchLabel).filter(Boolean);
+    if (normalizedTargets.length > 0) key[label] = normalizedTargets;
   }
   return key;
 }
@@ -223,6 +259,8 @@ export const QuestionSchema = z.object({
   // Which of topic/answer/solution/level hold an AI-written value (see AiFilledSchema). Null or empty when
   // none do; carried to the bank's `ai_filled` on publish so the provenance survives a re-publish.
   aiFilled: AiFilledSchema.nullable().default(null),
+  // CBSE grade copied from the source document at extraction; null for non-CBSE and legacy questions.
+  className: z.string().nullable().default(null),
   // Per-question subject, set per node in the structure tree — for a paper that spans subjects (a PYQ
   // paper) each question publishes under its own subject. Null falls back to the document's subject.
   subject: z.string().nullable(),
@@ -367,6 +405,21 @@ export type RefineLatex = z.infer<typeof RefineLatexSchema>;
 export const RefinedLatexSchema = z.object({ text: z.string() });
 export type RefinedLatex = z.infer<typeof RefinedLatexSchema>;
 
+/** Which matrix field receives the text selected from a source-page area. */
+export const TranscribeAreaTargetSchema = z.enum(['matrix_column_title', 'matrix_entry']);
+export type TranscribeAreaTarget = z.infer<typeof TranscribeAreaTargetSchema>;
+
+/** Multipart form fields for a tight source-area image selected in Verify. */
+export const TranscribeAreaRequestSchema = z.object({
+  documentId: z.string().min(1),
+  target: TranscribeAreaTargetSchema,
+});
+export type TranscribeAreaRequest = z.infer<typeof TranscribeAreaRequestSchema>;
+
+/** Exact text the vision reader transcribed from one operator-selected source area. */
+export const TranscribedAreaSchema = z.object({ text: z.string() });
+export type TranscribedArea = z.infer<typeof TranscribedAreaSchema>;
+
 /**
  * Ask the AI to re-read the source page of ONE already-extracted question and re-extract its fields
  * from scratch (stem, options, answer, explanation) — the "read the page again" companion to the
@@ -389,10 +442,27 @@ export const ReExtractSourceSchema = z.object({
 });
 export type ReExtractSource = z.infer<typeof ReExtractSourceSchema>;
 
+/**
+ * Optional, per-field source pages for a whole-question Verify re-read. The question page remains
+ * the only source of its stem/options; these sibling pages supply the answer and worked solution
+ * for that same selected question.
+ */
+export const ReExtractSupportingSourcesSchema = z.object({
+  answer: ReExtractSourceSchema.optional(),
+  solution: ReExtractSourceSchema.optional(),
+});
+export type ReExtractSupportingSources = z.infer<typeof ReExtractSupportingSourcesSchema>;
+
 export const ReExtractQuestionSchema = z.object({
   documentId: z.string().min(1),
   questionId: z.string().min(1),
   source: ReExtractSourceSchema.optional(),
+  /**
+   * A whole-question re-read may include its already-resolved Answer/Solution pages. Omit this
+   * when reading one explicit field source. Within this object, omitted fields use the question's
+   * safe range-based sibling-source fallback.
+   */
+  supportingSources: ReExtractSupportingSourcesSchema.optional(),
   // Optional question-type override for the re-read: the verify screen sends the type the operator
   // has just selected (before saving the draft) so the model re-extracts with the RIGHT config —
   // e.g. switching a mis-typed question to "matrix" and re-reading yields the match columns, not

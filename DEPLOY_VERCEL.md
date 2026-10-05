@@ -34,7 +34,11 @@ GitHub repo**, each with its own Root Directory. Deploy the API first, then the 
 - Serverless is auto-detected (`VERCEL` in Vercel's runtime; `SERVERLESS=true` forces it locally). In
   this mode the composition root wires **`SynchronousJobQueue`**: extraction runs **inline inside the
   request** instead of as detached background work, because Vercel freezes the function the instant
-  the response is sent and would otherwise kill it mid-flight.
+  the response is sent and would otherwise kill it mid-flight. This fallback reserves one minute of
+  Vercel's five-minute budget to save a terminal result, so it runs for at most four minutes.
+  If `REDIS_URL` is set, BullMQ takes priority even on Vercel: the API responds immediately and a
+  separately hosted `npm run worker` process performs the extraction using `EXTRACTION_TIMEOUT_MS`
+  (15 minutes by default).
 
 ---
 
@@ -57,8 +61,9 @@ The API only accepts the browser origin named here (`app.ts` → `cors({ origin:
 
 1. **`maxDuration: 300` needs a paid plan.** Hobby caps functions at **60s**; Vercel silently clamps.
    Multi-page PDF extraction runs *inline* on serverless, so a long PDF can exceed the limit. The
-   durable fix is the Redis + off-Vercel worker path (set `REDIS_URL`, run `npm run worker` elsewhere)
-   — the code already supports it (BullMQ branch in `container.ts`).
+   fallback stops at four minutes to return a persisted stage-specific result. The durable fix for
+   long production PDFs is the Redis + off-Vercel worker path (set `REDIS_URL`, run `npm run worker`
+   elsewhere) — the code already supports it (BullMQ branch in `container.ts`).
 2. **4.5 MB request-body limit.** Vercel rejects bodies over ~4.5 MB *at the edge*. Multer accepts PDFs
    up to 25 MB (`MAX_UPLOAD_BYTES`), so larger uploads fail on Vercel regardless. For big PDFs, upload
    direct-to-storage or use a non-serverless host for that endpoint.

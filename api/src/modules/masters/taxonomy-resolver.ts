@@ -88,11 +88,16 @@ class DimensionDict {
    * raw name → resolved entry, creating an OPEN-vocabulary canonical row on first sight;
    * junk/unknown → null. QuestionType is deliberately different: its rows are curated/seeded,
    * so publishing an extracted value must never invent a dictionary row.
-   * `parentId` is the resolved subject (for a chapter) / chapter (for a topic) to scope a NEW row to.
-  */
-  async resolve(raw: string | null | undefined, parentId: string | null = null): Promise<Resolved | null> {
+   * `parentId` is the resolved subject (for a chapter), module (for a section), or chapter (for a
+   * topic) to scope a NEW row to.
+   */
+  async resolve(
+    raw: string | null | undefined,
+    parentId: string | null = null,
+  ): Promise<Resolved | null> {
     const canon = canonicalizeMaster(this.dimension, raw);
-    const hasCuratedQuestionTypeCandidate = this.dimension === 'questionType' && Boolean(raw?.trim());
+    const hasCuratedQuestionTypeCandidate =
+      this.dimension === 'questionType' && Boolean(raw?.trim());
     // Preserve the cheap null/junk path for every dimension. The one exception is a non-empty
     // QuestionType that is unknown to the built-in fold map: it may still name an existing curated row.
     if (!canon && !hasCuratedQuestionTypeCandidate) return null;
@@ -122,22 +127,48 @@ class DimensionDict {
         row.key === canon.key ||
         row.aliases.some((alias) => canonicalizeMaster(this.dimension, alias)?.key === canon.key),
     );
-    if (hit) return toResolved(hit);
+    if (hit) {
+      // A legacy Section with no module remains a safe global fallback. But a Section already filed
+      // under another module must never be stamped onto this question merely because the display
+      // spelling happens to match. The shared bank still has a globally-unique Section.key; until its
+      // migration makes `(moduleId, key)` unique, preserve the raw section text and leave this FK null
+      // rather than silently crossing providers.
+      if (
+        this.dimension === 'section' &&
+        hit.moduleId !== null &&
+        (parentId === null || hit.moduleId !== parentId)
+      ) {
+        return null;
+      }
+      return toResolved(hit);
+    }
+
+    // A Section must have a resolved module to be created. This keeps an import/legacy document with
+    // no module from polluting Masters with a new globally-unscoped row; an already-existing legacy
+    // global Section was handled above and remains readable.
+    if (this.dimension === 'section' && parentId === null) return null;
 
     // Unlike the open dimensions, QuestionType is a deliberately curated taxonomy. The raw
     // question_type remains on the published question and its built-in kind is derived below, but a
     // missing master must leave its FK null rather than letting an extraction create a new row.
     if (this.dimension === 'questionType') return null;
 
-    const pending = this.inflight.get(canon.key);
+    // Section keys are currently globally unique in the shared bank, but scope the in-flight work by
+    // module anyway. Otherwise two concurrent imports for different providers could share the first
+    // promise and incorrectly stamp its Section FK onto both questions before the database's unique
+    // key rejects the second insert. Once Eduents migrates to a `(moduleId, key)` unique identity,
+    // this also becomes the correct de-duplication boundary automatically.
+    const inflightKey =
+      this.dimension === 'section' ? `${parentId ?? 'unscoped'}:${canon.key}` : canon.key;
+    const pending = this.inflight.get(inflightKey);
     if (pending) return pending;
 
     const created = this.createAndCache(canon, parentId);
-    this.inflight.set(canon.key, created);
+    this.inflight.set(inflightKey, created);
     try {
       return await created;
     } finally {
-      this.inflight.delete(canon.key);
+      this.inflight.delete(inflightKey);
     }
   }
 
@@ -145,14 +176,20 @@ class DimensionDict {
   private existingQuestionType(rows: DictionaryRow[], raw: string): DictionaryRow | undefined {
     const rawKey = norm(raw);
     const slugKey = slug(raw);
-    return rows.find((row) =>
-      norm(row.key) === rawKey || row.key === slugKey || norm(row.name) === rawKey ||
-      row.aliases.some((alias) => norm(alias) === rawKey || slug(alias) === slugKey),
+    return rows.find(
+      (row) =>
+        norm(row.key) === rawKey ||
+        row.key === slugKey ||
+        norm(row.name) === rawKey ||
+        row.aliases.some((alias) => norm(alias) === rawKey || slug(alias) === slugKey),
     );
   }
 
   /** Insert the canonical row; on a unique-race or an unconfigured store, re-read (or degrade to null). */
-  private async createAndCache(canon: Canonical, parentId: string | null): Promise<Resolved | null> {
+  private async createAndCache(
+    canon: Canonical,
+    parentId: string | null,
+  ): Promise<Resolved | null> {
     const row: NewDictionaryRow = {
       key: canon.key,
       name: canon.name,
@@ -161,6 +198,8 @@ class DimensionDict {
       rank: this.dimension === 'level' ? levelRank(canon.key) : null,
       subjectId: this.dimension === 'chapter' ? parentId : null,
       chapterId: this.dimension === 'topic' ? parentId : null,
+      moduleId: this.dimension === 'section' ? parentId : null,
+      examIds: [],
     };
     try {
       const created = await this.store.create(this.dimension, row);
@@ -171,6 +210,14 @@ class DimensionDict {
       // the race, no hit means no DB — an FK left null is the documented safe fallback (raw preserved).
       this.invalidate();
       const again = (await this.rows()).find((r) => r.key === canon.key);
+      if (
+        again &&
+        this.dimension === 'section' &&
+        again.moduleId !== null &&
+        (parentId === null || again.moduleId !== parentId)
+      ) {
+        return null;
+      }
       return again ? toResolved(again) : null;
     }
   }
@@ -191,7 +238,8 @@ export class TaxonomyResolver {
   private readonly dicts: Record<TaxonomyDimension, DimensionDict>;
 
   constructor(store: TaxonomyStore) {
-    const dict = (dimension: TaxonomyDimension): DimensionDict => new DimensionDict(dimension, store);
+    const dict = (dimension: TaxonomyDimension): DimensionDict =>
+      new DimensionDict(dimension, store);
     this.dicts = {
       exam: dict('exam'),
       subject: dict('subject'),
@@ -214,18 +262,19 @@ export class TaxonomyResolver {
     // matching QuestionType row. This derives only the denormalized kind; it does NOT manufacture an
     // FK or rewrite the raw `question_type`, so a custom/unknown model value still stays unresolved.
     const builtInQuestionType = canonicalizeMaster('questionType', input.questionType);
-    const [exam, subject, section, questionType, level] = await Promise.all([
+    const [exam, subject, questionType, level, module] = await Promise.all([
       this.dicts.exam.resolve(input.exam),
       this.dicts.subject.resolve(input.subject),
-      this.dicts.section.resolve(input.section),
       this.dicts.questionType.resolve(input.questionType),
       this.dicts.level.resolve(input.level),
-    ]);
-    // Only chapters are subject-scoped. Modules identify the source/provider (for example Allen or PW),
-    // so they resolve independently and remain reusable across every subject and exam.
-    const [chapter, module] = await Promise.all([
-      this.dicts.chapter.resolve(input.chapter, subject?.id ?? null),
       this.dicts.module.resolve(input.module),
+    ]);
+    // Modules identify the source/provider (for example Allen or PW), so they resolve independently
+    // and remain reusable across every subject and exam. Their Sections are then filed beneath that
+    // module, while chapters are independently scoped to their subject.
+    const [chapter, section] = await Promise.all([
+      this.dicts.chapter.resolve(input.chapter, subject?.id ?? null),
+      this.dicts.section.resolve(input.section, module?.id ?? null),
     ]);
     const structuralKind = deriveKindFromStructure({
       group_id: input.groupId,

@@ -1,10 +1,9 @@
 import type { Document } from '@ingest/contracts';
 
 /**
- * A unit is one uploaded chapter part-set, keyed by its `(module · chapter · section)` — the same
- * key the uploader guards on. Its question PDF is the extractable part; answer/solution are bound
- * context the extractor reads, never independently "extracted". Grouping by unit is what lets the
- * session and verify screens state the truth ("one uploaded unit") instead of scattering loose files.
+ * A unit is one upload action, keyed by its `uploadGroupId`. Its question PDF is the extractable part;
+ * answer/solution are bound context the extractor reads, never independently "extracted". Legacy
+ * rows without a group id retain their former path-based grouping.
  */
 export type DocumentUnit = {
   key: string;
@@ -41,8 +40,9 @@ export function representativeQuestion(questions: readonly Document[]): Document
 }
 
 function unitKey(doc: Document): string {
+  if (doc.uploadGroupId) return `upload:${doc.uploadGroupId}`;
   const norm = (value: string): string => value.trim().toLowerCase().replace(/\s+/g, ' ');
-  return [norm(doc.path.module), norm(doc.path.chapter), norm(doc.path.section)].join(' | ');
+  return `legacy:${[norm(doc.path.module), norm(doc.path.chapter), norm(doc.path.section)].join(' | ')}`;
 }
 
 /** Group documents into units, preserving first-seen order. */

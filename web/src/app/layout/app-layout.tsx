@@ -94,6 +94,9 @@ const NAV_BASE =
 const NAV_RAIL =
   'flex items-center justify-center rounded-lg p-2 no-underline transition-colors [&>svg]:size-[18px] [&>svg]:flex-none';
 
+/** On narrow screens each navigation group wraps within the viewport. */
+const NAV_GROUP = 'flex flex-col gap-0.5 max-[820px]:min-w-0 max-[820px]:flex-row max-[820px]:flex-wrap';
+
 /** Build the NavLink class callback; layout differs between the full sidebar and the collapsed rail. */
 function navClass(collapsed: boolean): (state: { isActive: boolean }) => string {
   const base = collapsed ? NAV_RAIL : NAV_BASE;
@@ -228,20 +231,20 @@ export function AppLayout(): JSX.Element {
         </div>
 
         <SectionCaption label="Pipeline" collapsed={collapsed} />
-        <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
+        <nav className={NAV_GROUP}>
           <NavItem to="/" end icon={<IconScissors />} label="Cut & upload" collapsed={collapsed} />
           <NavItem to="/sessions" icon={<IconLayers />} label="Sessions & extraction" collapsed={collapsed} />
           <NavItem to="/verify" icon={<IconCheck />} label="Fix, verify & publish" collapsed={collapsed} />
         </nav>
 
         <SectionCaption label="Question bank" collapsed={collapsed} />
-        <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
+        <nav className={NAV_GROUP}>
           <NavItem to="/questions" icon={<IconQuestions />} label="Questions" collapsed={collapsed} />
           <NavItem to="/quality" icon={<IconWarning />} label="Data quality" collapsed={collapsed} />
         </nav>
 
         <SectionCaption label="Masters" collapsed={collapsed} />
-        <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
+        <nav className={NAV_GROUP}>
           <NavItem to="/masters/taxonomy" icon={<IconMasters />} label="Question taxonomy" collapsed={collapsed} />
           <NavItem to="/masters/exam-access" icon={<IconLayers />} label="Exam access" collapsed={collapsed} />
           <NavItem to="/prompts" icon={<IconFileText />} label="AI prompts" collapsed={collapsed} />
@@ -249,7 +252,7 @@ export function AppLayout(): JSX.Element {
         </nav>
 
         <SectionCaption label="Tools" collapsed={collapsed} />
-        <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
+        <nav className={NAV_GROUP}>
           <NavItem to="/tools/chapters" icon={<IconFileText />} label="Chapter Splitter" collapsed={collapsed} />
           <NavItem to="/tools/cut" icon={<IconScissors />} label="PDF Page Cutter" collapsed={collapsed} />
           <NavItem to="/tools/qna" icon={<IconScan />} label="QnA PDF Generator" collapsed={collapsed} />
@@ -266,7 +269,7 @@ export function AppLayout(): JSX.Element {
         <div className="flex-1 max-[820px]:hidden" />
 
         <SectionCaption label="System" collapsed={collapsed} />
-        <nav className="flex flex-col gap-0.5 max-[820px]:flex-row">
+        <nav className={NAV_GROUP}>
           <NavItem to="/usage" icon={<IconGauge />} label="Token usage" collapsed={collapsed} />
         </nav>
 

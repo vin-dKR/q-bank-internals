@@ -1,19 +1,19 @@
 import {
+  type AiFilled,
   type Document,
   matchKeyToAnswer,
   mergeMatrixKeyWithAnswer,
-  synthesizeMatrixChoiceOptions,
   type QuestionOption,
 } from '@ingest/contracts';
 import { logger } from '../../shared/logger/logger.js';
-import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { NewQuestion, QuestionRepository } from '../questions/index.js';
 import type { DriveService } from '../drive/index.js';
+import type { PagesService } from '../pages/index.js';
 import type { AiTokenUsage, UsageService } from '../usage/index.js';
-import type { ExtractionJobPatch, ExtractionJobStore } from './extraction.repository.js';
-import type { ExtractionRunRegistry } from './extraction-run-registry.js';
-import type { ExtractionJobPayload } from './job-queue.js';
+import type { ExtractionJobStore } from './extraction.repository.js';
+import type { ExtractionDraftStore } from './extraction-draft.repository.js';
+import type { ExtractionJobPayload, JobQueue } from './job-queue.js';
 import type { PdfRasterizer } from './pdf-rasterizer.js';
 import {
   mergeAnswerEntries,
@@ -27,9 +27,6 @@ import {
 import { materializePassages } from './group-comprehension.js';
 import { mergeAnswers } from './merge-answers.js';
 import { topicBindingForPage } from './topic-lookup.js';
-
-/** Statuses that mean "don't touch it" — the guard that makes re-running a job idempotent/resumable. */
-const TERMINAL_OR_ACTIVE = new Set<Document['status']>(['extracting', 'extracted', 'completed']);
 
 const OPTION_RE = /^\s*(?:\(\s*([^()]+?)\s*\)|([A-Za-z0-9]+)\s*[.)])\s*([\s\S]*)$/;
 const TRUE_KEY_RE = /^\s*t(?:rue)?\s*$/i;
@@ -152,7 +149,11 @@ function normalizeQuestionType(raw: string | null): string | null {
  * operator's cut-time config. A concrete cut-time type is authoritative (except the comprehension
  * container, whose children legitimately carry their own types).
  */
-function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestion {
+function toNewQuestion(
+  document: Document,
+  draft: ExtractedQuestion,
+  extraction: { model: string; at: string },
+): NewQuestion {
   const binding = topicBindingForPage(document.topics, draft.sourcePage);
 
   // PYQ is the segment's per-node toggle (else the legacy document-level flag). When on, the source
@@ -180,30 +181,38 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
     : lockedType ?? (draft.match ? 'matrix' : aiType);
   // Do not let a hallucinated matrix payload override an operator-selected non-matrix type.
   const match = questionType === 'matrix' ? draft.match : null;
+  // Difficulty is derived in the initial vision pass, so record its source independently of later
+  // answer/solution merging. Older/custom prompt replies lack a score; 0.5 makes that absence visible
+  // as neutral confidence instead of pretending the model reported certainty.
+  const aiFilled: AiFilled | null = draft.level
+    ? {
+        level: {
+          model: extraction.model,
+          confidence: draft.difficultyConfidence ?? 0.5,
+          at: extraction.at,
+          via: 'extraction',
+        },
+      }
+    : null;
 
-  // A match-the-column question persists both the structured columns and (when printed) its A–D answer
-  // choices. Those are different things: the canonical `answer` for a choice-based matrix is the
-  // selected choice label (for example "C"), while `match.key` retains the underlying mapping when it
-  // is visible. A source table with no printed choice panel receives deterministic generated choices
-  // ONLY after the complete key is known; incomplete/ambiguous tables retain their direct mapping for
-  // Verify instead of gaining an invented correct answer.
+  // A match-the-column question persists both the structured columns and its printed answer choices,
+  // when the source actually contains them. Those are different things: the canonical `answer` for a
+  // choice-based matrix is the selected source label, while `match.key` retains the underlying mapping.
+  // A source table without a readable choice panel remains a direct-response table: never invent an
+  // A–D panel merely because the table/key is complete.
   if (match) {
     const optionRows = draft.options.map(parseOption);
     const selectedLabels = normalizeAnswerLabels(draft.answer, optionRows);
     const hasPrintedChoices = optionRows.length > 0;
     // A separate answer key often carries the missing rows as `A→p; B→q`. Fold only those missing
-    // rows into the table before validating/synthesizing — it must never overwrite an already-read row.
+    // rows into the table; it must never overwrite an already-read row or create source-less options.
     const completedMatch = mergeMatrixKeyWithAnswer(match, draft.answer);
-    const generated = hasPrintedChoices ? null : synthesizeMatrixChoiceOptions(completedMatch);
-    const synthesized = generated?.status === 'generated' ? generated : null;
-    const answer = synthesized
-      ? synthesized.answer
-      : draft.answer?.trim()
-        ? canonicalOptionAnswer(draft.answer, selectedLabels, questionType)
-        : !hasPrintedChoices && Object.keys(completedMatch.key).length > 0
-          ? matchKeyToAnswer(completedMatch.key)
-          : '';
-    const options = synthesized?.options ?? optionRows.map(({ label, body }) => ({
+    const answer = draft.answer?.trim()
+      ? canonicalOptionAnswer(draft.answer, selectedLabels, questionType)
+      : !hasPrintedChoices && Object.keys(completedMatch.key).length > 0
+        ? matchKeyToAnswer(completedMatch.key)
+        : '';
+    const options = optionRows.map(({ label, body }) => ({
       label,
       body,
       isCorrect: selectedLabels.has(label),
@@ -222,11 +231,13 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
       images: [],
       questionType,
       level: draft.level,
+      aiFilled,
       // Matrix rows follow the same per-leaf section routing as every other type. Without the
       // binding here, a mixed assembled chapter published matrices under the unit fallback (for
       // example "All sections") while its other questions retained their actual section.
       sectionName: binding?.sectionName ?? document.sectionName ?? document.path.section,
       topic: binding?.topicName ?? null,
+      className: document.className,
       subject: binding?.subject ?? null,
       ...pyq,
       sourceRegion: { page: draft.sourcePage, bbox: [0, 0, 1, 1] },
@@ -253,8 +264,10 @@ function toNewQuestion(document: Document, draft: ExtractedQuestion): NewQuestio
     images: [],
     questionType,
     level: draft.level,
+    aiFilled,
     sectionName: binding?.sectionName ?? document.sectionName ?? document.path.section,
     topic: binding?.topicName ?? null,
+    className: document.className,
     subject: binding?.subject ?? null,
     ...pyq,
     sourceRegion: { page: draft.sourcePage, bbox: [0, 0, 1, 1] },
@@ -288,114 +301,157 @@ export class ExtractionWorker {
     private readonly documents: DocumentRepository,
     private readonly questions: QuestionRepository,
     private readonly jobs: ExtractionJobStore,
+    private readonly drafts: ExtractionDraftStore,
+    private readonly queue: JobQueue,
     private readonly drive: DriveService,
     private readonly rasterizer: PdfRasterizer,
     private readonly extractor: VisionExtractor,
     private readonly usage: UsageService,
-    private readonly runs: ExtractionRunRegistry,
-    private readonly timeoutMs: number,
+    private readonly pagesPerTask: number,
+    private readonly pages: PagesService,
   ) {}
 
+  /**
+   * Execute one durable extraction task. `prepare` reads only PDF metadata, `question-page` renders
+   * and sends one page to the model, and `finalize` writes the already-checkpointed drafts. The
+   * queue invokes this method at-least-once; every task is therefore deliberately idempotent.
+   */
   async run(payload: ExtractionJobPayload): Promise<void> {
     const now = (): string => new Date().toISOString();
     const { jobId, documentId } = payload;
-
+    const job = await this.jobs.findById(jobId);
+    if (!job || job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled' || job.status === 'paused') {
+      return;
+    }
     const document = await this.documents.findById(documentId);
     if (!document) {
-      await this.jobs.update(jobId, {
-        status: 'failed',
-        error: `Document ${documentId} not found.`,
-        finishedAt: now(),
-      });
+      await this.fail(jobId, documentId, `Document ${documentId} not found.`, now());
       return;
     }
-
-    // Idempotent resume: never re-extract something already done or in flight (the "don't re-push" rule).
-    if (TERMINAL_OR_ACTIVE.has(document.status)) {
-      logger.info({ documentId, status: document.status }, 'Extraction skipped: already processed');
-      await this.jobs.update(jobId, { status: 'succeeded', finishedAt: now() });
-      return;
-    }
-
-    // Only question PDFs drive extraction; answer/solution PDFs are consumed via their question sibling.
     if (document.kind !== 'question') {
       await this.jobs.update(jobId, { status: 'succeeded', finishedAt: now() });
       return;
     }
 
-    await this.documents.updateStatus(documentId, 'extracting');
-    await this.jobs.update(jobId, { status: 'running', startedAt: now() });
-
-    // The per-run deadline: register an AbortController (so the cancel action can also reach it) and
-    // arm a timer that aborts it once the run exceeds the configured budget. Both cancel and timeout
-    // surface as an aborted signal on the in-flight vision call, handled in the catch below.
-    const controller = this.runs.register(jobId);
-    const timer = setTimeout(() => { controller.abort('timeout'); }, this.timeoutMs);
-
     try {
-      const pdf = await this.drive.downloadPdf(document.driveFileId);
-      const pages = await this.rasterizer.rasterize(pdf);
-      await this.jobs.update(jobId, { pagesTotal: pages.length, pagesDone: 0 });
-      const { questions: drafts, usage } = await this.extractor.extractQuestions({
-        pages,
-        document,
-        signal: controller.signal,
-        onProgress: (progress) => this.writeProgress(jobId, progress),
-      });
-      await this.recordUsage(document, usage);
-      const answered = await this.applyAnswers(document, drafts, controller.signal);
-      // The answer/solution phase swallows its own errors (a bad sibling PDF must not sink the
-      // questions), so an abort that lands there would otherwise be lost — re-check the deadline
-      // before persisting so a cancel/timeout still aborts instead of saving a half-answered result.
-      controller.signal.throwIfAborted();
-      // Comprehension sub-questions that share a passage are materialized into ONE passage row + N
-      // stamped sub-question rows AFTER answers are folded in, so each sub-question keeps its own
-      // answer/explanation and carries its group's passageId + order. Passages are persisted alongside
-      // the questions in one wholesale replace (passages first, so every passageId resolves).
-      const { drafts: grouped, passages } = materializePassages(answered, documentId);
-      const rows = grouped.map((draft) => toNewQuestion(document, draft));
-      const count = await this.questions.replaceDocument(documentId, passages, rows);
-
-      await this.documents.recordExtraction(documentId, { questionCount: count });
-      await this.jobs.update(jobId, {
-        status: 'succeeded',
-        questionsFound: count,
-        pagesDone: pages.length,
-        finishedAt: now(),
-      });
-      logger.info({ documentId, questionsFound: count }, 'Extraction complete');
-    } catch (error) {
-      // Document returns to a re-runnable state whether the run failed, timed out, or was cancelled.
-      await this.documents.updateStatus(documentId, 'failed');
-      if (controller.signal.aborted && controller.signal.reason === 'cancelled') {
-        await this.jobs.update(jobId, { status: 'cancelled', finishedAt: now() });
-        logger.info({ documentId }, 'Extraction cancelled');
-      } else {
-        const message = controller.signal.aborted
-          ? errors.extractionTimedOut(this.timeoutMs).message
-          : error instanceof Error
-            ? error.message
-            : String(error);
-        await this.jobs.update(jobId, { status: 'failed', error: message, finishedAt: now() });
-        logger.error({ documentId, err: message }, 'Extraction failed');
+      switch (payload.task ?? 'prepare') {
+        case 'prepare':
+          await this.prepare(jobId, document, now);
+          return;
+        case 'question-page':
+          if (!payload.pageNumber) throw new Error('A question-page task is missing pageNumber.');
+          await this.extractQuestionPage(jobId, document, payload.pageNumber);
+          return;
+        case 'finalize':
+          await this.finalize(jobId, document, now);
+          return;
       }
-    } finally {
-      clearTimeout(timer);
-      this.runs.release(jobId);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      await this.fail(jobId, documentId, `${payload.task ?? 'prepare'} failed: ${reason}`, now());
+      throw error;
     }
   }
 
-  /**
-   * Persist live page progress, best-effort: a progress-write failure is logged, never allowed to
-   * fail the extraction it only measures (mirrors {@link recordUsage}).
-   */
-  private async writeProgress(jobId: string, patch: ExtractionJobPatch): Promise<void> {
-    try {
-      await this.jobs.update(jobId, patch);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.warn({ jobId, err: message }, 'Failed to record extraction progress');
+  private async prepare(jobId: string, document: Document, now: () => string): Promise<void> {
+    await this.documents.updateStatus(document.id, 'extracting');
+    await this.jobs.update(jobId, { status: 'running', startedAt: now(), error: null, finishedAt: null });
+    const pdf = await this.drive.downloadPdf(document.driveFileId);
+    const pagesTotal = await this.rasterizer.pageCount(pdf);
+    const progress = await this.drafts.questionProgress(jobId);
+    await this.jobs.update(jobId, { pagesTotal, pagesDone: progress.pagesDone, questionsFound: progress.questionsFound });
+    const nextPage = await this.firstMissingPage(jobId, pagesTotal);
+    await this.queue.enqueue(
+      nextPage === null
+        ? { jobId, documentId: document.id, task: 'finalize' }
+        : { jobId, documentId: document.id, task: 'question-page', pageNumber: nextPage },
+    );
+  }
+
+  private async extractQuestionPage(
+    jobId: string,
+    document: Document,
+    pageNumber: number,
+  ): Promise<void> {
+    const existing = await this.drafts.findQuestionPages(jobId);
+    const completed = new Set(existing.map((draft) => draft.pageNumber));
+    const jobBeforeBatch = await this.jobs.findById(jobId);
+    if (!jobBeforeBatch) return;
+    const pageNumbers = Array.from(
+      { length: Math.min(this.pagesPerTask, jobBeforeBatch.pagesTotal - pageNumber + 1) },
+      (_, offset) => pageNumber + offset,
+    ).filter((candidate) => !completed.has(candidate));
+    if (pageNumbers.length > 0) {
+      const pdf = await this.drive.downloadPdf(document.driveFileId);
+      const pages = await this.rasterizer.rasterizePages(pdf, pageNumbers);
+      for (const page of pages) {
+        const result = await this.extractor.extractQuestions({ pages: [page], document });
+        await Promise.all([
+          this.recordUsage(document, result.usage),
+          this.pages.cacheRenderedPage(document.id, page.pageNumber, page.png),
+        ]);
+        await this.drafts.saveQuestionPage({
+          jobId,
+          documentId: document.id,
+          pageNumber: page.pageNumber,
+          questions: result.questions,
+        });
+        // The document row's timestamp is the stale-run watchdog heartbeat. Touch it once a page is
+        // durably committed so a many-hour PDF is never mistaken for an abandoned extraction.
+        await this.documents.updateStatus(document.id, 'extracting');
+        const live = await this.jobs.findById(jobId);
+        if (!live || (live.status !== 'running' && live.status !== 'queued')) break;
+      }
     }
+    const progress = await this.drafts.questionProgress(jobId);
+    const job = await this.jobs.update(jobId, {
+      pagesDone: progress.pagesDone,
+      questionsFound: progress.questionsFound,
+    });
+    // A page whose model call finished just after Pause was clicked is intentionally retained (the
+    // tokens are already spent), but Pause prevents the chain from scheduling another page.
+    if (job.status !== 'running' && job.status !== 'queued') return;
+    const nextPage = await this.firstMissingPage(jobId, job.pagesTotal);
+    await this.queue.enqueue(
+      nextPage === null
+        ? { jobId, documentId: document.id, task: 'finalize' }
+        : { jobId, documentId: document.id, task: 'question-page', pageNumber: nextPage },
+    );
+    logger.info({ jobId, documentId: document.id, pageNumber, pagesDone: progress.pagesDone }, 'Extraction page checkpointed');
+  }
+
+  private async finalize(jobId: string, document: Document, now: () => string): Promise<void> {
+    const pageDrafts = await this.drafts.findQuestionPages(jobId);
+    const drafts = pageDrafts.flatMap((page) => page.questions);
+    // Answer/solution mapping is enrichment. Question text has already been durably checkpointed,
+    // so a companion failure cannot make completed question pages spend their tokens again.
+    const answered = await this.applyAnswers(document, drafts, new AbortController().signal);
+    const { drafts: grouped, passages } = materializePassages(answered, document.id);
+    const extraction = { model: (await this.jobs.findById(jobId))?.model ?? 'unknown', at: now() };
+    const rows = grouped.map((draft) => toNewQuestion(document, draft, extraction));
+    const count = await this.questions.replaceDocument(document.id, passages, rows);
+    await this.documents.recordExtraction(document.id, { questionCount: count });
+    await this.jobs.update(jobId, {
+      status: 'succeeded',
+      questionsFound: count,
+      pagesDone: pageDrafts.length,
+      finishedAt: now(),
+    });
+    logger.info({ jobId, documentId: document.id, questionsFound: count }, 'Extraction complete from durable page drafts');
+  }
+
+  private async firstMissingPage(jobId: string, pagesTotal: number): Promise<number | null> {
+    const complete = new Set((await this.drafts.findQuestionPages(jobId)).map((draft) => draft.pageNumber));
+    for (let pageNumber = 1; pageNumber <= pagesTotal; pageNumber += 1) {
+      if (!complete.has(pageNumber)) return pageNumber;
+    }
+    return null;
+  }
+
+  private async fail(jobId: string, documentId: string, message: string, at: string): Promise<void> {
+    await this.documents.updateStatus(documentId, 'failed');
+    await this.jobs.update(jobId, { status: 'failed', error: message, finishedAt: at });
+    logger.error({ jobId, documentId, err: message }, 'Extraction task failed; completed page drafts remain resumable');
   }
 
   /**
@@ -545,6 +601,7 @@ export class ExtractionWorker {
           const scope: AnswerExtractionScope = {
             sectionName: topic.name,
             questionType: block.questionType ?? null,
+            ...(topic.subject ? { subject: topic.subject } : {}),
             questionPageRange: block.pageRange,
             sourcePageRange: range,
           };

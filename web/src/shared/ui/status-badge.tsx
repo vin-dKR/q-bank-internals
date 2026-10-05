@@ -10,6 +10,7 @@ const TONE: Record<DocumentStatus | SessionStatus, Tone> = {
   uploaded: 'neutral',
   queued: 'info',
   extracting: 'progress',
+  paused: 'neutral',
   extracted: 'success',
   needs_review: 'review',
   approved: 'success',

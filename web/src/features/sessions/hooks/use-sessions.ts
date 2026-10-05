@@ -53,7 +53,7 @@ export function useDocumentExtractionJob(documentId: string): UseQueryResult<Ext
     queryFn: () => sessionsApi.documentJob(documentId),
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      return status === 'succeeded' || status === 'failed' || status === 'cancelled' ? false : 1500;
+      return status === 'succeeded' || status === 'failed' || status === 'cancelled' || status === 'paused' ? false : 1500;
     },
   });
 }
@@ -75,6 +75,38 @@ export function useResetDocumentExtraction(): UseMutationResult<Document, Error,
       void queryClient.invalidateQueries({ queryKey: ['sessions'] });
     },
     onError: (err) => { error('Could not stop extraction', err.message); },
+  });
+}
+
+/** Pause at the next durable page boundary; the worker never throws away an already-paid page. */
+export function usePauseDocumentExtraction(): UseMutationResult<ExtractionJob, Error, string> {
+  const queryClient = useQueryClient();
+  const { success, error } = useToast();
+  return useMutation({
+    mutationFn: (jobId: string) => sessionsApi.pauseExtraction(jobId),
+    onSuccess: () => {
+      success('Extraction paused', 'Completed pages are saved. Resume continues from the next page.');
+      void queryClient.invalidateQueries({ queryKey: ['document-extraction-job'] });
+      void queryClient.invalidateQueries({ queryKey: ['documents'] });
+      void queryClient.invalidateQueries({ queryKey: ['session'] });
+    },
+    onError: (err) => { error('Could not pause extraction', err.message); },
+  });
+}
+
+/** Resume an interrupted run without re-sending page drafts already saved for that job. */
+export function useResumeDocumentExtraction(): UseMutationResult<ExtractionJob, Error, string> {
+  const queryClient = useQueryClient();
+  const { success, error } = useToast();
+  return useMutation({
+    mutationFn: (documentId: string) => sessionsApi.resumeExtraction(documentId),
+    onSuccess: () => {
+      success('Extraction resumed', 'Continuing from the first unfinished page.');
+      void queryClient.invalidateQueries({ queryKey: ['document-extraction-job'] });
+      void queryClient.invalidateQueries({ queryKey: ['documents'] });
+      void queryClient.invalidateQueries({ queryKey: ['session'] });
+    },
+    onError: (err) => { error('Could not resume extraction', err.message); },
   });
 }
 
@@ -145,7 +177,7 @@ export function useBulkDeleteSessions(): UseMutationResult<{ deleted: number }, 
   });
 }
 
-/** Queues extraction for a whole session, then refreshes views to show progress. */
+/** Queues new session files and resumes interrupted ones, then refreshes views to show progress. */
 export function useRunSessionExtraction(): UseMutationResult<
   { enqueued: number; jobIds: string[] },
   Error,
@@ -161,7 +193,14 @@ export function useRunSessionExtraction(): UseMutationResult<
       void queryClient.invalidateQueries({ queryKey: ['session'] });
       void queryClient.invalidateQueries({ queryKey: ['documents'] });
     },
-    onError: (err) => { error('Could not start extraction', err.message); },
+    onError: () => {
+      // On serverless this can mean the request outlived the browser connection, not that no work
+      // started. Per-file progress owns the authoritative terminal diagnosis.
+      error('Extraction request interrupted', 'Check the file status below. It will show the exact failing stage if extraction did not complete.');
+      void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      void queryClient.invalidateQueries({ queryKey: ['session'] });
+      void queryClient.invalidateQueries({ queryKey: ['documents'] });
+    },
   });
 }
 
@@ -171,13 +210,37 @@ export function useRunDocumentExtraction(): UseMutationResult<ExtractionJob, Err
   const { success, error } = useToast();
   return useMutation({
     mutationFn: (documentId: string) => sessionsApi.runDocument(documentId),
-    onSuccess: () => {
+    onSuccess: (_job, documentId) => {
       success('Extraction queued');
       void queryClient.invalidateQueries({ queryKey: ['sessions'] });
       void queryClient.invalidateQueries({ queryKey: ['session'] });
       void queryClient.invalidateQueries({ queryKey: ['documents'] });
+      void queryClient.invalidateQueries({ queryKey: ['document-extraction-job', documentId] });
     },
-    onError: (err) => { error('Could not start extraction', err.message); },
+    onError: (err, documentId) => {
+      // A serverless request can be interrupted after the worker has persisted the job's terminal
+      // state. Prefer that stage-specific diagnosis to a browser-only "Failed to fetch" message.
+      void sessionsApi.documentJob(documentId)
+        .then((job) => {
+          if (job?.status === 'failed' && job.error) {
+            const title = job.error.startsWith('Answer and solution mapping failed:')
+              ? 'Answer mapping failed'
+              : job.error.startsWith('Saving extracted questions failed:')
+                ? 'Saving extracted questions failed'
+                : job.error.startsWith('Preparing the PDF failed:')
+                  ? 'PDF preparation failed'
+                  : 'Question extraction failed';
+            error(title, job.error);
+            return;
+          }
+          error('Could not start extraction', 'The request connection ended before the server replied. Check this file’s status; it may still be running.');
+        })
+        .catch(() => { error('Could not start extraction', err.message); });
+      void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      void queryClient.invalidateQueries({ queryKey: ['session'] });
+      void queryClient.invalidateQueries({ queryKey: ['documents'] });
+      void queryClient.invalidateQueries({ queryKey: ['document-extraction-job', documentId] });
+    },
   });
 }
 

@@ -14,22 +14,21 @@ import type {
   Question,
   QuestionBatchUpdate,
   QuestionListResponse,
-  QuestionOption,
   ReExtractedGroup,
   ReExtractedQuestion,
   ReExtractedSubQuestion,
   ReExtractGroupMode,
   ReExtractSource,
+  ReExtractSupportingSources,
+  TranscribeAreaTarget,
   UpdatePassage,
   UpdateQuestion,
 } from '@ingest/contracts';
 import {
   findMatrixChoiceForMatch,
-  hasOnlyGeneratedMatrixChoices,
   matrixChoiceMappingText,
   mergeMatrixKeyWithAnswer,
   parseMatchKey,
-  synthesizeMatrixChoiceOptions,
 } from '@ingest/contracts';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
@@ -40,7 +39,7 @@ import { logger } from '../../shared/logger/logger.js';
 import { readPngSize } from '../../shared/image/png-size.js';
 import { detectLatexInField } from '../quality/latex-rules.js';
 import { automaticLatexRepair, fullyAutomaticLatexRepair, preservesExtractedContent, questionLatexPatch, stagedLatexFields, stagedLatexIssues, type StagedLatexField } from './staged-latex.js';
-import type { UsageService } from '../usage/index.js';
+import type { AiTokenUsage, UsageService } from '../usage/index.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { BankQuestionStore } from '../bank/index.js';
 import type { DiagramDetector } from './diagram-detector.js';
@@ -49,11 +48,16 @@ import type { ImageStore } from './image-store.js';
 import type { LatexRefiner } from './latex-refiner.js';
 import type { PageRenderer } from './page-renderer.js';
 import type { PaperMetadataExtractor } from './paper-metadata-extractor.js';
-import type { QuestionReExtractor, ReExtractSourceKind } from './question-reextractor.js';
+import type {
+  QuestionReExtraction,
+  QuestionReExtractor,
+  ReExtractSourceKind,
+} from './question-reextractor.js';
 import type { QuestionRepository } from './questions.repository.js';
 import {
   questionPageBelongsToBindings,
   topicNames,
+  topicSourceBindings,
   topicScopeForSourcePage,
   type SourceTopicScope,
   type TopicSourceKind,
@@ -147,6 +151,62 @@ function isSiblingReExtractSource(owner: Document, candidate: Document): boolean
     samePath &&
     sameGroup
   );
+}
+
+/** The first page in this question block's configured supporting-source span, or a legacy fallback. */
+function defaultSupportingSourcePage(
+  owner: Document,
+  candidate: Document,
+  questionPage: number,
+  sourceKind: Extract<ReExtractSourceKind, 'answer' | 'solution' | 'companion'>,
+): number | null {
+  const bindings = topicSourceBindings(owner, sourceKind);
+  if (bindings.length > 0) {
+    const matching = bindings.filter((item) => questionPageBelongsToBindings(questionPage, [item]));
+    // A configured source map must identify exactly one sibling range. Picking the first overlapping
+    // binding could apply a same-number answer from a different topic.
+    return matching.length === 1 ? (matching[0]?.sourcePageRange.from ?? null) : null;
+  }
+  return candidate.pageRange?.from ?? 1;
+}
+
+/** A source-specific read is valid only for the field it was requested to enrich. */
+function sourceCanSupplyField(
+  source: ReExtractPageSource,
+  field: 'answer' | 'solution',
+): boolean {
+  return source.sourceKind === field ||
+    (source.sourceKind === 'companion' && source.fieldTarget === field);
+}
+
+/** Sum successful vision reads into the one usage record attached to the selected question. */
+function combinedUsage(
+  primary: AiTokenUsage,
+  supplemental: readonly (QuestionReExtraction | null)[],
+): AiTokenUsage {
+  return supplemental.reduce<AiTokenUsage>(
+    (total, read) =>
+      read === null
+        ? total
+        : {
+            model: total.model,
+            promptTokens: total.promptTokens + read.usage.promptTokens,
+            completionTokens: total.completionTokens + read.usage.completionTokens,
+            totalTokens: total.totalTokens + read.usage.totalTokens,
+            callCount: total.callCount + read.usage.callCount,
+          },
+    primary,
+  );
+}
+
+function firstNonBlank(...values: readonly string[]): string {
+  return values.find((value) => value.trim().length > 0) ?? '';
+}
+
+function firstExplanation(
+  ...values: readonly (string | null)[]
+): string | null {
+  return values.find((value): value is string => value !== null && value.trim().length > 0) ?? null;
 }
 
 /** Reclassify source-PDF figures after their printed number has been mapped to the owner question. */
@@ -295,126 +355,23 @@ function sameJson(left: unknown, right: unknown): boolean {
 }
 
 /**
- * Return the explicitly selected existing choice only when its body is the exact supplied table key.
- * This is intentionally checked before generated-set synthesis: selecting B in Verify is a user
- * decision about this particular option order/label, not a request for the server to reshuffle a
- * mathematically equivalent set while saving the matching table.
- */
-function selectedMatrixChoiceForMatch(
-  options: readonly QuestionOption[],
-  answer: string,
-  match: NonNullable<Question['match']>,
-): QuestionOption | null {
-  const selectedLabel = answer.trim().toLocaleLowerCase();
-  if (!selectedLabel) return null;
-  const selected = options.find((option) => option.label.trim().toLocaleLowerCase() === selectedLabel);
-  if (!selected) return null;
-  return findMatrixChoiceForMatch([selected], match) === selected.label ? selected : null;
-}
-
-/** A generated correct mapping needs a label that cannot shadow a source/manual choice. */
-function nextGeneratedMatrixLabel(options: MatrixDraftState['options']): string {
-  const used = new Set(options.map((option) => option.label.trim().toLocaleLowerCase()));
-  for (let index = 0; index < 26; index += 1) {
-    const label = String.fromCharCode(65 + index);
-    if (!used.has(label.toLocaleLowerCase())) return label;
-  }
-  let ordinal = 1;
-  while (used.has(`option${String(ordinal)}`.toLocaleLowerCase())) ordinal += 1;
-  return `Option${String(ordinal)}`;
-}
-
-/**
- * Keep source/manual choice bodies untouched but guarantee a complete manual table has one visible,
- * selected mapping option. Existing generated rows are replaced as a small fresh choice set (never
- * left stale after a custom key edit); otherwise one generated correct row is appended with a unique
- * label. Source/manual rows retain their bodies, order, and provenance.
- */
-function refreshOrAppendGeneratedMatrixChoice(
-  options: MatrixDraftState['options'],
-  synthesis: Extract<ReturnType<typeof synthesizeMatrixChoiceOptions>, { status: 'generated' }>,
-): { options: MatrixDraftState['options']; answer: string } {
-  const generatedIndexes = options
-    .map((option, index) => option.generated === true ? index : -1)
-    .filter((index) => index >= 0);
-  if (generatedIndexes.length > 0) {
-    const correct = synthesis.options.find((option) => option.isCorrect);
-    const choices = [correct, ...synthesis.options.filter((option) => !option.isCorrect)]
-      .filter((option): option is NonNullable<typeof option> => option !== undefined);
-    const selectedIndex = generatedIndexes[0] ?? -1;
-    const selected = options[selectedIndex]?.label ?? '';
-    let generatedPosition = 0;
-    const refreshed: MatrixDraftState['options'] = [];
-    for (const option of options) {
-      if (option.generated !== true) {
-        refreshed.push({ ...option, isCorrect: false });
-        continue;
-      }
-      const replacement = choices[generatedPosition];
-      generatedPosition += 1;
-      // The shared planner returns at most four unique mappings. Drop any surplus stale generated
-      // row rather than duplicating a distractor; source/manual rows above are untouched.
-      if (!replacement) continue;
-      refreshed.push({
-        ...option,
-        body: replacement.body,
-        isCorrect: generatedPosition === 1,
-        generated: true,
-      });
-    }
-    return {
-      answer: selected,
-      options: refreshed,
-    };
-  }
-  const label = nextGeneratedMatrixLabel(options);
-  return {
-    answer: label,
-    options: [
-      ...options.map((option) => ({ ...option, isCorrect: false })),
-      { label, body: synthesis.correctMapping, isCorrect: true, generated: true },
-    ],
-  };
-}
-
-/**
- * Reconcile matrix table/key/choice invariants in one place. A complete, unambiguous table gets a
- * deterministic selectable set only when choices are empty or all carry `generated: true`. Printed
- * and hand-edited (`generated: false`) choices are never replaced. If a manual key becomes unsafe,
- * stale generated choices are cleared instead of silently pointing at the old mapping.
+ * Reconcile matrix table/key/choice invariants in one place. Choices must preserve the source panel:
+ * a direct-response matrix stays table-only, and printed/manual choices are never replaced or
+ * supplemented with AI-generated alternatives.
  */
 function normalizeMatrixState(state: MatrixDraftState): MatrixDraftState {
   if (state.questionType !== 'matrix' || state.match === null) return state;
   const match = mergeMatrixKeyWithAnswer(state.match, state.answer);
-  const selectedExisting = selectedMatrixChoiceForMatch(state.options, state.answer, match);
-  if (selectedExisting?.generated === true) {
-    // Preserve every submitted generated choice body/order/label exactly; only the correct marker
-    // follows the explicit selected label. This lets selecting an existing generated option update
-    // the matching table without the save path synthesizing a different A–D arrangement.
-    return {
-      ...state,
-      match,
-      answer: selectedExisting.label,
-      options: state.options.map((option) => ({
-        ...option,
-        isCorrect: option.label === selectedExisting.label,
-      })),
-    };
-  }
-  const replaceableChoices = state.options.length === 0 || hasOnlyGeneratedMatrixChoices(state.options);
-  if (replaceableChoices) {
-    const synthesis = synthesizeMatrixChoiceOptions(match);
-    if (synthesis.status === 'generated') {
-      return { ...state, match, options: synthesis.options, answer: synthesis.answer };
-    }
-    // `C` from a previous generated set is no longer meaningful after an incomplete/ambiguous manual
-    // table edit. Preserve a typed mapping if one exists; otherwise mirror the currently known table.
+  const visibleOptions = state.options.filter((option) => option.generated !== true);
+  if (visibleOptions.length === 0) {
+    // No choice panel is a valid direct-response layout. Keep the actual matching table/key and
+    // never materialize an A–D fallback that did not exist in the source image.
     const hasDirectMap = Object.keys(parseMatchKey(state.answer)).length > 0;
     return {
       ...state,
       match,
-      options: hasOnlyGeneratedMatrixChoices(state.options) ? [] : state.options,
       answer: hasDirectMap ? state.answer : matrixChoiceMappingText(match.key),
+      options: [],
     };
   }
 
@@ -423,10 +380,23 @@ function normalizeMatrixState(state: MatrixDraftState): MatrixDraftState {
   // make the correct marker agree — without touching bodies/provenance/order.
   const selected = findMatrixChoiceForMatch(state.options, match);
   if (!selected) {
-    const synthesis = synthesizeMatrixChoiceOptions(match);
-    if (synthesis.status !== 'generated') return { ...state, match };
-    const ensured = refreshOrAppendGeneratedMatrixChoice(state.options, synthesis);
-    return { ...state, match, ...ensured };
+    // A printed/manual panel is the source's fixed answer convention. It must remain that panel,
+    // even when a model/table read cannot reconcile the current key to one of its choices. Remove
+    // any stale generated helper instead of adding a fifth option, and preserve a pre-existing
+    // explicit source/manual selection only when it still names a visible choice.
+    const existingAnswer = state.answer.trim().toLocaleLowerCase();
+    const preserved =
+      visibleOptions.find((option) => option.label.trim().toLocaleLowerCase() === existingAnswer) ??
+      visibleOptions.find((option) => option.isCorrect);
+    return {
+      ...state,
+      match,
+      answer: preserved?.label ?? '',
+      options: visibleOptions.map((option) => ({
+        ...option,
+        isCorrect: option.label === preserved?.label,
+      })),
+    };
   }
   return {
     ...state,
@@ -442,7 +412,9 @@ function normalizeMatrixState(state: MatrixDraftState): MatrixDraftState {
 }
 
 /** Return only fields whose post-patch normalized value differs from the candidate state. */
-function matrixNormalizationPatch(candidate: MatrixDraftState): Pick<UpdateQuestion, 'match' | 'options' | 'answer'> {
+function matrixNormalizationPatch(
+  candidate: MatrixDraftState,
+): Pick<UpdateQuestion, 'match' | 'options' | 'answer'> {
   const normalized = normalizeMatrixState(candidate);
   return {
     ...(sameJson(candidate.match, normalized.match) ? {} : { match: normalized.match }),
@@ -456,15 +428,21 @@ function normalizeMatrixReExtract(
   question: Question,
   fresh: ReExtractedQuestion,
   expectedType: string | null,
-  sourceKind: ReExtractSourceKind,
+  _sourceKind: ReExtractSourceKind,
 ): ReExtractedQuestion {
   if (expectedType !== 'matrix') return fresh;
-  const fieldSource = sourceKind !== 'question';
+  // A vision re-read is allowed to be incomplete, but it must not wipe an already-complete matrix
+  // just because the model did not recover its columns/key this time. Do not, however, pull normal
+  // MCQ choices into a question the operator has newly switched to Matrix Match.
+  const hasExistingMatrix = question.questionType === 'matrix' || question.match !== null;
+  const fallback = hasExistingMatrix
+    ? { match: question.match, options: question.options, answer: question.answer }
+    : { match: null, options: [], answer: '' };
   const candidate: MatrixDraftState = {
     questionType: 'matrix',
-    match: fresh.match ?? (fieldSource ? question.match : null),
-    options: fresh.options.length > 0 ? fresh.options : (fieldSource ? question.options : []),
-    answer: fresh.answer.trim() ? fresh.answer : (fieldSource ? question.answer : ''),
+    match: fresh.match ?? fallback.match,
+    options: fresh.options.length > 0 ? fresh.options : fallback.options,
+    answer: fresh.answer.trim() ? fresh.answer : fallback.answer,
   };
   const normalized = normalizeMatrixState(candidate);
   return {
@@ -1020,18 +998,148 @@ export class QuestionsService {
   }
 
   /**
+   * Resolve the matching Answer/Solution page for this one question when Verify did not send its
+   * currently displayed source page. Topic bindings are authoritative; legacy uploads retain the
+   * same first-page fallback used by the Verify source pane.
+   */
+  private async defaultSupportingSources(
+    owner: Document,
+    questionPage: number,
+  ): Promise<ReExtractSupportingSources> {
+    if (owner.answerLayout === 'inline' || !owner.sessionId) return {};
+    const documents = await this.documents.listBySession(owner.sessionId);
+    const siblings = documents.filter((candidate) => isSiblingReExtractSource(owner, candidate));
+    if (owner.answerLayout === 'combined') {
+      const companion = siblings.find((candidate) => candidate.kind === 'companion');
+      if (!companion) return {};
+      const page = defaultSupportingSourcePage(owner, companion, questionPage, 'companion');
+      if (page === null) return {};
+      return {
+        answer: { documentId: companion.id, page, target: 'answer' },
+        solution: { documentId: companion.id, page, target: 'solution' },
+      };
+    }
+
+    const answer = siblings.find((candidate) => candidate.kind === 'answer');
+    const solution = siblings.find((candidate) => candidate.kind === 'solution');
+    const answerPage = answer
+      ? defaultSupportingSourcePage(owner, answer, questionPage, 'answer')
+      : null;
+    const solutionPage = solution
+      ? defaultSupportingSourcePage(owner, solution, questionPage, 'solution')
+      : null;
+    return {
+      ...(answer && answerPage !== null
+        ? {
+            answer: {
+              documentId: answer.id,
+              page: answerPage,
+            },
+          }
+        : {}),
+      ...(solution && solutionPage !== null
+        ? {
+            solution: {
+              documentId: solution.id,
+              page: solutionPage,
+            },
+          }
+        : {}),
+    };
+  }
+
+  /**
+   * Resolve the Answer/Solution pages used only by a whole selected-question re-read. A UI-provided
+   * page wins over the range default, while any field not supplied by the UI is still discovered from
+   * the question document's linked sibling PDFs.
+   */
+  private async resolveSupportingReExtractSources(
+    documentId: string,
+    owner: Document,
+    questionPage: number,
+    supportingSources: ReExtractSupportingSources,
+  ): Promise<{ answer: ReExtractPageSource | null; solution: ReExtractPageSource | null }> {
+    const defaults = await this.defaultSupportingSources(owner, questionPage);
+    const sources = { ...defaults, ...supportingSources };
+    const resolve = async (
+      field: 'answer' | 'solution',
+      source: ReExtractSource | undefined,
+    ): Promise<ReExtractPageSource | null> => {
+      if (!source) return null;
+      const resolved = await this.resolveReExtractSource(documentId, source, questionPage, [questionPage]);
+      if (!sourceCanSupplyField(resolved, field)) {
+        throw errors.validation({
+          message: `The selected ${field} source does not match this question's ${field} PDF.`,
+        });
+      }
+      return resolved;
+    };
+    const [answer, solution] = await Promise.all([
+      resolve('answer', sources.answer),
+      resolve('solution', sources.solution),
+    ]);
+    return { answer, solution };
+  }
+
+  /** Render and read one already-validated page while keeping source grammar out of the caller. */
+  private async readReExtractSource(
+    question: Question,
+    source: ReExtractPageSource,
+    questionType: string | null,
+  ): Promise<QuestionReExtraction> {
+    const png = await this.pages.renderPage(source.documentId, source.page);
+    return this.reExtractor.reExtract({
+      png,
+      questionNumber: question.questionNumber,
+      stemHint: question.stem,
+      questionType,
+      sourceKind: source.sourceKind,
+      ...(source.fieldTarget ? { fieldTarget: source.fieldTarget } : {}),
+      ...(source.inlineAnswers ? { inlineAnswers: true } : {}),
+    });
+  }
+
+  /** A missing/illegible optional supporting page must never discard the selected question's read. */
+  private async tryReadSupportingSource(
+    question: Question,
+    source: ReExtractPageSource | null,
+    questionType: string | null,
+    field: 'answer' | 'solution',
+  ): Promise<QuestionReExtraction | null> {
+    if (!source) return null;
+    try {
+      return await this.readReExtractSource(question, source, questionType);
+    } catch (error) {
+      logger.warn(
+        {
+          questionId: question.id,
+          questionNumber: question.questionNumber,
+          field,
+          sourceDocumentId: source.documentId,
+          sourcePage: source.page,
+          err: error instanceof Error ? error.message : String(error),
+        },
+        'Supporting source re-extract failed; preserving the selected question read',
+      );
+      return null;
+    }
+  }
+
+  /**
    * Re-read one already-extracted question's source page and return its fields afresh (stem,
    * options, answer, explanation) — the verify screen's "read the page again" action. The question
    * is resolved from its document (which also gives its identity: number/stem/type). By default the
    * page read is the question's own source page; `source` redirects it to another document + page —
    * the sibling answer/solution PDF for this topic — so an answer/explanation re-read reads from that
-   * sheet, not the question paper. Answer/explanation are best-effort, since a paper rarely prints them.
+   * sheet, not the question paper. A whole-card request may also provide `supportingSources`: those
+   * linked pages enrich only this question's answer/explanation without changing its source structure.
    */
   async reExtractQuestion(
     documentId: string,
     questionId: string,
     source?: ReExtractSource,
     questionTypeOverride?: string | null,
+    supportingSources?: ReExtractSupportingSources,
   ): Promise<ReExtractedQuestion> {
     const questions = await this.questions.findByDocument(documentId);
     const question = questions.find((candidate) => candidate.id === questionId);
@@ -1042,19 +1150,55 @@ export class QuestionsService {
       question.sourceRegion.page,
       [question.sourceRegion.page],
     );
-    const png = await this.pages.renderPage(resolvedSource.documentId, resolvedSource.page);
     // When the operator has changed the type in verify (not yet saved), honour that choice so the
     // model extracts the right shape for it; otherwise fall back to the question's stored type.
     const questionType = questionTypeOverride ?? question.questionType;
-    const { stem, options, answer, explanation, match, usage } = await this.reExtractor.reExtract({
-      png,
-      questionNumber: question.questionNumber,
-      stemHint: question.stem,
-      questionType,
-      sourceKind: resolvedSource.sourceKind,
-      ...(resolvedSource.fieldTarget ? { fieldTarget: resolvedSource.fieldTarget } : {}),
-      ...(resolvedSource.inlineAnswers ? { inlineAnswers: true } : {}),
-    });
+    const primary = await this.readReExtractSource(question, resolvedSource, questionType);
+    let answerRead: QuestionReExtraction | null = null;
+    let solutionRead: QuestionReExtraction | null = null;
+    // A whole-card Verify re-read is still scoped to this ONE question. The question PDF owns
+    // structure; linked source PDFs enrich only its answer/explanation. Per-field reads omit this
+    // object and therefore retain their existing one-source behavior.
+    if (supportingSources !== undefined && resolvedSource.sourceKind === 'question') {
+      const owner = await this.documents.findById(documentId);
+      if (owner && owner.deletedAt === null) {
+        try {
+          const supporting = await this.resolveSupportingReExtractSources(
+            documentId,
+            owner,
+            question.sourceRegion.page,
+            supportingSources,
+          );
+          [answerRead, solutionRead] = await Promise.all([
+            this.tryReadSupportingSource(question, supporting.answer, questionType, 'answer'),
+            this.tryReadSupportingSource(question, supporting.solution, questionType, 'solution'),
+          ]);
+        } catch (error) {
+          logger.warn(
+            {
+              questionId: question.id,
+              questionNumber: question.questionNumber,
+              err: error instanceof Error ? error.message : String(error),
+            },
+            'Supporting sources could not be resolved; preserving the selected question read',
+          );
+        }
+      }
+    }
+    const usage = combinedUsage(primary.usage, [answerRead, solutionRead]);
+    const merged: ReExtractedQuestion = {
+      stem: primary.stem,
+      options: primary.options,
+      // The answer key is canonical, then a solution can backfill it, then retain an inline/marked
+      // question-page answer. Worked solutions are the best explanation source.
+      answer: firstNonBlank(answerRead?.answer ?? '', solutionRead?.answer ?? '', primary.answer),
+      explanation: firstExplanation(
+        solutionRead?.explanation ?? null,
+        answerRead?.explanation ?? null,
+        primary.explanation,
+      ),
+      match: primary.match,
+    };
     try {
       await this.usage.recordUsage({ source: 'reextract', documentId, ...usage });
     } catch (error) {
@@ -1063,7 +1207,7 @@ export class QuestionsService {
     }
     return normalizeMatrixReExtract(
       question,
-      { stem, options, answer, explanation, match },
+      merged,
       questionType,
       resolvedSource.sourceKind,
     );
@@ -1148,9 +1292,10 @@ export class QuestionsService {
       mode,
       passage: resolvedPassage,
       // Defend the passage-only contract even if a future adapter ignores the requested mode.
-      subQuestions: mode === 'passage_only'
-        ? []
-        : matchGroupSubQuestions(group, subQuestions, resolvedSource.sourceKind),
+      subQuestions:
+        mode === 'passage_only'
+          ? []
+          : matchGroupSubQuestions(group, subQuestions, resolvedSource.sourceKind),
     };
   }
 
@@ -1181,6 +1326,33 @@ export class QuestionsService {
       logger.warn({ err: message }, 'Failed to record LaTeX refiner token usage');
     }
     return refined;
+  }
+
+  /**
+   * Transcribe one user-selected rectangle from the question PDF into a single matrix field. Unlike
+   * page re-extraction, the browser has already cropped the source image, so adjacent rows/columns
+   * cannot be read or overwritten. The document check also keeps token usage attribution honest.
+   */
+  async transcribeSourceArea(
+    documentId: string,
+    png: Buffer,
+    target: TranscribeAreaTarget,
+  ): Promise<string> {
+    const document = await this.documents.findById(documentId);
+    if (!document || document.deletedAt !== null) throw errors.documentNotFound(documentId);
+    if (document.kind !== 'question') {
+      throw errors.validation({
+        message: 'Source-area transcription is available only for question PDFs.',
+      });
+    }
+    const { text, usage } = await this.reExtractor.transcribeArea({ png, target });
+    try {
+      await this.usage.recordUsage({ source: 'area-transcribe', documentId, ...usage });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn({ err: message }, 'Failed to record source-area transcription token usage');
+    }
+    return text;
   }
 }
 

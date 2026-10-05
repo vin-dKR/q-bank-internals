@@ -2,6 +2,7 @@ import {
   type PDFDocument as PDFDocumentType,
   type PDFEmbeddedPage,
   type PageBoundingBox,
+  type PDFPage,
   PageSizes,
 } from 'pdf-lib';
 
@@ -38,22 +39,48 @@ export function cellBounds(
 }
 
 /**
- * Embed a source page's cell as a vector form XObject cropped on both axes (the pdf-lib equivalent
- * of PyMuPDF's `show_pdf_page(..., clip=...)`), so text stays selectable rather than rasterised.
- * Returns null for a zero-area cell (adjacent cut lines).
+ * Embed several cells from the same source document in one operation. `pdf-lib` keeps one object
+ * copier for an `embedPages` call, so a page's fonts and high-resolution image XObjects are copied
+ * once and referenced by every cut cell. Calling `embedPage` once per cell created a fresh copier
+ * each time, which could multiply a small scanned PDF into many megabytes after a grid cut.
+ *
+ * This is deliberately a resource-sharing optimisation, not image compression: every cell still
+ * draws the original page's vector content and original image streams at their native quality.
  */
-export async function embedCell(
+export async function embedCells(
   target: PDFDocumentType,
   source: PDFDocumentType,
-  slice: Slice,
-): Promise<PDFEmbeddedPage | null> {
-  const page = source.getPage(slice.pageNumber - 1);
-  const bounds = cellBounds(page.getSize(), slice);
-  return bounds ? target.embedPage(page, bounds) : null;
+  slices: readonly Slice[],
+): Promise<Array<PDFEmbeddedPage | null>> {
+  const result: Array<PDFEmbeddedPage | null> = Array.from({ length: slices.length }, () => null);
+  const pages: PDFPage[] = [];
+  const boxes: PageBoundingBox[] = [];
+  const indexes: number[] = [];
+
+  for (const [index, slice] of slices.entries()) {
+    const page = source.getPage(slice.pageNumber - 1);
+    const bounds = cellBounds(page.getSize(), slice);
+    if (!bounds) continue;
+    pages.push(page);
+    boxes.push(bounds);
+    indexes.push(index);
+  }
+
+  if (pages.length === 0) return result;
+  const embedded = await target.embedPages(pages, boxes);
+  for (const [embeddedIndex, cell] of embedded.entries()) {
+    const resultIndex = indexes[embeddedIndex];
+    if (resultIndex !== undefined) result[resultIndex] = cell;
+  }
+  return result;
 }
 
 /** Add one A4 page and draw the embedded cell scaled to fit under an optional top margin. */
-export function drawCellOnA4(target: PDFDocumentType, cell: PDFEmbeddedPage, topMargin: number): void {
+export function drawCellOnA4(
+  target: PDFDocumentType,
+  cell: PDFEmbeddedPage,
+  topMargin: number,
+): void {
   const [a4Width, a4Height] = PageSizes.A4;
   const scale = Math.min(a4Width / cell.width, (a4Height - topMargin) / cell.height);
   const page = target.addPage([a4Width, a4Height]);

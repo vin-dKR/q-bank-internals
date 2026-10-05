@@ -129,6 +129,7 @@ const textCrops = [
   { id: 'crop-1', pageNumber: 1, text: 'Exercise-1\nPART 1\nSection (A): Polymers' },
 ];
 const context: StructureDetectionContext = {
+  className: '',
   source: 'module',
   exam: 'JEE',
   subject: 'Chemistry',
@@ -331,6 +332,18 @@ test('saved crop values are rechecked against OCR and cannot supply a fabricated
   const result = DetectedStructureSchema.parse(await adapter.extract({ ...base, savedCrops }));
   assert.equal(result.cropResults?.[0]?.items[0]?.topic?.label, 'Phenol');
   assert.ok(result.warnings?.some((warning) => warning.includes('rejected a cleaned topic label')));
+});
+
+test('structure input preserves the manual class and accepts older context without it', () => {
+  const request = { crops: textCrops, context: { ...context, className: '12' }, pageCount: 1 };
+  assert.equal(DetectStructureRequestSchema.parse(request).context.className, '12');
+  const legacyContext = { ...context };
+  Reflect.deleteProperty(legacyContext, 'className');
+  assert.equal(
+    DetectStructureRequestSchema.parse({ ...request, context: legacyContext }).context.className,
+    '',
+  );
+  assert.equal(StructureEstimateRequestSchema.parse(request).context.className, '12');
 });
 
 test('crop preview permits only one crop and rejects duplicate saved crop IDs', () => {

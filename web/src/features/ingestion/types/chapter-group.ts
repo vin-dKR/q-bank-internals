@@ -40,6 +40,7 @@ export function emptyMetadata(): ChapterMetadataDraft {
   return {
     source: '',
     exam: '',
+    className: '',
     subject: '',
     module: '',
     chapter: '',

@@ -1,6 +1,6 @@
 import { type PDFDocument as PDFDocumentType, PDFDocument, PageSizes, rgb } from 'pdf-lib';
 import type { CropRect, ReflowBlock } from '../types/reflow-block.js';
-import { type PdfInput, embedCell } from './cut-pdf.js';
+import { type PdfInput, embedCells } from './cut-pdf.js';
 
 const MARGIN = 28; // points of page margin around a stacked block
 const GAP = 10; // points between stacked fragments
@@ -12,23 +12,31 @@ async function stackBlockPage(
   src: PDFDocumentType,
   block: ReflowBlock,
 ): Promise<boolean> {
-  const embeds = [];
-  for (const crop of block.crops) {
-    const cell = await embedCell(out, src, {
-      pageNumber: crop.page,
-      x0: crop.x0,
-      x1: crop.x1,
-      start: crop.y0,
-      end: crop.y1,
-    });
-    if (cell) embeds.push(cell);
-  }
+  // One embed operation shares a source page's original image/font resources across all fragments
+  // in this reflow block. The output remains a vector PDF; no crop is rasterised or downsampled.
+  const embeds = (
+    await embedCells(
+      out,
+      src,
+      block.crops.map((crop) => ({
+        pageNumber: crop.page,
+        x0: crop.x0,
+        x1: crop.x1,
+        start: crop.y0,
+        end: crop.y1,
+      })),
+    )
+  ).filter((cell) => cell !== null);
   if (embeds.length === 0) return false;
 
   const [a4Width, a4Height] = PageSizes.A4;
   const stackWidth = Math.max(...embeds.map((e) => e.width));
   const stackHeight = embeds.reduce((sum, e) => sum + e.height, 0) + GAP * (embeds.length - 1);
-  const scale = Math.min((a4Width - 2 * MARGIN) / stackWidth, (a4Height - 2 * MARGIN) / stackHeight, 1);
+  const scale = Math.min(
+    (a4Width - 2 * MARGIN) / stackWidth,
+    (a4Height - 2 * MARGIN) / stackHeight,
+    1,
+  );
 
   const page = out.addPage([a4Width, a4Height]);
   let y = a4Height - MARGIN;

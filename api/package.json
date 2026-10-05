@@ -24,6 +24,7 @@
     "@prisma/client": "^6.2.0",
     "@supabase/supabase-js": "^2.112.0",
     "@tesseract.js-data/eng": "1.0.0",
+    "@vercel/queue": "^0.7.0",
     "bullmq": "^5.81.3",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",

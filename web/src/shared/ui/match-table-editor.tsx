@@ -1,11 +1,13 @@
 import type { JSX } from 'react';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import type { MatchColumn, MatchData, MatchEntry } from '@ingest/contracts';
 import { EditableLatexValue } from '../lib/latex.js';
 import { Button } from './button.js';
 import { IconButton } from './icon-button.js';
-import { IconPlus, IconX } from './icons.js';
+import { IconPlus, IconScan, IconSparkle, IconX } from './icons.js';
 import { CropImageButton } from './crop-image-button.js';
+import { Spinner } from './spinner.js';
+import { useToast } from './toast.js';
 
 const FIELD_LABEL = 'text-[13px] font-medium text-ink-2';
 /** Familiar defaults for the first two columns; later columns receive globally unique safe labels. */
@@ -168,18 +170,32 @@ export function MatchTableEditor({
   value,
   onChange,
   onCropImage,
+  onRefineText,
+  onRequestTranscription,
   disabled = false,
+  sourceActionsDisabled = false,
   allowImages = true,
 }: {
   value: MatchData;
   onChange: (next: MatchData) => void;
   /** Arm a crop from the question page and resolve with the uploaded image URL (or `null` if cancelled). */
   onCropImage?: () => Promise<string | null>;
+  /** Optional Verify-only AI action; browse/editor surfaces intentionally omit it. */
+  onRefineText?: (text: string) => Promise<string>;
+  /** Arms a source-area draw and returns text from just that selected rectangle. */
+  onRequestTranscription?: (
+    target: 'matrix_column_title' | 'matrix_entry',
+  ) => Promise<string | null>;
   disabled?: boolean;
+  /** Pause only source-page actions while Verify is running a conflicting crop operation. */
+  sourceActionsDisabled?: boolean;
   /** When false, entry figures are read-only (shown but not croppable/removable). Defaults to on. */
   allowImages?: boolean;
 }): JSX.Element {
   const { columns, key } = value;
+  const toast = useToast();
+  const [busyField, setBusyField] = useState<string | null>(null);
+  const busyFieldRef = useRef<string | null>(null);
   /**
    * A controlled text input visits an empty value while an operator replaces a label. Remember the
    * label it started with until a non-empty blur can safely move its mapping, rather than deleting
@@ -198,6 +214,98 @@ export function MatchTableEditor({
   };
   const entryIdentity = (colIndex: number, entryIndex: number): string =>
     `${String(colIndex)}:${String(entryIndex)}`;
+  const titleIdentity = (colIndex: number): string => `title:${String(colIndex)}`;
+
+  /** Keep every matrix field's AI controls compact, target-specific, and independently busy. */
+  const runRefine = async (
+    fieldId: string,
+    current: string,
+    apply: (next: string) => void,
+  ): Promise<void> => {
+    if (!onRefineText || !current.trim() || busyFieldRef.current !== null) return;
+    busyFieldRef.current = fieldId;
+    setBusyField(fieldId);
+    try {
+      const next = await onRefineText(current);
+      if (next.trim()) apply(next);
+    } catch (error) {
+      toast.error(
+        'Could not fix LaTeX',
+        error instanceof Error ? error.message : 'Please try again.',
+      );
+    } finally {
+      if (busyFieldRef.current === fieldId) {
+        busyFieldRef.current = null;
+        setBusyField(null);
+      }
+    }
+  };
+
+  const runTranscription = async (
+    fieldId: string,
+    target: 'matrix_column_title' | 'matrix_entry',
+    apply: (next: string) => void,
+  ): Promise<void> => {
+    if (!onRequestTranscription || busyFieldRef.current !== null) return;
+    busyFieldRef.current = fieldId;
+    setBusyField(fieldId);
+    try {
+      const next = await onRequestTranscription(target);
+      // Esc/cancelling a draw resolves null. Do not overwrite an existing field with that.
+      if (next !== null && next.trim()) apply(next);
+    } catch (error) {
+      toast.error(
+        'Could not transcribe the selected area',
+        error instanceof Error ? error.message : 'Please try again.',
+      );
+    } finally {
+      if (busyFieldRef.current === fieldId) {
+        busyFieldRef.current = null;
+        setBusyField(null);
+      }
+    }
+  };
+
+  const fieldActions = (
+    fieldId: string,
+    current: string,
+    target: 'matrix_column_title' | 'matrix_entry',
+    fieldLabel: string,
+    apply: (next: string) => void,
+  ): JSX.Element | null => {
+    if (!onRefineText && !onRequestTranscription) return null;
+    const refining = busyField === `${fieldId}:refine`;
+    const transcribing = busyField === `${fieldId}:transcribe`;
+    // A source-area selection owns the shared Verify canvas. Keep the other field actions dormant
+    // until it settles so a second click cannot replace the first field's pending crop.
+    const blocked = disabled || sourceActionsDisabled || busyField !== null;
+    return (
+      <div className="flex flex-none items-center gap-0.5" aria-label={`${fieldLabel} AI actions`}>
+        {onRefineText ? (
+          <IconButton
+            icon={refining ? <Spinner /> : <IconSparkle />}
+            label={`Fix ${fieldLabel} LaTeX with AI`}
+            size="xs"
+            disabled={blocked || !current.trim()}
+            onClick={() => {
+              void runRefine(`${fieldId}:refine`, current, apply);
+            }}
+          />
+        ) : null}
+        {onRequestTranscription ? (
+          <IconButton
+            icon={transcribing ? <Spinner /> : <IconScan />}
+            label={`Select a source area and transcribe it into ${fieldLabel}`}
+            size="xs"
+            disabled={blocked}
+            onClick={() => {
+              void runTranscription(`${fieldId}:transcribe`, target, apply);
+            }}
+          />
+        ) : null}
+      </div>
+    );
+  };
 
   const patchColumn = (index: number, next: MatchColumn): void => {
     emit(columns.map((column, i) => (i === index ? next : column)));
@@ -347,9 +455,9 @@ export function MatchTableEditor({
               key={colIndex}
               className="flex min-w-56 flex-1 flex-col gap-2 rounded-lg border border-line bg-surface p-2.5"
             >
-              <div className="flex items-center gap-1.5">
+              <div className="flex min-w-0 items-center gap-1.5">
                 <input
-                  className="w-full"
+                  className="min-w-0 flex-1"
                   value={column.title}
                   placeholder={`Column ${String(colIndex + 1)} title`}
                   disabled={disabled}
@@ -357,11 +465,20 @@ export function MatchTableEditor({
                     patchColumn(colIndex, { ...column, title: e.target.value });
                   }}
                 />
+                {fieldActions(
+                  titleIdentity(colIndex),
+                  column.title,
+                  'matrix_column_title',
+                  `column ${String(colIndex + 1)} title`,
+                  (title) => {
+                    patchColumn(colIndex, { ...column, title });
+                  },
+                )}
                 {columns.length > 2 ? (
                   <IconButton
                     icon={<IconX />}
                     label={`Remove ${column.title || `column ${String(colIndex + 1)}`}`}
-                    size="sm"
+                    size="xs"
                     disabled={disabled}
                     onClick={() => {
                       removeColumn(colIndex);
@@ -370,75 +487,95 @@ export function MatchTableEditor({
                 ) : null}
               </div>
 
-              {column.entries.map((entry, entryIndex) => (
-                <div key={entryIndex} className="flex items-start gap-1.5">
-                  <input
-                    className="mt-1 w-9 flex-none text-center font-semibold"
-                    value={entry.label}
-                    aria-label={`Label for entry ${String(entryIndex + 1)}`}
-                    disabled={disabled}
-                    onFocus={() => {
-                      beginLabelEdit(colIndex, entryIndex, entry.label);
-                    }}
-                    onChange={(e) => {
-                      patchEntry(colIndex, entryIndex, { ...entry, label: e.target.value });
-                    }}
-                    onBlur={(event) => {
-                      commitLabelEdit(colIndex, entryIndex, event.currentTarget.value);
-                    }}
-                  />
-                  <div className="flex-1">
-                    <EditableLatexValue
-                      value={entry.body}
-                      onChange={(body) => {
-                        patchEntry(colIndex, entryIndex, { ...entry, body });
-                      }}
-                      placeholder="Click to edit entry"
-                    />
-                    {entry.image ? (
-                      <div className="mt-1 flex items-center gap-2">
-                        <img
-                          src={entry.image}
-                          alt={`entry ${entry.label}`}
-                          className="max-h-16 rounded border border-line bg-white"
-                        />
-                        {allowImages ? (
-                          <Button
-                            variant="ghost"
-                            size="xs"
+              {column.entries.map((entry, entryIndex) => {
+                const entryId = entryIdentity(colIndex, entryIndex);
+                return (
+                  <div
+                    key={entryIndex}
+                    className="flex flex-col gap-1.5 border-t border-line pt-2 first:border-t-0 first:pt-0"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        className="w-9 flex-none text-center font-semibold"
+                        value={entry.label}
+                        aria-label={`Label for entry ${String(entryIndex + 1)}`}
+                        disabled={disabled}
+                        onFocus={() => {
+                          beginLabelEdit(colIndex, entryIndex, entry.label);
+                        }}
+                        onChange={(e) => {
+                          patchEntry(colIndex, entryIndex, { ...entry, label: e.target.value });
+                        }}
+                        onBlur={(event) => {
+                          commitLabelEdit(colIndex, entryIndex, event.currentTarget.value);
+                        }}
+                      />
+                      <span className="min-w-0 flex-1 text-[11px] font-medium uppercase tracking-wide text-ink-3">
+                        Entry {String(entryIndex + 1)}
+                      </span>
+                      {fieldActions(
+                        entryId,
+                        entry.body,
+                        'matrix_entry',
+                        `entry ${entry.label || String(entryIndex + 1)}`,
+                        (body) => {
+                          patchEntry(colIndex, entryIndex, { ...entry, body });
+                        },
+                      )}
+                      <IconButton
+                        icon={<IconX />}
+                        label="Remove entry"
+                        size="xs"
+                        disabled={disabled}
+                        onClick={() => {
+                          removeEntry(colIndex, entryIndex);
+                        }}
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <EditableLatexValue
+                        value={entry.body}
+                        onChange={(body) => {
+                          patchEntry(colIndex, entryIndex, { ...entry, body });
+                        }}
+                        placeholder="Click to edit entry"
+                      />
+                      {entry.image ? (
+                        <div className="mt-1 flex items-center gap-2">
+                          <img
+                            src={entry.image}
+                            alt={`entry ${entry.label}`}
+                            className="max-h-16 rounded border border-line bg-white"
+                          />
+                          {allowImages ? (
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              disabled={disabled}
+                              onClick={() => {
+                                patchEntry(colIndex, entryIndex, { ...entry, image: null });
+                              }}
+                            >
+                              Remove image
+                            </Button>
+                          ) : null}
+                        </div>
+                      ) : allowImages && onCropImage ? (
+                        <div className="mt-1 flex items-center gap-2">
+                          <CropImageButton
+                            label="Image"
                             disabled={disabled}
-                            onClick={() => {
-                              patchEntry(colIndex, entryIndex, { ...entry, image: null });
+                            onRequestCrop={onCropImage}
+                            onCropped={(url) => {
+                              patchEntry(colIndex, entryIndex, { ...entry, image: url });
                             }}
-                          >
-                            Remove image
-                          </Button>
-                        ) : null}
-                      </div>
-                    ) : allowImages && onCropImage ? (
-                      <div className="mt-1 flex items-center gap-2">
-                        <CropImageButton
-                          label="Image"
-                          disabled={disabled}
-                          onRequestCrop={onCropImage}
-                          onCropped={(url) => {
-                            patchEntry(colIndex, entryIndex, { ...entry, image: url });
-                          }}
-                        />
-                      </div>
-                    ) : null}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
-                  <IconButton
-                    icon={<IconX />}
-                    label="Remove entry"
-                    size="sm"
-                    disabled={disabled}
-                    onClick={() => {
-                      removeEntry(colIndex, entryIndex);
-                    }}
-                  />
-                </div>
-              ))}
+                );
+              })}
 
               <Button
                 variant="ghost"

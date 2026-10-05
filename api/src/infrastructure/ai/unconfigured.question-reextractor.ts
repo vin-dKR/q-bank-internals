@@ -4,6 +4,7 @@ import type {
   GroupReExtraction,
   QuestionReExtraction,
   QuestionReExtractor,
+  SourceAreaTranscription,
   TranscribeRegionInput,
 } from '../../modules/questions/index.js';
 
@@ -14,6 +15,10 @@ export class UnconfiguredQuestionReExtractor implements QuestionReExtractor {
   }
 
   reExtractGroup(): Promise<GroupReExtraction> {
+    return Promise.reject(errors.extractionFailed('OPENAI_API_KEY is not configured.'));
+  }
+
+  transcribeArea(): Promise<SourceAreaTranscription> {
     return Promise.reject(errors.extractionFailed('OPENAI_API_KEY is not configured.'));
   }
 

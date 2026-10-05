@@ -1158,6 +1158,19 @@
     @apply text-center text-[11px] leading-tight text-ink-2;
     font-variant-numeric: tabular-nums;
   }
+  .verify__rail-page {
+    @apply flex w-10 flex-col items-center gap-0.5 text-center text-[10px] leading-tight text-ink-2;
+    font-variant-numeric: tabular-nums;
+  }
+  .verify__rail-page input {
+    @apply h-7 w-10 rounded-md border border-line-strong bg-surface px-1 py-0 text-center text-[11px] text-ink;
+    appearance: textfield;
+  }
+  .verify__rail-page input::-webkit-inner-spin-button,
+  .verify__rail-page input::-webkit-outer-spin-button {
+    appearance: none;
+    margin: 0;
+  }
   .verify__rail-spacer {
     @apply min-h-2 flex-1;
   }

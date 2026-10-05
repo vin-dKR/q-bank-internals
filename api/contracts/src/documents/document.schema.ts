@@ -9,6 +9,7 @@ export const DocumentStatusSchema = z.enum([
   'uploaded', // sitting in Drive, not yet extracted
   'queued', // handed to the extractor
   'extracting', // vision model running
+  'paused', // extraction checkpoints saved; resume continues at the first unfinished page
   'extracted', // questions produced by the model, awaiting review/merge
   'needs_review', // drafts produced, awaiting a human
   'approved', // a person accepted the drafts
@@ -98,6 +99,8 @@ export const DocumentSchema = z.object({
   questionType: QuestionTypeSchema.nullable(),
   /** The exam this chapter's questions belong to (e.g. NEET) — the operator's per-chapter pick. Null on legacy documents. */
   exam: z.string().nullable(),
+  /** CBSE grade selected at cut time (for example "Class 10"); null for non-CBSE and legacy documents. */
+  className: z.string().nullable().default(null),
   /** The subject this chapter's questions belong to (e.g. Biology). Null on legacy documents. */
   subject: z.string().nullable(),
   /** Whether this chapter's questions are previous-year questions (PYQ), captured at cut time. */
@@ -137,6 +140,7 @@ export const RegisterDocumentSchema = z.object({
   sectionName: z.string().min(1).nullable().optional(),
   questionType: QuestionTypeSchema.nullable().optional(),
   exam: z.string().min(1).nullable().optional(),
+  className: z.string().min(1).max(32).nullable().optional(),
   subject: z.string().min(1).nullable().optional(),
   pyq: z.boolean().optional(),
   pyqExam: z.string().min(1).nullable().optional(),

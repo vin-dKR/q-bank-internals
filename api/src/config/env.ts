@@ -39,15 +39,15 @@ const EnvSchema = z.object({
   EXTRACTION_MODEL: z.string().default('gpt-5.4'),
   STRUCTURE_OCR_MIN_CONFIDENCE: z.coerce.number().min(0).max(100).default(70),
   STRUCTURE_OCR_TIMEOUT_MS: z.coerce.number().int().positive().default(45000),
-  // Per-run deadline for the extraction worker. A run that exceeds this is aborted (its in-flight
-  // vision call is cancelled) and flipped to `failed` so the document can be re-extracted, instead of
-  // hanging forever. Default 5 minutes; raise for very long documents, lower to fail faster.
-  EXTRACTION_TIMEOUT_MS: z.coerce.number().int().positive().default(300000),
   // Age after which a document still `queued`/`extracting` is treated as orphaned and auto-reset to
-  // `failed` on the next read. On serverless (and if a worker process dies) nothing else transitions
-  // a stuck row, so this is the only self-heal — see `resetStale`. Floored in the container to always
-  // exceed EXTRACTION_TIMEOUT_MS + 1min, so a genuinely live run is never reset out from under itself.
+  // `failed` on the next read. Each completed page touches the document timestamp, so this is a
+  // heartbeat threshold rather than a whole-PDF timeout.
   STALE_EXTRACTION_MS: z.coerce.number().int().positive().default(600000),
+  // Consecutive pages rendered/read in one queue callback. Each page is still checkpointed before
+  // the next, so a failure resumes at the first missing page. Four avoids re-downloading a large
+  // Drive PDF once per page while staying comfortably below Vercel's function limit; set to 1 for
+  // exceptionally dense/scanned material.
+  EXTRACTION_PAGES_PER_TASK: z.coerce.number().int().min(1).max(10).default(4),
   // Text model for the interactive "Fix LaTeX with AI" per-field refiner. gpt-4o-mini mangled backslash
   // commands (it emitted `\text` unescaped in JSON, so `\t` parsed to a TAB — `6 \text{m}` came back
   // `6 <TAB>ext{m}`). gpt-5.4-mini escapes reliably AND, with the units-as-\text prompt, wraps physical
@@ -68,10 +68,9 @@ const EnvSchema = z.object({
   // BullMQ (Redis) connection for the extraction queue. Absent → in-process queue (dev, no Redis).
   REDIS_URL: z.string().optional(),
 
-  // Serverless mode (Vercel). The platform freezes the function the instant the HTTP response is
-  // sent, so the detached background worker never runs — extraction must instead run synchronously
-  // inside the request (see SynchronousJobQueue). `VERCEL` is set automatically in Vercel's runtime;
-  // `SERVERLESS=true` forces the same mode locally for testing.
+  // Serverless mode (Vercel). Production uses Vercel Queue's private consumer for background page
+  // tasks. `VERCEL` is set automatically in Vercel's runtime; `SERVERLESS=true` forces that adapter
+  // locally for integration testing.
   VERCEL: z.string().optional(),
   SERVERLESS: z
     .enum(['true', 'false'])
@@ -101,7 +100,7 @@ export type Env = typeof env;
 
 /**
  * True when running on a serverless platform (Vercel sets `VERCEL`) or when forced via `SERVERLESS`.
- * In this mode the composition root wires the synchronous queue and skips the cold-start stale-job
- * reset, which would otherwise race concurrent function invocations.
+ * In this mode the composition root wires Vercel Queue and skips cold-start stale-job recovery,
+ * which would otherwise race concurrent queue invocations.
  */
 export const isServerless = Boolean(env.VERCEL) || env.SERVERLESS;

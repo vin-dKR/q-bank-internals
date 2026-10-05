@@ -17,6 +17,7 @@ const INGEST_QUESTION_ID_PATH = 'ingest_ref.question_id';
 const OBJECT_ID_FIELDS = [
   'examId',
   'subjectId',
+  'moduleId',
   'chapterId',
   'sectionId',
   'questionTypeId',
@@ -27,13 +28,17 @@ const OBJECT_ID = /^[a-f0-9]{24}$/i;
 
 /** Compare Extended JSON values without depending on object key order. */
 function comparable(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'undefined';
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(comparable).join(',')}]`;
   const record = value as Record<string, unknown>;
   for (const key of ['$numberInt', '$numberLong', '$numberDouble']) {
-    if (typeof record[key] === 'string' && Object.keys(record).length === 1) return comparable(Number(record[key]));
+    if (typeof record[key] === 'string' && Object.keys(record).length === 1)
+      return comparable(Number(record[key]));
   }
-  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${comparable(record[key])}`).join(',')}}`;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${comparable(record[key])}`)
+    .join(',')}}`;
 }
 
 const FindReplySchema = z.object({
@@ -60,7 +65,10 @@ const UpdateReplySchema = z.object({
   writeErrors: z
     .array(z.object({ index: ejsonNumber.catch(0), errmsg: z.string().catch('') }))
     .catch([]),
-  writeConcernError: z.object({ errmsg: z.string().catch('') }).nullable().catch(null),
+  writeConcernError: z
+    .object({ errmsg: z.string().catch('') })
+    .nullable()
+    .catch(null),
 });
 
 /** Read the `ingest_ref.question_id` off a bank row, or fail loudly — it is the idempotency key. */
@@ -95,34 +103,40 @@ export class MongoBankPublisher implements BankPublisher {
     const existing = new Map<string, BankQuestion>();
     for (let offset = 0; offset < questions.length; offset += 100) {
       const ids = questions.slice(offset, offset + 100).map(ingestQuestionId);
-      const result = FindReplySchema.parse(await this.prisma.$runCommandRaw({
-        find: this.collection,
-        filter: { [INGEST_QUESTION_ID_PATH]: { $in: ids } },
-        batchSize: 100,
-        singleBatch: true,
-      } as unknown as Prisma.InputJsonObject));
+      const result = FindReplySchema.parse(
+        await this.prisma.$runCommandRaw({
+          find: this.collection,
+          filter: { [INGEST_QUESTION_ID_PATH]: { $in: ids } },
+          batchSize: 100,
+          singleBatch: true,
+        }),
+      );
       for (const row of result.cursor.firstBatch) existing.set(ingestQuestionId(row), row);
     }
     const updates = questions.flatMap((question) => {
       const id = ingestQuestionId(question);
       const previous = existing.get(id);
       const next = withObjectIdFks(question);
-      const changed = Object.fromEntries(Object.entries(next).filter(([key, value]) =>
-        !previous || comparable(previous[key]) !== comparable(value),
-      ));
+      const changed = Object.fromEntries(
+        Object.entries(next).filter(
+          ([key, value]) => !previous || comparable(previous[key]) !== comparable(value),
+        ),
+      );
       // The mapper omits empty provenance. Clear an old AI tag after a human edits it.
-      const unset = previous?.ai_filled !== undefined && next.ai_filled === undefined
-        ? { ai_filled: '' } : {};
+      const unset =
+        previous?.ai_filled !== undefined && next.ai_filled === undefined ? { ai_filled: '' } : {};
       if (Object.keys(changed).length === 0 && Object.keys(unset).length === 0) return [];
-      return [{
-        q: { [INGEST_QUESTION_ID_PATH]: id },
-        u: {
-          ...(Object.keys(changed).length > 0 ? { $set: changed } : {}),
-          ...(Object.keys(unset).length > 0 ? { $unset: unset } : {}),
+      return [
+        {
+          q: { [INGEST_QUESTION_ID_PATH]: id },
+          u: {
+            ...(Object.keys(changed).length > 0 ? { $set: changed } : {}),
+            ...(Object.keys(unset).length > 0 ? { $unset: unset } : {}),
+          },
+          // A deleted existing row must fail the match check, rather than insert an incomplete patch.
+          upsert: !previous,
         },
-        // A deleted existing row must fail the match check, rather than insert an incomplete patch.
-        upsert: !previous,
-      }];
+      ];
     });
     if (updates.length === 0) return 0;
     const command = {
@@ -135,7 +149,9 @@ export class MongoBankPublisher implements BankPublisher {
     const reply = UpdateReplySchema.parse(await this.prisma.$runCommandRaw(command));
 
     if (reply.writeConcernError) {
-      throw errors.publishWriteFailed(reply.writeConcernError.errmsg || 'write concern not satisfied.');
+      throw errors.publishWriteFailed(
+        reply.writeConcernError.errmsg || 'write concern not satisfied.',
+      );
     }
     if (reply.writeErrors.length > 0) {
       const detail = reply.writeErrors[0]?.errmsg ?? 'unknown write error';

@@ -24,6 +24,11 @@ const OBJECT_ID = /^[a-f0-9]{24}$/i;
 /** Dictionaries are small reference sets; this cap holds the whole collection in one raw `find` batch. */
 const MAX_ENTRIES = 5000;
 
+/** A tolerant EJSON ObjectId array. Legacy dictionary rows omit relationship arrays entirely. */
+const oidList = z
+  .preprocess((value) => (Array.isArray(value) ? (value as unknown[]) : []), z.array(optionalOid))
+  .transform((ids) => [...new Set(ids.filter((id): id is string => typeof id === 'string'))]);
+
 /** Each managed dimension → its eduents dictionary collection. */
 const COLLECTION: Record<TaxonomyDimension, string> = {
   exam: 'Exam',
@@ -59,19 +64,21 @@ const RawDictSchema = z
     rank: ejsonNumber.nullable().catch(null),
     subjectId: optionalOid,
     chapterId: optionalOid,
+    moduleId: optionalOid,
+    examIds: oidList,
   })
-  .transform(
-    (doc): DictionaryRow => ({
-      id: doc._id,
-      key: doc.key,
-      name: doc.name,
-      aliases: cleanStrings(doc.aliases),
-      kind: doc.kind,
-      rank: doc.rank,
-      subjectId: doc.subjectId,
-      chapterId: doc.chapterId,
-    }),
-  );
+  .transform((doc): DictionaryRow => ({
+    id: doc._id,
+    key: doc.key,
+    name: doc.name,
+    aliases: cleanStrings(doc.aliases),
+    kind: doc.kind,
+    rank: doc.rank,
+    subjectId: doc.subjectId,
+    chapterId: doc.chapterId,
+    moduleId: doc.moduleId,
+    examIds: doc.examIds,
+  }));
 
 /**
  * {@link TaxonomyStore} over the shared Eduents bank's dictionary collections, using raw Mongo commands
@@ -94,6 +101,9 @@ export class MongoTaxonomyStore implements TaxonomyStore {
     }
     if (dimension === 'topic' && filter.chapterId && OBJECT_ID.test(filter.chapterId)) {
       match.chapterId = { $oid: filter.chapterId };
+    }
+    if (dimension === 'section' && filter.moduleId && OBJECT_ID.test(filter.moduleId)) {
+      match.moduleId = { $oid: filter.moduleId };
     }
     const sort = dimension === 'level' ? { rank: 1 as const } : { name: 1 as const };
     return this.readMany(dimension, match, sort, MAX_ENTRIES);
@@ -121,14 +131,20 @@ export class MongoTaxonomyStore implements TaxonomyStore {
     if (row.rank !== null) doc.rank = row.rank;
     if (row.subjectId !== null) doc.subjectId = { $oid: row.subjectId };
     if (row.chapterId !== null) doc.chapterId = { $oid: row.chapterId };
+    if (row.moduleId !== null) doc.moduleId = { $oid: row.moduleId };
+    if (row.examIds.length > 0) doc.examIds = row.examIds.map((id) => ({ $oid: id }));
 
-    const command = { insert: COLLECTION[dimension], documents: [doc] } as unknown as Prisma.InputJsonObject;
+    const command = {
+      insert: COLLECTION[dimension],
+      documents: [doc],
+    } as unknown as Prisma.InputJsonObject;
     const reply = (await this.prisma.$runCommandRaw(command)) as Record<string, unknown>;
     const writeErrors = z
       .array(z.object({ code: ejsonNumber.catch(0) }))
       .catch([])
       .parse(reply.writeErrors ?? []);
-    if (writeErrors.some((e) => e.code === 11000)) throw errors.dictionaryEntryExists(dimension, row.name);
+    if (writeErrors.some((e) => e.code === 11000))
+      throw errors.dictionaryEntryExists(dimension, row.name);
     if (writeErrors.length > 0) throw errors.dictionaryWriteFailed('insert rejected');
 
     const created = await this.findByKey(dimension, row.key);
@@ -136,7 +152,11 @@ export class MongoTaxonomyStore implements TaxonomyStore {
     return created;
   }
 
-  async update(dimension: TaxonomyDimension, id: string, patch: DictionaryPatch): Promise<DictionaryRow> {
+  async update(
+    dimension: TaxonomyDimension,
+    id: string,
+    patch: DictionaryPatch,
+  ): Promise<DictionaryRow> {
     if (!OBJECT_ID.test(id)) throw errors.dictionaryEntryNotFound(dimension, id);
 
     const set: Record<string, unknown> = { updatedAt: { $date: new Date().toISOString() } };
@@ -144,8 +164,13 @@ export class MongoTaxonomyStore implements TaxonomyStore {
     if (patch.aliases !== undefined) set.aliases = patch.aliases;
     if (patch.kind !== undefined) set.kind = patch.kind;
     if (patch.rank !== undefined) set.rank = patch.rank;
-    if (patch.subjectId !== undefined) set.subjectId = patch.subjectId === null ? null : { $oid: patch.subjectId };
-    if (patch.chapterId !== undefined) set.chapterId = patch.chapterId === null ? null : { $oid: patch.chapterId };
+    if (patch.subjectId !== undefined)
+      set.subjectId = patch.subjectId === null ? null : { $oid: patch.subjectId };
+    if (patch.chapterId !== undefined)
+      set.chapterId = patch.chapterId === null ? null : { $oid: patch.chapterId };
+    if (patch.moduleId !== undefined)
+      set.moduleId = patch.moduleId === null ? null : { $oid: patch.moduleId };
+    if (patch.examIds !== undefined) set.examIds = patch.examIds.map((id) => ({ $oid: id }));
 
     const command = {
       update: COLLECTION[dimension],
@@ -191,7 +216,10 @@ export class MongoTaxonomyStore implements TaxonomyStore {
     return counts;
   }
 
-  private async readOne(dimension: TaxonomyDimension, filter: Record<string, unknown>): Promise<DictionaryRow | null> {
+  private async readOne(
+    dimension: TaxonomyDimension,
+    filter: Record<string, unknown>,
+  ): Promise<DictionaryRow | null> {
     const [row] = await this.readMany(dimension, filter, undefined, 1);
     return row ?? null;
   }

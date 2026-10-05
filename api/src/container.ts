@@ -7,6 +7,7 @@ import {
   ExtractionService,
   ExtractionWorker,
   type ExtractionJobStore,
+  type ExtractionDraftStore,
   type JobQueue,
   type MasterOption,
   type MastersSnapshot,
@@ -22,8 +23,12 @@ import {
   type PaperMetadataExtractor,
   type QuestionRepository,
 } from './modules/questions/index.js';
-import { UsageService, type TokenLimitStore, type UsageRepository } from './modules/usage/index.js';
-import { PagesService } from './modules/pages/index.js';
+import {
+  UsageService,
+  type TokenLimitStore,
+  type UsageRepository,
+} from './modules/usage/index.js';
+import { PagesService, type PagePreviewStore } from './modules/pages/index.js';
 import { PublishService } from './modules/publish/index.js';
 import { BankService } from './modules/bank/index.js';
 import { CatalogService } from './modules/catalog/index.js';
@@ -40,10 +45,12 @@ import { QualityService, type QuestionAiFixer } from './modules/quality/index.js
 import { InMemoryDocumentRepository } from './infrastructure/database/repositories/document.in-memory-repository.js';
 import { InMemorySessionRepository } from './infrastructure/database/repositories/session.in-memory-repository.js';
 import { InMemoryExtractionJobStore } from './infrastructure/database/repositories/extraction-job.in-memory-store.js';
+import { InMemoryExtractionDraftStore } from './infrastructure/database/repositories/extraction-draft.in-memory-store.js';
 import { InMemoryQuestionRepository } from './infrastructure/database/repositories/question.in-memory-repository.js';
 import { PrismaDocumentRepository } from './infrastructure/database/repositories/document.prisma-repository.js';
 import { PrismaSessionRepository } from './infrastructure/database/repositories/session.prisma-repository.js';
 import { PrismaExtractionJobStore } from './infrastructure/database/repositories/extraction-job.prisma-store.js';
+import { PrismaExtractionDraftStore } from './infrastructure/database/repositories/extraction-draft.prisma-store.js';
 import { PrismaQuestionRepository } from './infrastructure/database/repositories/question.prisma-repository.js';
 import { InMemoryUsageRepository } from './infrastructure/database/repositories/token-usage.in-memory-repository.js';
 import { InMemoryTokenLimitStore } from './infrastructure/database/repositories/token-limit.in-memory-store.js';
@@ -54,8 +61,8 @@ import { GoogleDriveStorage } from './infrastructure/drive/google-drive.storage.
 import { UnconfiguredDriveStorage } from './infrastructure/drive/unconfigured-drive.storage.js';
 import { oauthDrive, serviceAccountDrive } from './infrastructure/drive/google-auth.js';
 import { InProcessJobQueue } from './infrastructure/queue/in-process.job-queue.js';
-import { SynchronousJobQueue } from './infrastructure/queue/synchronous.job-queue.js';
 import { BullMqJobQueue } from './infrastructure/queue/bullmq.job-queue.js';
+import { VercelJobQueue } from './infrastructure/queue/vercel.job-queue.js';
 import { PdfToImgRasterizer } from './infrastructure/pdf/pdf-to-img.rasterizer.js';
 import { TesseractPageOcr } from './infrastructure/pdf/tesseract.page-ocr.js';
 import { OpenAiVisionExtractor } from './infrastructure/ai/openai.vision-extractor.js';
@@ -64,6 +71,8 @@ import { SupabaseImageStore } from './infrastructure/storage/supabase.image-stor
 import { UnconfiguredImageStore } from './infrastructure/storage/unconfigured.image-store.js';
 import { SupabaseUploadStagingStore } from './infrastructure/storage/supabase.upload-staging-store.js';
 import { UnconfiguredUploadStagingStore } from './infrastructure/storage/unconfigured.upload-staging-store.js';
+import { SupabasePagePreviewStore } from './infrastructure/storage/supabase.page-preview-store.js';
+import { UnconfiguredPagePreviewStore } from './infrastructure/storage/unconfigured.page-preview-store.js';
 import { InMemoryPromptOverrideStore } from './infrastructure/database/repositories/prompt-override.in-memory-store.js';
 import { PrismaPromptOverrideStore } from './infrastructure/database/repositories/prompt-override.prisma-store.js';
 import { OpenAiLatexRefiner } from './infrastructure/ai/openai.latex-refiner.js';
@@ -163,6 +172,7 @@ function buildPersistence(): {
   documents: DocumentRepository;
   sessions: SessionRepository;
   jobs: ExtractionJobStore;
+  drafts: ExtractionDraftStore;
   questions: QuestionRepository;
   usage: UsageRepository;
   limits: TokenLimitStore;
@@ -179,6 +189,7 @@ function buildPersistence(): {
       documents: new PrismaDocumentRepository(prisma),
       sessions: new PrismaSessionRepository(prisma),
       jobs: new PrismaExtractionJobStore(prisma),
+      drafts: new PrismaExtractionDraftStore(prisma),
       questions: new PrismaQuestionRepository(prisma),
       usage: new PrismaUsageRepository(prisma),
       limits: new PrismaTokenLimitStore(prisma),
@@ -192,6 +203,7 @@ function buildPersistence(): {
     documents: new InMemoryDocumentRepository(),
     sessions: new InMemorySessionRepository(),
     jobs: new InMemoryExtractionJobStore(),
+    drafts: new InMemoryExtractionDraftStore(),
     questions: new InMemoryQuestionRepository(),
     usage: new InMemoryUsageRepository(),
     limits: new InMemoryTokenLimitStore(),
@@ -201,9 +213,9 @@ function buildPersistence(): {
 }
 
 /**
- * Queue selection: BullMQ when Redis is configured (durable, drained by the standalone worker);
- * a synchronous in-request queue on serverless (Vercel freezes the function after the response, so
- * detached work would be killed); otherwise the detached in-process queue so dev boots with no Redis.
+ * Queue selection: Vercel Queue in production (durable private push consumer); BullMQ where Redis
+ * is explicitly configured; otherwise the detached in-process queue so local development boots
+ * with no cloud dependency.
  */
 function buildQueue(): JobQueue {
   if (env.REDIS_URL) {
@@ -211,10 +223,8 @@ function buildQueue(): JobQueue {
     return new BullMqJobQueue(env.REDIS_URL);
   }
   if (isServerless) {
-    logger.info(
-      'Queue: synchronous in-request (serverless). Extraction runs inline; no background worker.',
-    );
-    return new SynchronousJobQueue();
+    logger.info('Queue: Vercel Queue (durable per-page serverless consumer).');
+    return new VercelJobQueue();
   }
   logger.info('Queue: in-process (dev). Set REDIS_URL for a durable BullMQ worker.');
   return new InProcessJobQueue();
@@ -259,6 +269,15 @@ function buildUploadStaging(): UploadStagingStore {
   }
   logger.info('Uploads: unconfigured. Set SUPABASE_SERVICE_KEY to accept chapter PDF uploads.');
   return new UnconfiguredUploadStagingStore();
+}
+
+/** Persistent page previews make Verify reads CDN-fast instead of rerasterizing a Drive PDF. */
+function buildPagePreviews(): PagePreviewStore {
+  if (env.SUPABASE_SERVICE_KEY) {
+    return new SupabasePagePreviewStore(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY, env.SUPABASE_BUCKET);
+  }
+  logger.info('Source-page previews: unconfigured. Set SUPABASE_SERVICE_KEY to persist Verify previews.');
+  return new UnconfiguredPagePreviewStore();
 }
 
 /** OpenAI-backed "Fix LaTeX" refiner when a key is present; otherwise a null-object. */
@@ -325,7 +344,7 @@ function buildPaperMetadataExtractor(): PaperMetadataExtractor {
 }
 
 export function createContainer(): Container {
-  const { documents, sessions, jobs, questions, usage, limits, prompts, structureRules } =
+  const { documents, sessions, jobs, drafts, questions, usage, limits, prompts, structureRules } =
     buildPersistence();
   const structureRulesService = new StructureRulesService(structureRules);
   const promptsService = new PromptService(prompts);
@@ -354,14 +373,14 @@ export function createContainer(): Container {
   const extractor = buildExtractor(loadPromptOverrides, loadMasters);
   const driveService = buildDrive();
 
-  // The age past which a stuck `queued`/`extracting` document is auto-reset on read. Floored to always
-  // exceed the run budget (+1min) so the self-heal can never kill a genuinely in-flight extraction.
-  const staleExtractionMs = Math.max(env.STALE_EXTRACTION_MS, env.EXTRACTION_TIMEOUT_MS + 60_000);
+  // A queue callback is one page, not a whole PDF. Keep the stale threshold independent of document
+  // length: a healthy large extraction advances it on every short page task.
+  const staleExtractionMs = env.STALE_EXTRACTION_MS;
 
   const usageService = new UsageService(usage, limits, sessions, documents);
   const documentsService = new DocumentsService(documents, sessions, staleExtractionMs);
   const sessionsService = new SessionsService(sessions, documents, staleExtractionMs);
-  const pagesService = new PagesService(documents, driveService, rasterizer);
+  const pagesService = new PagesService(documents, driveService, rasterizer, buildPagePreviews());
   // Built before the questions service: deleting a verified question also drops its published bank
   // copy, so the questions service holds this store (and is the read/fix side's dependency too).
   const bankQuestionStore =
@@ -436,12 +455,14 @@ export function createContainer(): Container {
     documents,
     questions,
     jobs,
+    drafts,
+    jobQueue,
     driveService,
     rasterizer,
     extractor,
     usageService,
-    runRegistry,
-    env.EXTRACTION_TIMEOUT_MS,
+    env.EXTRACTION_PAGES_PER_TASK,
+    pagesService,
   );
   const ingestionService = new IngestionService(
     driveService,
@@ -461,14 +482,12 @@ export function createContainer(): Container {
     env.STRUCTURE_OCR_MIN_CONFIDENCE,
   );
 
-  // In-process/synchronous queue: the API also consumes, so extraction runs without a separate
-  // worker. BullMQ: the API only enqueues; the dedicated `worker.ts` process registers the consumer.
-  if (!env.REDIS_URL) {
+  // In-process queues consume here. Vercel Queue and BullMQ use their own process/private trigger.
+  if (!jobQueue.usesExternalConsumer) {
     jobQueue.process((payload) => extractionWorker.run(payload));
     // Recover stale in-flight docs from a previous crash — but ONLY off serverless. On serverless
-    // many function instances run concurrently, so a cold-start reset here would flip a document
-    // that a sibling invocation is actively extracting to `failed`. The synchronous queue also
-    // never leaves work orphaned across requests, so there is nothing to recover.
+    // many function instances run concurrently, so a cold-start reset here could flip a document
+    // that a sibling queue invocation is actively checkpointing to `failed`.
     if (!isServerless) {
       void documents.resetInFlight().then((count) => {
         if (count > 0) logger.info(`Recovered ${String(count)} stale extraction(s) → failed`);

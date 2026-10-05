@@ -1,6 +1,6 @@
 import type { JSX } from 'react';
 import { AI_FILLABLE_FIELDS, type AiFillableField } from '@ingest/contracts';
-import { IconSparkle, Spinner } from '../../../shared/ui/index.js';
+import { Spinner } from '../../../shared/ui/index.js';
 import { useAiFilledSummary } from '../hooks/use-quality.js';
 
 const FIELD_LABELS: Record<AiFillableField, string> = {
@@ -11,46 +11,37 @@ const FIELD_LABELS: Record<AiFillableField, string> = {
   structure: 'Structures',
 };
 
-/**
- * How much of the live bank holds AI-written data — kept separate from the problem tiles because it is not a
- * problem, it is provenance: these values were approved, but a human did not write them.
- */
+/** Approved AI-written values in the live bank, shown as provenance rather than an issue. */
 export function AiFilledCard(): JSX.Element {
   const query = useAiFilledSummary();
 
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border border-line bg-surface p-4 shadow-sm">
-      <div className="flex items-center gap-2">
-        <span className="grid size-8 place-items-center rounded-lg bg-brand-soft text-brand [&>svg]:size-4">
-          <IconSparkle />
-        </span>
-        <div className="flex flex-col">
-          <span className="text-xs font-medium uppercase tracking-wide text-ink-3">Filled by AI</span>
-          {query.isPending ? (
-            <Spinner className="text-ink-3" />
-          ) : query.isError ? (
-            <span className="text-sm text-bad">Could not load</span>
-          ) : (
-            <span className="text-2xl font-semibold tabular-nums text-ink">
-              {query.data.questions.toLocaleString()}
-              <span className="ml-1.5 text-xs font-normal text-ink-3">live questions</span>
-            </span>
-          )}
-        </div>
+    <section className="rounded-lg border border-line bg-surface p-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h3 className="m-0 text-sm font-semibold text-ink">Filled by AI</h3>
+        {query.isPending ? (
+          <Spinner className="text-ink-3" />
+        ) : query.isError ? (
+          <span className="text-sm text-bad">Could not load</span>
+        ) : (
+          <span className="text-sm tabular-nums text-ink">
+            <strong>{query.data.questions.toLocaleString()}</strong> live questions
+          </span>
+        )}
       </div>
       {query.data ? (
-        <div className="flex flex-wrap gap-2">
+        <dl className="m-0 mt-3 grid grid-cols-2 gap-x-5 gap-y-2 border-t border-line pt-3 text-xs sm:grid-cols-5">
           {AI_FILLABLE_FIELDS.map((field) => (
-            <span key={field} className="rounded-lg bg-surface-2 px-2.5 py-1 text-xs text-ink-2">
-              {FIELD_LABELS[field]} <span className="font-semibold tabular-nums text-ink">{query.data.byField[field].toLocaleString()}</span>
-            </span>
+            <div key={field} className="flex items-baseline justify-between gap-2 sm:block">
+              <dt className="text-ink-3">{FIELD_LABELS[field]}</dt>
+              <dd className="m-0 font-semibold tabular-nums text-ink">{query.data.byField[field].toLocaleString()}</dd>
+            </div>
           ))}
-        </div>
+        </dl>
       ) : null}
-      <p className="m-0 basis-full text-xs text-ink-3">
-        Values an AI worked out and an operator approved. Each question carries an <code>ai_filled</code> tag per
-        field; editing that field by hand removes its tag.
+      <p className="m-0 mt-3 text-xs text-ink-3">
+        These values were approved before reaching the bank. Editing a field removes its AI attribution.
       </p>
-    </div>
+    </section>
   );
 }

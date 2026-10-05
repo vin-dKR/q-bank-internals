@@ -12,6 +12,8 @@ export function createExtractionController(service: ExtractionService): {
   getJob: RequestHandler;
   documentJob: RequestHandler;
   cancel: RequestHandler;
+  pause: RequestHandler;
+  resume: RequestHandler;
   resetDocument: RequestHandler;
   reextractDocument: RequestHandler;
 } {
@@ -36,6 +38,14 @@ export function createExtractionController(service: ExtractionService): {
 
     cancel: asyncHandler(async (req, res) => {
       ok(res, await service.cancel(requiredParam(req, 'id')));
+    }),
+
+    pause: asyncHandler(async (req, res) => {
+      ok(res, await service.pause(requiredParam(req, 'id')));
+    }),
+
+    resume: asyncHandler(async (req, res) => {
+      ok(res, await service.resume(requiredParam(req, 'documentId')));
     }),
 
     resetDocument: asyncHandler(async (req, res) => {

@@ -1,11 +1,41 @@
-import { type CSSProperties, type JSX, type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type CSSProperties,
+  type JSX,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { DetectFiguresSource, DetectedFigure, ImageCrop, Question, QuestionListResponse, ReExtractedGroup, ReExtractSource } from '@ingest/contracts';
+import type {
+  DetectFiguresSource,
+  DetectedFigure,
+  ImageCrop,
+  Question,
+  QuestionListResponse,
+  ReExtractedGroup,
+  ReExtractSource,
+  TranscribeAreaTarget,
+} from '@ingest/contracts';
 import { DETECT_FIGURES_MAX_PAGES } from '@ingest/contracts';
 import { getCroppedBlob } from '../../../shared/lib/crop-image.js';
 import { useDocument } from '../../documents/index.js';
 import { questionsApi } from '../api/questions.api.js';
-import { questionsQueryKey, useDeleteQuestion, useGroupQuestions, usePageCount, usePassages, usePublishIssues, useQuestions, useUngroupPassage, useUpdatePassage, useUpdateQuestion } from '../hooks/use-questions.js';
+import {
+  questionsQueryKey,
+  useDeleteQuestion,
+  useGroupQuestions,
+  usePageCount,
+  usePassages,
+  usePublishIssues,
+  useQuestions,
+  useUngroupPassage,
+  useUpdatePassage,
+  useUpdateQuestion,
+} from '../hooks/use-questions.js';
 import { useQuestionDrafts } from '../hooks/use-question-drafts.js';
 import { usePassageDrafts } from '../hooks/use-passage-drafts.js';
 import {
@@ -59,7 +89,11 @@ function sourcePageContext(source: VerifySibling, questionPage: number): string 
 }
 
 /** The view-toggle options. `needs` names the sibling document an option requires to be selectable. */
-const VIEW_MODES: readonly { mode: ViewMode; label: string; needs: 'answer' | 'solution' | null }[] = [
+const VIEW_MODES: readonly {
+  mode: ViewMode;
+  label: string;
+  needs: 'answer' | 'solution' | null;
+}[] = [
   { mode: 'question', label: 'Question', needs: null },
   { mode: 'answer', label: 'Answer', needs: 'answer' },
   { mode: 'solution', label: 'Solution', needs: 'solution' },
@@ -114,10 +148,14 @@ type DrawTarget = { questionId: string; type: 'question' | 'option'; optionIndex
  */
 type CropRequest = {
   questionId: string;
+  /** An image crop saves a figure; a transcription crop sends only the selected rectangle to OCR. */
+  mode: 'image' | 'transcribe';
   /** Which source page the crop is taken from: main question canvas, answer key, or solution. */
   source: 'question' | 'answer' | 'solution';
   /** Answer/solution destination when an inline paper draws it from the main question canvas. */
   target?: 'answer' | 'solution';
+  /** The exact field schema the selected source text belongs to. Present only for `mode: 'transcribe'`. */
+  transcribeTarget?: TranscribeAreaTarget;
   sourceDocumentId?: string;
   resolve: (url: string | null) => void;
 };
@@ -238,35 +276,36 @@ function cropsToSpecs(
   // same source (or is legacy-inline with no sibling provenance). Sibling crops stay in their own
   // preview pane; rendering them here would put a valid boundary onto the wrong PDF.
   return question.imageCrops
-    .filter((crop): crop is ImageCrop & { type: CanvasCropTarget } =>
-      crop.type === 'question' ||
-      crop.type === 'option' ||
-      (options.inlineAnswers &&
-        (crop.type === 'answer' || crop.type === 'solution') &&
-        (crop.sourceDocumentId === undefined || crop.sourceDocumentId === options.documentId)),
+    .filter(
+      (crop): crop is ImageCrop & { type: CanvasCropTarget } =>
+        crop.type === 'question' ||
+        crop.type === 'option' ||
+        (options.inlineAnswers &&
+          (crop.type === 'answer' || crop.type === 'solution') &&
+          (crop.sourceDocumentId === undefined || crop.sourceDocumentId === options.documentId)),
     )
     .map((crop, index) => ({
-    id: `persist_${question.id}_${crop.type}_${String(crop.optionIndex)}_${String(index)}`,
-    questionId: question.id,
-    sourcePage: crop.sourcePage ?? question.sourceRegion.page,
-    type: crop.type,
-    optionIndex: crop.optionIndex,
-    label: `Q${String(number)}${
-      crop.type === 'option'
-        ? ` · option ${String(crop.optionIndex + 1)}`
-        : crop.type === 'answer'
-          ? ' · answer figure'
-          : crop.type === 'solution'
-            ? ' · explanation figure'
-            : ''
-    }`,
-    source: 'manual',
-    nx: crop.nx,
-    ny: crop.ny,
-    nw: crop.nw,
-    nh: crop.nh,
-    url: crop.url,
-  }));
+      id: `persist_${question.id}_${crop.type}_${String(crop.optionIndex)}_${String(index)}`,
+      questionId: question.id,
+      sourcePage: crop.sourcePage ?? question.sourceRegion.page,
+      type: crop.type,
+      optionIndex: crop.optionIndex,
+      label: `Q${String(number)}${
+        crop.type === 'option'
+          ? ` · option ${String(crop.optionIndex + 1)}`
+          : crop.type === 'answer'
+            ? ' · answer figure'
+            : crop.type === 'solution'
+              ? ' · explanation figure'
+              : ''
+      }`,
+      source: 'manual',
+      nx: crop.nx,
+      ny: crop.ny,
+      nw: crop.nw,
+      nh: crop.nh,
+      url: crop.url,
+    }));
 }
 
 /**
@@ -283,7 +322,12 @@ function upsertCrop(
 }
 
 function splitUrls(value: string | null): string[] {
-  return value ? value.split(',').map((u) => u.trim()).filter(Boolean) : [];
+  return value
+    ? value
+        .split(',')
+        .map((u) => u.trim())
+        .filter(Boolean)
+    : [];
 }
 
 function hasQuestionImage(question: Question): boolean {
@@ -342,20 +386,15 @@ function cropOverlap(a: BoxRect, b: BoxRect): number {
 }
 
 /** Re-running detection must not duplicate the same Answer/Solution figure while still allowing many. */
-function hasSiblingFigureCrop(
-  question: Question,
-  entry: SiblingDetectedFigure,
-): boolean {
+function hasSiblingFigureCrop(question: Question, entry: SiblingDetectedFigure): boolean {
   const [x, y, width, height] = entry.figure.bbox;
   const incoming: BoxRect = { x, y, width, height };
-  return question.imageCrops.some((crop) =>
-    crop.type === entry.figure.target &&
-    crop.sourceDocumentId === entry.sourceDocumentId &&
-    crop.sourcePage === entry.sourcePage &&
-    cropOverlap(
-      { x: crop.nx, y: crop.ny, width: crop.nw, height: crop.nh },
-      incoming,
-    ) >= 0.9,
+  return question.imageCrops.some(
+    (crop) =>
+      crop.type === entry.figure.target &&
+      crop.sourceDocumentId === entry.sourceDocumentId &&
+      crop.sourcePage === entry.sourcePage &&
+      cropOverlap({ x: crop.nx, y: crop.ny, width: crop.nw, height: crop.nh }, incoming) >= 0.9,
   );
 }
 
@@ -370,16 +409,18 @@ function hasQuestionFigureCrop(
   sourcePage: number,
   figure: DetectedFigure & { target: 'question' | 'option' },
 ): boolean {
-  if (figure.target === 'option') return targetHasImage(question, figure.target, figure.optionIndex);
+  if (figure.target === 'option')
+    return targetHasImage(question, figure.target, figure.optionIndex);
   // Preserve the existing single-stem behavior on the question's own page. The exception below is
   // deliberately narrow: only a later source page can add another question image.
   if (sourcePage === question.sourceRegion.page) return hasQuestionImage(question);
   const [x, y, width, height] = figure.bbox;
   const incoming: BoxRect = { x, y, width, height };
-  return question.imageCrops.some((crop) =>
-    crop.type === 'question' &&
-    crop.sourcePage === sourcePage &&
-    cropOverlap({ x: crop.nx, y: crop.ny, width: crop.nw, height: crop.nh }, incoming) >= 0.9,
+  return question.imageCrops.some(
+    (crop) =>
+      crop.type === 'question' &&
+      crop.sourcePage === sourcePage &&
+      cropOverlap({ x: crop.nx, y: crop.ny, width: crop.nw, height: crop.nh }, incoming) >= 0.9,
   );
 }
 
@@ -396,11 +437,12 @@ function hasInlineFieldFigureCrop(
 ): boolean {
   const [x, y, width, height] = figure.bbox;
   const incoming: BoxRect = { x, y, width, height };
-  return question.imageCrops.some((crop) =>
-    crop.type === figure.target &&
-    crop.sourceDocumentId === undefined &&
-    (crop.sourcePage ?? question.sourceRegion.page) === sourcePage &&
-    cropOverlap({ x: crop.nx, y: crop.ny, width: crop.nw, height: crop.nh }, incoming) >= 0.9,
+  return question.imageCrops.some(
+    (crop) =>
+      crop.type === figure.target &&
+      crop.sourceDocumentId === undefined &&
+      (crop.sourcePage ?? question.sourceRegion.page) === sourcePage &&
+      cropOverlap({ x: crop.nx, y: crop.ny, width: crop.nw, height: crop.nh }, incoming) >= 0.9,
   );
 }
 
@@ -442,7 +484,10 @@ function allPagesSummaryText(s: AllPagesSummary): string {
 
 /** First ~10 words of a stem, stripped of LaTeX delimiters — enough to recognise the question. */
 function firstLine(text: string): string {
-  const clean = text.replace(/\\[()[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+  const clean = text
+    .replace(/\\[()[\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   const words = clean.split(' ');
   return words.length > 10 ? `${words.slice(0, 10).join(' ')}…` : clean;
 }
@@ -488,7 +533,9 @@ function CropThumb({
   size: CanvasSize | null;
 }): JSX.Element {
   if (!size || size.displayWidth === 0) return <div className="crop-thumb" />;
-  return <div className="crop-thumb" style={cropWindowStyle(imageSrc, box, size, THUMB_W, THUMB_H)} />;
+  return (
+    <div className="crop-thumb" style={cropWindowStyle(imageSrc, box, size, THUMB_W, THUMB_H)} />
+  );
 }
 
 /**
@@ -534,11 +581,15 @@ function CropMagnifier({
   useEffect(() => {
     const el = viewRef.current;
     if (!el) return undefined;
-    const update = (): void => { setView({ width: el.clientWidth, height: el.clientHeight }); };
+    const update = (): void => {
+      setView({ width: el.clientWidth, height: el.clientHeight });
+    };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(el);
-    return () => { observer.disconnect(); };
+    return () => {
+      observer.disconnect();
+    };
   }, []);
 
   const scaleX = size.naturalWidth / size.displayWidth;
@@ -552,20 +603,31 @@ function CropMagnifier({
   const availH = Math.max(0, view.height - 16);
   let innerW = availW;
   let innerH = availW / aspect;
-  if (innerH > availH) { innerH = availH; innerW = availH * aspect; }
+  if (innerH > availH) {
+    innerH = availH;
+    innerW = availH * aspect;
+  }
 
   const ready = view.width > 0 && innerW > 0.5 && innerH > 0.5;
   return (
     <div className="verify__magnifier">
       <div className="verify__magnifier-head">
-        <span className="flex items-center gap-1.5"><IconZoomIn /> {label}</span>
-        <span className="verify__magnifier-dims">{String(Math.round(naturalW))} × {String(Math.round(naturalH))} px</span>
+        <span className="flex items-center gap-1.5">
+          <IconZoomIn /> {label}
+        </span>
+        <span className="verify__magnifier-dims">
+          {String(Math.round(naturalW))} × {String(Math.round(naturalH))} px
+        </span>
       </div>
       <div ref={viewRef} className="verify__magnifier-view">
         {ready ? (
           <div
             className="verify__magnifier-crop"
-            style={{ width: innerW, height: innerH, ...cropCoverStyle(imageSrc, box, size, innerW) }}
+            style={{
+              width: innerW,
+              height: innerH,
+              ...cropCoverStyle(imageSrc, box, size, innerW),
+            }}
           />
         ) : null}
       </div>
@@ -628,12 +690,25 @@ export function VerifyWorkspace({
   // Auto-attach a detected shared-passage figure: crop the bbox off `sourcePage`, upload, and save it as
   // the passage image — unless the passage already has one. Shared by the single-page + whole-doc runs.
   const attachPassageFigure = useCallback(
-    async (passageId: string, sourcePage: number, bbox: [number, number, number, number]): Promise<boolean> => {
+    async (
+      passageId: string,
+      sourcePage: number,
+      bbox: [number, number, number, number],
+    ): Promise<boolean> => {
       const existing = (passages.data ?? []).find((p) => p.id === passageId);
       if (existing?.passageImage) return false;
       const [x, y, w, h] = bbox;
-      const blob = await getCroppedBlob(questionsApi.pageImageUrl(documentId, sourcePage), { x, y, width: w, height: h });
-      const { url } = await questionsApi.uploadImage(passageId, `passage_${String(Date.now())}`, blob);
+      const blob = await getCroppedBlob(questionsApi.pageImageUrl(documentId, sourcePage), {
+        x,
+        y,
+        width: w,
+        height: h,
+      });
+      const { url } = await questionsApi.uploadImage(
+        passageId,
+        `passage_${String(Date.now())}`,
+        blob,
+      );
       await passageImageUpdate.mutateAsync({ id: passageId, patch: { passageImage: url } });
       return true;
     },
@@ -646,7 +721,9 @@ export function VerifyWorkspace({
   const [confirm, confirmDialog] = useConfirm();
   const toast = useToast();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  useEffect(() => { setSelectedIds(new Set()); }, [documentId]);
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [documentId]);
   const toggleSelect = useCallback((id: string): void => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -657,31 +734,43 @@ export function VerifyWorkspace({
   }, []);
 
   const [page, setPage] = useState(initialPage ?? 1);
+  // Keep the page number editable so an operator can jump directly to a distant page instead of
+  // stepping through the PDF one page at a time.
+  const [pageJump, setPageJump] = useState(String(initialPage ?? 1));
+  useEffect(() => {
+    setPageJump(String(page));
+  }, [page]);
   // A figure can continue onto the page after its question begins. Remember owners discovered by the
   // detector so that continuation page shows the real question card instead of an empty panel.
-  const [continuationOwnersByPage, setContinuationOwnersByPage] = useState<ReadonlyMap<number, ReadonlySet<string>>>(
-    () => new Map(),
+  const [continuationOwnersByPage, setContinuationOwnersByPage] = useState<
+    ReadonlyMap<number, ReadonlySet<string>>
+  >(() => new Map());
+  useEffect(() => {
+    setContinuationOwnersByPage(new Map());
+  }, [documentId]);
+  const rememberContinuationOwners = useCallback(
+    (sourcePage: number, figures: readonly DetectedFigure[]): void => {
+      const owners = figures
+        .filter(
+          (figure) =>
+            (figure.target === 'question' ||
+              figure.target === 'option' ||
+              figure.target === 'answer' ||
+              figure.target === 'solution') &&
+            figure.questionId.trim().length > 0,
+        )
+        .map((figure) => figure.questionId);
+      if (owners.length === 0) return;
+      setContinuationOwnersByPage((previous) => {
+        const next = new Map(previous);
+        const ids = new Set(next.get(sourcePage) ?? []);
+        owners.forEach((id) => ids.add(id));
+        next.set(sourcePage, ids);
+        return next;
+      });
+    },
+    [],
   );
-  useEffect(() => { setContinuationOwnersByPage(new Map()); }, [documentId]);
-  const rememberContinuationOwners = useCallback((sourcePage: number, figures: readonly DetectedFigure[]): void => {
-    const owners = figures
-      .filter((figure) =>
-        (figure.target === 'question' ||
-          figure.target === 'option' ||
-          figure.target === 'answer' ||
-          figure.target === 'solution') &&
-        figure.questionId.trim().length > 0,
-      )
-      .map((figure) => figure.questionId);
-    if (owners.length === 0) return;
-    setContinuationOwnersByPage((previous) => {
-      const next = new Map(previous);
-      const ids = new Set(next.get(sourcePage) ?? []);
-      owners.forEach((id) => ids.add(id));
-      next.set(sourcePage, ids);
-      return next;
-    });
-  }, []);
   // The sibling answer/solution sources for this unit, resolved for the page currently on screen so
   // both the preview panes and the answer/explanation re-read target this topic's pages in them.
   const sources = useVerifySources(document.data, page);
@@ -691,18 +780,26 @@ export function VerifyWorkspace({
   // A `combined` layout deliberately resolves Answer and Solution to the SAME companion PDF. Keep
   // that fact explicit here: the two field destinations remain separate, but the screen must never
   // render two identical preview panes for one physical source.
-  const companionSource = sources.answer && sources.solution &&
+  const companionSource =
+    sources.answer &&
+    sources.solution &&
     sources.answer.document.kind === 'companion' &&
     sources.answer.document.id === sources.solution.document.id
-    ? sources.answer
-    : null;
-  const viewModes = inlineAnswers ? VIEW_MODES.filter((option) => option.mode === 'question') : VIEW_MODES;
+      ? sources.answer
+      : null;
+  const viewModes = inlineAnswers
+    ? VIEW_MODES.filter((option) => option.mode === 'question')
+    : VIEW_MODES;
   // The source previews are independently selectable: teachers often need to compare a question to
   // its answer, its worked solution, or both. The set is deliberately never empty — one source must
   // remain visible at all times.
-  const [visibleViews, setVisibleViews] = useState<ReadonlySet<ViewMode>>(() => new Set<ViewMode>(['question']));
+  const [visibleViews, setVisibleViews] = useState<ReadonlySet<ViewMode>>(
+    () => new Set<ViewMode>(['question']),
+  );
   const [companionTarget, setCompanionTarget] = useState<'answer' | 'solution'>('answer');
-  useEffect(() => { setCompanionTarget('answer'); }, [companionSource?.document.id]);
+  useEffect(() => {
+    setCompanionTarget('answer');
+  }, [companionSource?.document.id]);
   const toggleView = useCallback((mode: ViewMode): void => {
     setVisibleViews((previous) => {
       const next = new Set(previous);
@@ -717,33 +814,47 @@ export function VerifyWorkspace({
   }, []);
   // SourcePreviewPane owns the visual cursor; this small map mirrors it so a field's re-extract
   // reads the page the operator is actually viewing, rather than always reopening range.from.
-  const [sourcePages, setSourcePages] = useState<ReadonlyMap<string, SourcePageState>>(() => new Map());
-  const sourcePageFor = useCallback((source: VerifySibling): number => {
-    // A grouped companion is one physical pane even though Answer and Explanation have different
-    // topic defaults. Both field re-extract buttons must therefore use the page currently open in
-    // that shared pane, not silently fall back to separate range starts.
-    const visibleSource = companionSource?.document.id === source.document.id ? companionSource : source;
-    const state = sourcePages.get(visibleSource.document.id);
-    return state?.context === sourcePageContext(visibleSource, page) ? state.page : visibleSource.defaultPage;
-  }, [companionSource, page, sourcePages]);
-  const rememberSourcePage = useCallback((source: VerifySibling, sourcePage: number): void => {
-    const context = sourcePageContext(source, page);
-    setSourcePages((previous) => {
-      const current = previous.get(source.document.id);
-      if (current?.context === context && current.page === sourcePage) return previous;
-      const next = new Map(previous);
-      next.set(source.document.id, { context, page: sourcePage });
-      return next;
-    });
-  }, [page]);
-  const reExtractSourceFor = useCallback((source: VerifySibling | null, target: 'answer' | 'solution'): ReExtractSource | undefined => {
-    if (!source) return undefined;
-    return {
-      documentId: source.document.id,
-      page: sourcePageFor(source),
-      ...(source.document.kind === 'companion' ? { target } : {}),
-    };
-  }, [sourcePageFor]);
+  const [sourcePages, setSourcePages] = useState<ReadonlyMap<string, SourcePageState>>(
+    () => new Map(),
+  );
+  const sourcePageFor = useCallback(
+    (source: VerifySibling): number => {
+      // A grouped companion is one physical pane even though Answer and Explanation have different
+      // topic defaults. Both field re-extract buttons must therefore use the page currently open in
+      // that shared pane, not silently fall back to separate range starts.
+      const visibleSource =
+        companionSource?.document.id === source.document.id ? companionSource : source;
+      const state = sourcePages.get(visibleSource.document.id);
+      return state?.context === sourcePageContext(visibleSource, page)
+        ? state.page
+        : visibleSource.defaultPage;
+    },
+    [companionSource, page, sourcePages],
+  );
+  const rememberSourcePage = useCallback(
+    (source: VerifySibling, sourcePage: number): void => {
+      const context = sourcePageContext(source, page);
+      setSourcePages((previous) => {
+        const current = previous.get(source.document.id);
+        if (current?.context === context && current.page === sourcePage) return previous;
+        const next = new Map(previous);
+        next.set(source.document.id, { context, page: sourcePage });
+        return next;
+      });
+    },
+    [page],
+  );
+  const reExtractSourceFor = useCallback(
+    (source: VerifySibling | null, target: 'answer' | 'solution'): ReExtractSource | undefined => {
+      if (!source) return undefined;
+      return {
+        documentId: source.document.id,
+        page: sourcePageFor(source),
+        ...(source.document.kind === 'companion' ? { target } : {}),
+      };
+    },
+    [sourcePageFor],
+  );
   const answerSource = reExtractSourceFor(sources.answer, 'answer');
   const solutionSource = reExtractSourceFor(sources.solution, 'solution');
   const [boxes, setBoxes] = useState<Box[]>([]);
@@ -781,7 +892,9 @@ export function VerifyWorkspace({
   const [activeBoxId, setActiveBoxId] = useState<string | null>(null);
   /** Live answer/solution drag forwarded by SourcePreviewPane into the same magnifier UI. */
   const [siblingMagnifier, setSiblingMagnifier] = useState<SourcePreviewMagnifier | null>(null);
-  useEffect(() => { setSiblingMagnifier(null); }, [documentId]);
+  useEffect(() => {
+    setSiblingMagnifier(null);
+  }, [documentId]);
 
   // The scrolling question panel (scrolled back to the top on every page change) and the draggable
   // split between it and the source page.
@@ -799,21 +912,26 @@ export function VerifyWorkspace({
   }, []);
   // Drag the splitter: moving the handle LEFT widens the question panel (grid columns are
   // page | resizer | panel), so subtract the pointer delta. The width persists on release.
-  const onPanelResizeStart = useCallback((event: ReactMouseEvent): void => {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = panelWidthRef.current;
-    const move = (moveEvent: MouseEvent): void => { setPanel(startWidth - (moveEvent.clientX - startX)); };
-    const up = (): void => {
-      writeVerifyPanelWidth(panelWidthRef.current);
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('mouseup', up);
-      window.document.body.classList.remove('is-col-resizing');
-    };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
-    window.document.body.classList.add('is-col-resizing');
-  }, [setPanel]);
+  const onPanelResizeStart = useCallback(
+    (event: ReactMouseEvent): void => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = panelWidthRef.current;
+      const move = (moveEvent: MouseEvent): void => {
+        setPanel(startWidth - (moveEvent.clientX - startX));
+      };
+      const up = (): void => {
+        writeVerifyPanelWidth(panelWidthRef.current);
+        window.removeEventListener('mousemove', move);
+        window.removeEventListener('mouseup', up);
+        window.document.body.classList.remove('is-col-resizing');
+      };
+      window.addEventListener('mousemove', move);
+      window.addEventListener('mouseup', up);
+      window.document.body.classList.add('is-col-resizing');
+    },
+    [setPanel],
+  );
 
   const applySourcePaneWidths = useCallback((
     leftId: SourcePaneId,
@@ -872,7 +990,9 @@ export function VerifyWorkspace({
     skipped: number;
     sourceLabel?: 'Answer' | 'Solution';
   } | null>(null);
-  const [siblingDetecting, setSiblingDetecting] = useState<ReadonlySet<'answer' | 'solution'>>(() => new Set());
+  const [siblingDetecting, setSiblingDetecting] = useState<ReadonlySet<'answer' | 'solution'>>(
+    () => new Set(),
+  );
   const [allProgress, setAllProgress] = useState<AllPagesProgress | null>(null);
   const [allSummary, setAllSummary] = useState<AllPagesSummary | null>(null);
 
@@ -915,7 +1035,8 @@ export function VerifyWorkspace({
     const settled = run.catch(() => undefined);
     questionWrites.current.set(questionId, settled);
     void settled.then(() => {
-      if (questionWrites.current.get(questionId) === settled) questionWrites.current.delete(questionId);
+      if (questionWrites.current.get(questionId) === settled)
+        questionWrites.current.delete(questionId);
     });
     return run;
   };
@@ -951,7 +1072,9 @@ export function VerifyWorkspace({
             const current = readQuestion(questionId) ?? initialById.get(questionId);
             if (!current) {
               skipped += group.length;
-              group.forEach(() => { onProgress?.(); });
+              group.forEach(() => {
+                onProgress?.();
+              });
               return;
             }
             let answerImages = [...current.answerImages];
@@ -962,7 +1085,12 @@ export function VerifyWorkspace({
             let attachedHere = 0;
             const pagesHere = new Set<string>();
             for (const entry of group) {
-              if (hasSiblingFigureCrop({ ...current, answerImages, explanationImages, imageCrops }, entry)) {
+              if (
+                hasSiblingFigureCrop(
+                  { ...current, answerImages, explanationImages, imageCrops },
+                  entry,
+                )
+              ) {
                 skipped += 1;
                 onProgress?.();
                 continue;
@@ -1048,22 +1176,35 @@ export function VerifyWorkspace({
   // The fitted page size can change when the column resizes; keep drawn boxes aligned by rescaling
   // their (display-pixel) coordinates by the same ratio, so a crop still points at the same region.
   const sizeRef = useRef<CanvasSize | null>(null);
-  const handleSize = useCallback((next: CanvasSize): void => {
-    const prev = sizeRef.current;
-    if (prev && prev.displayWidth > 0 && next.displayWidth > 0 &&
-      (prev.displayWidth !== next.displayWidth || prev.displayHeight !== next.displayHeight)) {
-      const rx = next.displayWidth / prev.displayWidth;
-      const ry = next.displayHeight / prev.displayHeight;
-      const rescale = (bs: Box[]): Box[] =>
-        bs.map((b) => ({ ...b, x: b.x * rx, y: b.y * ry, width: b.width * rx, height: b.height * ry }));
-      applyBoxes(rescale);
-      // Undo/redo snapshots use display pixels and must follow changes in zoom too.
-      past.current = past.current.map(rescale);
-      future.current = future.current.map(rescale);
-    }
-    sizeRef.current = next;
-    setSize(next);
-  }, [applyBoxes]);
+  const handleSize = useCallback(
+    (next: CanvasSize): void => {
+      const prev = sizeRef.current;
+      if (
+        prev &&
+        prev.displayWidth > 0 &&
+        next.displayWidth > 0 &&
+        (prev.displayWidth !== next.displayWidth || prev.displayHeight !== next.displayHeight)
+      ) {
+        const rx = next.displayWidth / prev.displayWidth;
+        const ry = next.displayHeight / prev.displayHeight;
+        const rescale = (bs: Box[]): Box[] =>
+          bs.map((b) => ({
+            ...b,
+            x: b.x * rx,
+            y: b.y * ry,
+            width: b.width * rx,
+            height: b.height * ry,
+          }));
+        applyBoxes(rescale);
+        // Undo/redo snapshots use display pixels and must follow changes in zoom too.
+        past.current = past.current.map(rescale);
+        future.current = future.current.map(rescale);
+      }
+      sizeRef.current = next;
+      setSize(next);
+    },
+    [applyBoxes],
+  );
 
   const past = useRef<Box[][]>([]);
   const future = useRef<Box[][]>([]);
@@ -1108,12 +1249,18 @@ export function VerifyWorkspace({
     // detector result remains. Legacy crops without sourcePage retain their original-page behaviour.
     for (const question of questions.data ?? []) {
       if (question.sourceRegion.page === page) continue;
-      if (question.imageCrops.some((crop) =>
-        (crop.type === 'question' ||
-          crop.type === 'option' ||
-          (inlineAnswers && (crop.type === 'answer' || crop.type === 'solution') && crop.sourceDocumentId === undefined)) &&
-        crop.sourcePage === page,
-      )) ids.add(question.id);
+      if (
+        question.imageCrops.some(
+          (crop) =>
+            (crop.type === 'question' ||
+              crop.type === 'option' ||
+              (inlineAnswers &&
+                (crop.type === 'answer' || crop.type === 'solution') &&
+                crop.sourceDocumentId === undefined)) &&
+            crop.sourcePage === page,
+        )
+      )
+        ids.add(question.id);
     }
     return ids;
   }, [continuationOwnersByPage, inlineAnswers, page, questions.data]);
@@ -1121,7 +1268,10 @@ export function VerifyWorkspace({
     const all = questions.data ?? [];
     const continued = all.filter((question) => continuationQuestionIds.has(question.id));
     const startedHere = all.filter((question) => question.sourceRegion.page === page);
-    return [...continued, ...startedHere.filter((question) => !continuationQuestionIds.has(question.id))];
+    return [
+      ...continued,
+      ...startedHere.filter((question) => !continuationQuestionIds.has(question.id)),
+    ];
   }, [continuationQuestionIds, page, questions.data]);
   // The number each question DISPLAYS is the printed number read from the sheet. The list arrives
   // in PDF reading order from the API, so for the rare question without a readable number the
@@ -1144,10 +1294,11 @@ export function VerifyWorkspace({
     if (!source) return [];
     return (questions.data ?? []).flatMap((question) =>
       question.imageCrops
-        .filter((crop) =>
-          crop.type === 'answer' &&
-          question.answerImages.includes(crop.url) &&
-          (!crop.sourceDocumentId || crop.sourceDocumentId === source.document.id),
+        .filter(
+          (crop) =>
+            crop.type === 'answer' &&
+            question.answerImages.includes(crop.url) &&
+            (!crop.sourceDocumentId || crop.sourceDocumentId === source.document.id),
         )
         .map((crop, index) => ({
           id: `answer:${question.id}:${crop.url}:${String(index)}`,
@@ -1163,10 +1314,11 @@ export function VerifyWorkspace({
     if (!source) return [];
     return (questions.data ?? []).flatMap((question) =>
       question.imageCrops
-        .filter((crop) =>
-          crop.type === 'solution' &&
-          question.explanationImages.includes(crop.url) &&
-          (!crop.sourceDocumentId || crop.sourceDocumentId === source.document.id),
+        .filter(
+          (crop) =>
+            crop.type === 'solution' &&
+            question.explanationImages.includes(crop.url) &&
+            (!crop.sourceDocumentId || crop.sourceDocumentId === source.document.id),
         )
         .map((crop, index) => ({
           id: `solution:${question.id}:${crop.url}:${String(index)}`,
@@ -1257,7 +1409,11 @@ export function VerifyWorkspace({
     // A comprehension can hold a SINGLE question (a lone passage-bound sub-question), so one selection
     // is enough to group — only an empty selection has nothing to do.
     if (orderedSelection.length < 1) return;
-    groupMutation.mutate(orderedSelection, { onSuccess: () => { setSelectedIds(new Set()); } });
+    groupMutation.mutate(orderedSelection, {
+      onSuccess: () => {
+        setSelectedIds(new Set());
+      },
+    });
   }, [groupMutation, orderedSelection]);
 
   // Question numbers the extractor appears to have skipped: gaps in the min..max run of the numbers it
@@ -1292,9 +1448,16 @@ export function VerifyWorkspace({
     setHighlightId(questionId);
     setSourceHighlightId(questionId);
     if (highlightTimer.current) clearTimeout(highlightTimer.current);
-    highlightTimer.current = setTimeout(() => { setHighlightId(null); }, 1800);
+    highlightTimer.current = setTimeout(() => {
+      setHighlightId(null);
+    }, 1800);
   };
-  useEffect(() => () => { if (highlightTimer.current) clearTimeout(highlightTimer.current); }, []);
+  useEffect(
+    () => () => {
+      if (highlightTimer.current) clearTimeout(highlightTimer.current);
+    },
+    [],
+  );
 
   // Wait for the fitted page dimensions before starting this timer: an image can take a moment to
   // load after a direct bank link, and the source-region outline should remain visible *after* the
@@ -1306,7 +1469,9 @@ export function VerifyWorkspace({
     const timer = setTimeout(() => {
       setSourceHighlightId((current) => (current === sourceHighlightId ? null : current));
     }, 2400);
-    return () => { clearTimeout(timer); };
+    return () => {
+      clearTimeout(timer);
+    };
   }, [page, questionById, size, sourceHighlightId]);
 
   /** Snapshot the current page's saved boxes (natural pixels) so navigating back to it redraws them. */
@@ -1337,7 +1502,19 @@ export function VerifyWorkspace({
     setPage(next);
     // Land on the first question of the new page, not wherever the previous page was scrolled to.
     // rAF so the scroll runs after the new page's cards have rendered.
-    requestAnimationFrame(() => { panelRef.current?.scrollTo({ top: 0 }); });
+    requestAnimationFrame(() => {
+      panelRef.current?.scrollTo({ top: 0 });
+    });
+  };
+
+  const submitPageJump = (): void => {
+    const next = Number(pageJump);
+    const total = pageCount.data ?? 1;
+    if (!Number.isInteger(next) || next < 1 || next > total) {
+      setPageJump(String(page));
+      return;
+    }
+    if (next !== page) goToPage(next);
   };
 
   // A LaTeX issue can belong to a question on another PDF page. Switch pages first, then focus the
@@ -1412,7 +1589,10 @@ export function VerifyWorkspace({
     } else if (box.type === 'solution' && question.explanationImages.includes(url)) {
       await patchQuestion({
         id: question.id,
-        patch: { explanationImages: question.explanationImages.filter((item) => item !== url), imageCrops },
+        patch: {
+          explanationImages: question.explanationImages.filter((item) => item !== url),
+          imageCrops,
+        },
       });
     }
   };
@@ -1456,7 +1636,10 @@ export function VerifyWorkspace({
       const optionImages = [...question.optionImages];
       while (optionImages.length <= box.optionIndex) optionImages.push('');
       optionImages[box.optionIndex] = url;
-      await patchQuestion({ id: question.id, patch: { isOptionImage: true, optionImages, imageCrops } });
+      await patchQuestion({
+        id: question.id,
+        patch: { isOptionImage: true, optionImages, imageCrops },
+      });
     } else {
       const field = box.type === 'answer' ? 'answerImages' : 'explanationImages';
       const current = [...question[field]];
@@ -1495,10 +1678,17 @@ export function VerifyWorkspace({
         width: box.width * scaleX,
         height: box.height * scaleY,
       };
-      const blob = await getCroppedBlob(questionsApi.pageImageUrl(documentId, box.sourcePage), natural);
+      const blob = await getCroppedBlob(
+        questionsApi.pageImageUrl(documentId, box.sourcePage),
+        natural,
+      );
       // Fresh storage key per save: the store upserts by key and serves cached URLs, so re-using a
       // key on re-crop would keep the stale image visible everywhere. A new key = a new URL.
-      const { url } = await questionsApi.uploadImage(box.questionId, `${boxId}_${String(Date.now())}`, blob);
+      const { url } = await questionsApi.uploadImage(
+        box.questionId,
+        `${boxId}_${String(Date.now())}`,
+        blob,
+      );
       await enqueueQuestionWrite(box.questionId, () => attachCrop(box, url, natural));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -1515,44 +1705,48 @@ export function VerifyWorkspace({
   const runActiveRef = useRef(false);
 
   /** Scan and attach figures from the Answer or Solution page currently open in its sibling pane. */
-  const detectSiblingPage = useCallback(async (
-    target: 'answer' | 'solution',
-    sourceDocumentId: string,
-    sourcePage: number,
-  ): Promise<void> => {
-    if (runActiveRef.current) return;
-    setSiblingDetecting((previous) => new Set(previous).add(target));
-    setAiError(null);
-    setAiResult(null);
-    try {
-      const result = await questionsApi.detectFigures(documentId, sourcePage, {
-        documentId: sourceDocumentId,
-        target,
-      });
-      const entries: SiblingDetectedFigure[] = result.figures
-        .filter((figure): figure is DetectedFigure & { target: 'answer' | 'solution' } =>
-          figure.target === 'answer' || figure.target === 'solution',
-        )
-        .filter((figure) => figure.target === target)
-        .map((figure) => ({ sourceDocumentId, sourcePage, figure }));
-      const outcome = await attachDetectedSiblingFigures(entries);
-      if (outcome.error) setAiError(outcome.error);
-      setAiResult({
-        detected: result.figures.length,
-        placed: outcome.attached,
-        skipped: outcome.skipped,
-        sourceLabel: target === 'answer' ? 'Answer' : 'Solution',
-      });
-    } catch (caught) {
-      setAiError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setSiblingDetecting((previous) => {
-        const next = new Set(previous);
-        next.delete(target);
-        return next;
-      });
-    }
-  }, [attachDetectedSiblingFigures, documentId]);
+  const detectSiblingPage = useCallback(
+    async (
+      target: 'answer' | 'solution',
+      sourceDocumentId: string,
+      sourcePage: number,
+    ): Promise<void> => {
+      if (runActiveRef.current) return;
+      setSiblingDetecting((previous) => new Set(previous).add(target));
+      setAiError(null);
+      setAiResult(null);
+      try {
+        const result = await questionsApi.detectFigures(documentId, sourcePage, {
+          documentId: sourceDocumentId,
+          target,
+        });
+        const entries: SiblingDetectedFigure[] = result.figures
+          .filter(
+            (figure): figure is DetectedFigure & { target: 'answer' | 'solution' } =>
+              figure.target === 'answer' || figure.target === 'solution',
+          )
+          .filter((figure) => figure.target === target)
+          .map((figure) => ({ sourceDocumentId, sourcePage, figure }));
+        const outcome = await attachDetectedSiblingFigures(entries);
+        if (outcome.error) setAiError(outcome.error);
+        setAiResult({
+          detected: result.figures.length,
+          placed: outcome.attached,
+          skipped: outcome.skipped,
+          sourceLabel: target === 'answer' ? 'Answer' : 'Solution',
+        });
+      } catch (caught) {
+        setAiError(caught instanceof Error ? caught.message : String(caught));
+      } finally {
+        setSiblingDetecting((previous) => {
+          const next = new Set(previous);
+          next.delete(target);
+          return next;
+        });
+      }
+    },
+    [attachDetectedSiblingFigures, documentId],
+  );
 
   /**
    * Save a box, serialised per box: at most one upload in flight, and adjustments made while one is
@@ -1586,7 +1780,10 @@ export function VerifyWorkspace({
     for (const box of after) {
       if (!savedUrlsRef.current.has(box.id)) continue;
       const was = beforeById.get(box.id);
-      if (was && (was.x !== box.x || was.y !== box.y || was.width !== box.width || was.height !== box.height)) {
+      if (
+        was &&
+        (was.x !== box.x || was.y !== box.y || was.width !== box.width || was.height !== box.height)
+      ) {
         void requestSave(box.id);
       }
     }
@@ -1619,10 +1816,17 @@ export function VerifyWorkspace({
   };
 
   // --- Draw-to-save (manual flow): arm a target from its card, rubber-band draw, auto-save. ---
-  const toggleDrawTarget = (question: Question, type: 'question' | 'option', optionIndex = 0): void => {
+  const toggleDrawTarget = (
+    question: Question,
+    type: 'question' | 'option',
+    optionIndex = 0,
+  ): void => {
     cancelCropRequest(); // a box draw and a field crop can't be armed together
     setDrawTarget((prev) =>
-      prev && prev.questionId === question.id && prev.type === type && prev.optionIndex === optionIndex
+      prev &&
+      prev.questionId === question.id &&
+      prev.type === type &&
+      prev.optionIndex === optionIndex
         ? null
         : { questionId: question.id, type, optionIndex },
     );
@@ -1653,7 +1857,9 @@ export function VerifyWorkspace({
     if (!drawTarget) return null;
     const number = questionNumberById.get(drawTarget.questionId);
     const base = `Q${String(number ?? '?')}`;
-    return drawTarget.type === 'option' ? `${base} · option ${String(drawTarget.optionIndex + 1)}` : `${base} figure`;
+    return drawTarget.type === 'option'
+      ? `${base} · option ${String(drawTarget.optionIndex + 1)}`
+      : `${base} figure`;
   }, [drawTarget, questionNumberById]);
 
   // Esc cancels an armed draw without touching anything else.
@@ -1663,7 +1869,9 @@ export function VerifyWorkspace({
       if (event.key === 'Escape') setDrawTarget(null);
     };
     window.document.addEventListener('keydown', onKey);
-    return () => { window.document.removeEventListener('keydown', onKey); };
+    return () => {
+      window.document.removeEventListener('keydown', onKey);
+    };
   }, [drawTarget]);
 
   // --- One-shot field crops (answer/explanation image, match-the-column entry image). ---
@@ -1684,18 +1892,31 @@ export function VerifyWorkspace({
       new Promise<string | null>((resolve) => {
         cropRequestRef.current?.resolve(null); // supersede any prior pending request
         setDrawTarget(null); // the editable-box draw and a field crop can't be armed at once
-        const sibling = source === 'answer' ? sources.answer : source === 'solution' ? sources.solution : undefined;
+        const sibling =
+          source === 'answer'
+            ? sources.answer
+            : source === 'solution'
+              ? sources.solution
+              : undefined;
         // The grouped companion has one pane for both destinations. Reflect the field the card asked
         // for in its compact picker, while `req.source` below still remains the durable destination.
-        if (sibling && companionSource?.document.id === sibling.document.id && (source === 'answer' || source === 'solution')) {
+        if (
+          sibling &&
+          companionSource?.document.id === sibling.document.id &&
+          (source === 'answer' || source === 'solution')
+        ) {
           setCompanionTarget(source);
         }
         // An inline layout has no sibling pane: draw the answer/explanation directly on the question
         // canvas, but preserve its field destination independently from the canvas source.
-        const inlineField = inlineAnswers && !sibling && (source === 'answer' || source === 'solution') ? source : undefined;
+        const inlineField =
+          inlineAnswers && !sibling && (source === 'answer' || source === 'solution')
+            ? source
+            : undefined;
         if (!inlineField) setVisibleViews((previous) => new Set([...previous, source]));
         const req: CropRequest = {
           questionId,
+          mode: 'image',
           source: inlineField ? 'question' : source,
           ...(inlineField ? { target: inlineField } : {}),
           ...(sibling ? { sourceDocumentId: sibling.document.id } : {}),
@@ -1706,8 +1927,35 @@ export function VerifyWorkspace({
       }),
     [companionSource?.document.id, inlineAnswers, sources.answer, sources.solution],
   );
+  /**
+   * Matrix fields use the same rubber-band source-page picker as figure crops, but the tight image
+   * goes straight to OCR instead of storage. This keeps a field correction scoped to exactly what the
+   * teacher selected — it never runs a full-page/question re-extraction.
+   */
+  const requestTranscription = useCallback(
+    (questionId: string, target: TranscribeAreaTarget): Promise<string | null> =>
+      new Promise<string | null>((resolve) => {
+        cropRequestRef.current?.resolve(null); // a new selection deliberately supersedes the old one
+        setDrawTarget(null);
+        setVisibleViews((previous) => new Set([...previous, 'question']));
+        const req: CropRequest = {
+          questionId,
+          mode: 'transcribe',
+          source: 'question',
+          transcribeTarget: target,
+          resolve,
+        };
+        cropRequestRef.current = req;
+        setCropRequest(req);
+      }),
+    [],
+  );
   /** Put a just-drawn sibling figure in the card immediately, before upload latency is visible. */
-  const addOptimisticSiblingImage = (questionId: string, source: 'answer' | 'solution', previewUrl: string): void => {
+  const addOptimisticSiblingImage = (
+    questionId: string,
+    source: 'answer' | 'solution',
+    previewUrl: string,
+  ): void => {
     const field = source === 'answer' ? 'answerImages' : 'explanationImages';
     queryClient.setQueryData<QuestionListResponse>(questionsQueryKey(documentId), (previous) =>
       previous
@@ -1723,7 +1971,11 @@ export function VerifyWorkspace({
     );
   };
   /** Roll back only the temporary browser URL if its background upload fails or the user removes it. */
-  const removeOptimisticSiblingImage = (questionId: string, source: 'answer' | 'solution', previewUrl: string): void => {
+  const removeOptimisticSiblingImage = (
+    questionId: string,
+    source: 'answer' | 'solution',
+    previewUrl: string,
+  ): void => {
     const field = source === 'answer' ? 'answerImages' : 'explanationImages';
     queryClient.setQueryData<QuestionListResponse>(questionsQueryKey(documentId), (previous) =>
       previous
@@ -1774,13 +2026,26 @@ export function VerifyWorkspace({
   };
   // Crop `imageUrl` at `natural` (natural px), upload it against the pending request's question, and
   // resolve the request with the new URL. Any failure resolves null so the caller's button just resets.
-  const fulfilCrop = async (imageUrl: string, natural: BoxRect, sourcePage?: number): Promise<void> => {
+  const fulfilCrop = async (
+    imageUrl: string,
+    natural: BoxRect,
+    sourcePage?: number,
+  ): Promise<void> => {
     const req = cropRequestRef.current;
     if (!req) return;
     clearCropRequest();
     try {
       const blob = await getCroppedBlob(imageUrl, natural);
-      const siblingSource = req.target ?? (req.source === 'answer' || req.source === 'solution' ? req.source : null);
+      if (req.mode === 'transcribe') {
+        if (!req.transcribeTarget) {
+          req.resolve(null);
+          return;
+        }
+        req.resolve(await questionsApi.transcribeArea(documentId, req.transcribeTarget, blob));
+        return;
+      }
+      const siblingSource =
+        req.target ?? (req.source === 'answer' || req.source === 'solution' ? req.source : null);
       if (siblingSource !== null) {
         // The UI gets a browser-local image as soon as the crop encoder finishes (usually far sooner
         // than an upload + database round trip). The background job replaces it with the durable URL.
@@ -1789,7 +2054,11 @@ export function VerifyWorkspace({
         req.resolve(previewUrl);
         void (async (): Promise<void> => {
           try {
-            const { url } = await questionsApi.uploadImage(req.questionId, `crop_${String(Date.now())}`, blob);
+            const { url } = await questionsApi.uploadImage(
+              req.questionId,
+              `crop_${String(Date.now())}`,
+              blob,
+            );
             await enqueueQuestionWrite(req.questionId, async () => {
               const latest = readQuestion(req.questionId);
               if (!latest) return;
@@ -1798,17 +2067,21 @@ export function VerifyWorkspace({
               // do not revive it server-side.
               if (!latest[field].includes(previewUrl)) return;
               const media = latest[field].map((item) => (item === previewUrl ? url : item));
-              const imageCrops = upsertCrop(latest.imageCrops, {
-                url,
-                type: siblingSource,
-                optionIndex: 0,
-                nx: natural.x,
-                ny: natural.y,
-                nw: natural.width,
-                nh: natural.height,
-                ...(req.sourceDocumentId ? { sourceDocumentId: req.sourceDocumentId } : {}),
-                ...(sourcePage ? { sourcePage } : {}),
-              }, undefined);
+              const imageCrops = upsertCrop(
+                latest.imageCrops,
+                {
+                  url,
+                  type: siblingSource,
+                  optionIndex: 0,
+                  nx: natural.x,
+                  ny: natural.y,
+                  nw: natural.width,
+                  nh: natural.height,
+                  ...(req.sourceDocumentId ? { sourceDocumentId: req.sourceDocumentId } : {}),
+                  ...(sourcePage ? { sourcePage } : {}),
+                },
+                undefined,
+              );
               await patchQuestion({ id: latest.id, patch: { [field]: media, imageCrops } });
               // An inline field was drawn on the main question canvas. Keep its durable crop box
               // on that exact page, whereas a sibling source is projected by SourcePreviewPane.
@@ -1831,7 +2104,11 @@ export function VerifyWorkspace({
         })();
         return;
       }
-      const { url } = await questionsApi.uploadImage(req.questionId, `crop_${String(Date.now())}`, blob);
+      const { url } = await questionsApi.uploadImage(
+        req.questionId,
+        `crop_${String(Date.now())}`,
+        blob,
+      );
       req.resolve(url);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -1856,7 +2133,11 @@ export function VerifyWorkspace({
     return (async (): Promise<string | null> => {
       try {
         const blob = await getCroppedBlob(imageUrl, natural);
-        const { url } = await questionsApi.uploadImage(questionId, `crop_${String(Date.now())}`, blob);
+        const { url } = await questionsApi.uploadImage(
+          questionId,
+          `crop_${String(Date.now())}`,
+          blob,
+        );
         // Persist the refreshed sibling crop AND replace precisely its paired media URL in ONE queued
         // write. That avoids a brief metadata/media mismatch and prevents two different boundaries on
         // the same question from clobbering one another.
@@ -1869,17 +2150,21 @@ export function VerifyWorkspace({
           if (mediaIndex < 0) return;
           const media = [...latest[field]];
           media[mediaIndex] = url;
-          const imageCrops = upsertCrop(latest.imageCrops, {
-            url,
-            type: source,
-            optionIndex: 0,
-            nx: natural.x,
-            ny: natural.y,
-            nw: natural.width,
-            nh: natural.height,
-            sourceDocumentId,
-            sourcePage,
-          }, replacedUrl);
+          const imageCrops = upsertCrop(
+            latest.imageCrops,
+            {
+              url,
+              type: source,
+              optionIndex: 0,
+              nx: natural.x,
+              ny: natural.y,
+              nw: natural.width,
+              nh: natural.height,
+              sourceDocumentId,
+              sourcePage,
+            },
+            replacedUrl,
+          );
           await patchQuestion({ id: latest.id, patch: { [field]: media, imageCrops } });
         });
         return url;
@@ -1964,15 +2249,22 @@ export function VerifyWorkspace({
     const req = cropRequestRef.current;
     if (req && req.source === 'question') {
       const pageSize = sizeRef.current;
-      if (!pageSize || pageSize.displayWidth === 0) { cancelCropRequest(); return; }
+      if (!pageSize || pageSize.displayWidth === 0) {
+        cancelCropRequest();
+        return;
+      }
       const scaleX = pageSize.naturalWidth / pageSize.displayWidth;
       const scaleY = pageSize.naturalHeight / pageSize.displayHeight;
-      void fulfilCrop(imageSrcRef.current, {
-        x: rect.x * scaleX,
-        y: rect.y * scaleY,
-        width: rect.width * scaleX,
-        height: rect.height * scaleY,
-      }, page);
+      void fulfilCrop(
+        imageSrcRef.current,
+        {
+          x: rect.x * scaleX,
+          y: rect.y * scaleY,
+          width: rect.width * scaleX,
+          height: rect.height * scaleY,
+        },
+        page,
+      );
       return;
     }
     handleDraw(rect);
@@ -2040,7 +2332,9 @@ export function VerifyWorkspace({
       }
     };
     window.document.addEventListener('keydown', onKey);
-    return () => { window.document.removeEventListener('keydown', onKey); };
+    return () => {
+      window.document.removeEventListener('keydown', onKey);
+    };
   }, [cropRequest, regionTranscriptionTarget]);
 
   // --- Adjust-to-resave: one history entry per grab, one (coalesced) save per release. ---
@@ -2140,7 +2434,10 @@ export function VerifyWorkspace({
     setAiError(null);
     setAiResult(null);
     try {
-      const { imageWidth, imageHeight, figures } = await questionsApi.detectFigures(documentId, page);
+      const { imageWidth, imageHeight, figures } = await questionsApi.detectFigures(
+        documentId,
+        page,
+      );
       rememberContinuationOwners(page, figures);
       const sx = size.displayWidth / imageWidth;
       const sy = size.displayHeight / imageHeight;
@@ -2156,44 +2453,48 @@ export function VerifyWorkspace({
       }
       const placed: Box[] = [];
       figures
-        .filter((f): f is DetectedFigure & { target: CanvasCropTarget } =>
-          f.target === 'question' ||
-          f.target === 'option' ||
-          f.target === 'answer' ||
-          f.target === 'solution',
+        .filter(
+          (f): f is DetectedFigure & { target: CanvasCropTarget } =>
+            f.target === 'question' ||
+            f.target === 'option' ||
+            f.target === 'answer' ||
+            f.target === 'solution',
         )
         .forEach((figure, index) => {
-        const question = questionById.get(figure.questionId);
-        if (question && hasMainCanvasFigureCrop(question, page, figure)) {
-          skipped += 1;
-          return;
-        }
-        const [x, y, w, h] = figure.bbox;
-        placed.push({
-          id: `${figure.questionId}_ai_${String(page)}_${String(index)}`,
-          questionId: figure.questionId,
-          sourcePage: page,
-          type: figure.target,
-          optionIndex: figure.optionIndex,
-          source: 'ai',
-          snippet: figure.snippet,
-          label: `AI · Q${String(questionNumberById.get(figure.questionId) ?? '?')}${
-            figure.target === 'option'
-              ? ` · option ${String(figure.optionIndex + 1)}`
-              : figure.target === 'answer'
-                ? ' · answer figure'
-                : figure.target === 'solution'
-                  ? ' · explanation figure'
-                  : ''
-          }`,
-          x: x * sx,
-          y: y * sy,
-          width: w * sx,
-          height: h * sy,
+          const question = questionById.get(figure.questionId);
+          if (question && hasMainCanvasFigureCrop(question, page, figure)) {
+            skipped += 1;
+            return;
+          }
+          const [x, y, w, h] = figure.bbox;
+          placed.push({
+            id: `${figure.questionId}_ai_${String(page)}_${String(index)}`,
+            questionId: figure.questionId,
+            sourcePage: page,
+            type: figure.target,
+            optionIndex: figure.optionIndex,
+            source: 'ai',
+            snippet: figure.snippet,
+            label: `AI · Q${String(questionNumberById.get(figure.questionId) ?? '?')}${
+              figure.target === 'option'
+                ? ` · option ${String(figure.optionIndex + 1)}`
+                : figure.target === 'answer'
+                  ? ' · answer figure'
+                  : figure.target === 'solution'
+                    ? ' · explanation figure'
+                    : ''
+            }`,
+            x: x * sx,
+            y: y * sy,
+            width: w * sx,
+            height: h * sy,
+          });
         });
-      });
       // Replace any earlier unsaved AI suggestions on this page; saved + manual boxes stay.
-      commit((prev) => [...prev.filter((b) => b.source !== 'ai' || savedUrlsRef.current.has(b.id)), ...placed]);
+      commit((prev) => [
+        ...prev.filter((b) => b.source !== 'ai' || savedUrlsRef.current.has(b.id)),
+        ...placed,
+      ]);
       setAiResult({ detected: figures.length, placed: placed.length, skipped });
       // Auto-save every fresh suggestion right away — no confirm step, exactly like the all-pages run.
       // `commit` updated boxesRef synchronously above, so each save crops the box just placed; a box
@@ -2205,7 +2506,15 @@ export function VerifyWorkspace({
       setAiBusy(false);
     }
     // commit/questionNumberById are stable enough; guarded single-run via effect below for autoRun.
-  }, [documentId, page, size, questionById, questionNumberById, attachPassageFigure, rememberContinuationOwners]);
+  }, [
+    documentId,
+    page,
+    size,
+    questionById,
+    questionNumberById,
+    attachPassageFigure,
+    rememberContinuationOwners,
+  ]);
 
   // --- Whole-document detection (detect + attach across ALL pages in one run). ---
   /**
@@ -2246,7 +2555,7 @@ export function VerifyWorkspace({
     // so a crop save cannot interleave with its grouped question patches during that short preflight.
     setAllProgress({ phase: 'detect', done: 0, total: 0 });
     try {
-      const questionPageCount = pageCount.data ?? await questionsApi.pageCount(documentId);
+      const questionPageCount = pageCount.data ?? (await questionsApi.pageCount(documentId));
       const questionPages = [
         ...new Set([
           ...questionStartPages,
@@ -2255,23 +2564,30 @@ export function VerifyWorkspace({
             .map((sourcePage) => sourcePage + 1),
         ]),
       ].sort((a, b) => a - b);
-      const plans: DetectionPlan[] = [{
-        sourceDocumentId: documentId,
-        sourceTarget: 'question',
-        pages: questionPages,
-      }];
+      const plans: DetectionPlan[] = [
+        {
+          sourceDocumentId: documentId,
+          sourceTarget: 'question',
+          pages: questionPages,
+        },
+      ];
       let preflightFailures = 0;
       let firstFailure: string | null = null;
       // A combined companion is ONE physical source. There is no safe way for a whole-document
       // vision pass to infer whether an arbitrary figure is answer evidence or explanation evidence,
       // so scan it once into the explicitly selected destination instead of duplicating every crop
       // into both fields.
-      const siblingSources: readonly { target: 'answer' | 'solution'; documentId: string }[] = companionSource
-        ? [{ target: companionTarget, documentId: companionSource.document.id }]
-        : [
-            ...(sources.answer ? [{ target: 'answer' as const, documentId: sources.answer.document.id }] : []),
-            ...(sources.solution ? [{ target: 'solution' as const, documentId: sources.solution.document.id }] : []),
-          ];
+      const siblingSources: readonly { target: 'answer' | 'solution'; documentId: string }[] =
+        companionSource
+          ? [{ target: companionTarget, documentId: companionSource.document.id }]
+          : [
+              ...(sources.answer
+                ? [{ target: 'answer' as const, documentId: sources.answer.document.id }]
+                : []),
+              ...(sources.solution
+                ? [{ target: 'solution' as const, documentId: sources.solution.document.id }]
+                : []),
+            ];
       for (const sibling of siblingSources) {
         try {
           const totalPages = await questionsApi.pageCount(sibling.documentId);
@@ -2299,7 +2615,11 @@ export function VerifyWorkspace({
         for (let start = 0; start < plan.pages.length; start += DETECT_FIGURES_MAX_PAGES) {
           const chunk = plan.pages.slice(start, start + DETECT_FIGURES_MAX_PAGES);
           try {
-            const { pages: results } = await questionsApi.detectFiguresBatch(documentId, [...chunk], plan.source);
+            const { pages: results } = await questionsApi.detectFiguresBatch(
+              documentId,
+              [...chunk],
+              plan.source,
+            );
             for (const result of results) {
               const key = `${plan.sourceDocumentId}:${String(result.page)}`;
               if (!result.ok) {
@@ -2307,7 +2627,8 @@ export function VerifyWorkspace({
                 firstFailure ??= result.error;
                 continue;
               }
-              if (plan.sourceTarget === 'question') rememberContinuationOwners(result.page, result.figures);
+              if (plan.sourceTarget === 'question')
+                rememberContinuationOwners(result.page, result.figures);
               for (const figure of result.figures) {
                 detected.push({
                   sourceDocumentId: plan.sourceDocumentId,
@@ -2319,7 +2640,8 @@ export function VerifyWorkspace({
             }
           } catch (caught) {
             // One chunk's request failing must not discard the other chunks' detections.
-            for (const failedPage of chunk) failedPages.add(`${plan.sourceDocumentId}:${String(failedPage)}`);
+            for (const failedPage of chunk)
+              failedPages.add(`${plan.sourceDocumentId}:${String(failedPage)}`);
             firstFailure ??= caught instanceof Error ? caught.message : String(caught);
           }
           detectedPages += chunk.length;
@@ -2334,9 +2656,17 @@ export function VerifyWorkspace({
 
       // Shared-passage figures only exist on the main question source. Dedup per passageId
       // (first-wins across pages), so one passage is attached at most once per run.
-      const passageFirst = new Map<string, { page: number; bbox: [number, number, number, number] }>();
+      const passageFirst = new Map<
+        string,
+        { page: number; bbox: [number, number, number, number] }
+      >();
       for (const entry of detected) {
-        if (entry.sourceTarget !== 'question' || entry.figure.target !== 'passage' || entry.figure.passageId === null) continue;
+        if (
+          entry.sourceTarget !== 'question' ||
+          entry.figure.target !== 'passage' ||
+          entry.figure.passageId === null
+        )
+          continue;
         if (!passageFirst.has(entry.figure.passageId)) {
           passageFirst.set(entry.figure.passageId, { page: entry.page, bbox: entry.figure.bbox });
         }
@@ -2350,7 +2680,9 @@ export function VerifyWorkspace({
       }
 
       const questionDetected = detected.filter(
-        (entry): entry is DetectedPageFigure & {
+        (
+          entry,
+        ): entry is DetectedPageFigure & {
           sourceTarget: 'question';
           figure: DetectedFigure & { target: CanvasCropTarget };
         } =>
@@ -2361,7 +2693,9 @@ export function VerifyWorkspace({
             entry.figure.target === 'solution'),
       );
       const siblingDetected = detected.filter(
-        (entry): entry is DetectedPageFigure & {
+        (
+          entry,
+        ): entry is DetectedPageFigure & {
           sourceTarget: 'answer' | 'solution';
           figure: DetectedFigure & { target: 'answer' | 'solution' };
         } =>
@@ -2383,7 +2717,9 @@ export function VerifyWorkspace({
         byQuestion.set(question.id, group);
       }
 
-      const total = [...byQuestion.values()].reduce((count, group) => count + group.length, 0) + siblingDetected.length;
+      const total =
+        [...byQuestion.values()].reduce((count, group) => count + group.length, 0) +
+        siblingDetected.length;
       let done = 0;
       let attached = 0;
       let failed = preflightFailures;
@@ -2410,9 +2746,15 @@ export function VerifyWorkspace({
         for (const { page: sourcePage, sourceDocumentId, figure } of group) {
           try {
             const [x, y, w, h] = figure.bbox;
-            const blob = await getCroppedBlob(questionsApi.pageImageUrl(sourceDocumentId, sourcePage), {
-              x, y, width: w, height: h,
-            });
+            const blob = await getCroppedBlob(
+              questionsApi.pageImageUrl(sourceDocumentId, sourcePage),
+              {
+                x,
+                y,
+                width: w,
+                height: h,
+              },
+            );
             const name = `${questionId}_${figure.target}_${String(figure.optionIndex)}_${String(Math.round(x))}_${String(Math.round(y))}_${String(Date.now())}`;
             const { url } = await questionsApi.uploadImage(questionId, name, blob);
             if (figure.target === 'question') {
@@ -2470,11 +2812,16 @@ export function VerifyWorkspace({
             await patchQuestion({
               id: questionId,
               patch: {
-                ...(touchedStem ? { isQuestionImage: true, questionImage: stemUrls.join(',') } : {}),
+                ...(touchedStem
+                  ? { isQuestionImage: true, questionImage: stemUrls.join(',') }
+                  : {}),
                 ...(touchedOption ? { isOptionImage: true, optionImages } : {}),
                 ...(touchedAnswer ? { answerImages } : {}),
                 ...(touchedSolution ? { explanationImages } : {}),
-                imageCrops: [...question.imageCrops, ...specsHere.map(({ spec }) => specToCrop(spec))],
+                imageCrops: [
+                  ...question.imageCrops,
+                  ...specsHere.map(({ spec }) => specToCrop(spec)),
+                ],
               },
             });
           });
@@ -2526,7 +2873,13 @@ export function VerifyWorkspace({
         }
       }
 
-      setAllSummary({ attached, skipped, pages: touchedPages.size, failed, failedPages: failedPages.size });
+      setAllSummary({
+        attached,
+        skipped,
+        pages: touchedPages.size,
+        failed,
+        failedPages: failedPages.size,
+      });
       setError(firstFailure);
     } catch (caught) {
       setAiError(caught instanceof Error ? caught.message : String(caught));
@@ -2534,12 +2887,33 @@ export function VerifyWorkspace({
       runActiveRef.current = false;
       setAllProgress(null);
     }
-  }, [documentId, questions.data, pageCount.data, sources.answer, sources.solution, companionSource, companionTarget, patchQuestion, questionNumberById, applyBoxes, applySavedUrls, attachPassageFigure, attachDetectedSiblingFigures, rememberContinuationOwners]);
+  }, [
+    documentId,
+    questions.data,
+    pageCount.data,
+    sources.answer,
+    sources.solution,
+    companionSource,
+    companionTarget,
+    patchQuestion,
+    questionNumberById,
+    applyBoxes,
+    applySavedUrls,
+    attachPassageFigure,
+    attachDetectedSiblingFigures,
+    rememberContinuationOwners,
+  ]);
 
   // Auto-detect once on arrival when the session pushed us here with ?auto=1 (still only marks).
   const autoStarted = useRef(false);
   useEffect(() => {
-    if (autoRun && !autoStarted.current && size && questions.isSuccess && questions.data.length > 0) {
+    if (
+      autoRun &&
+      !autoStarted.current &&
+      size &&
+      questions.isSuccess &&
+      questions.data.length > 0
+    ) {
       autoStarted.current = true;
       void detectCurrentPage();
     }
@@ -2550,7 +2924,9 @@ export function VerifyWorkspace({
   // whose save actually FAILED, which is all the review panel surfaces now (a retry, not a confirm).
   const pendingAi = boxes.filter((b) => b.source === 'ai' && !savedUrls.has(b.id));
   const aiRetry = pendingAi.filter((b) => failed.has(b.id));
-  const retryBox = (boxId: string): void => { void requestSave(boxId); };
+  const retryBox = (boxId: string): void => {
+    void requestSave(boxId);
+  };
   const retryAll = async (): Promise<void> => {
     if (runActive) return;
     // Saves of the same question are serialised on its write queue and each one re-reads the fresh
@@ -2560,7 +2936,9 @@ export function VerifyWorkspace({
     }
   };
   const dismissFailed = (): void => {
-    commit((prev) => prev.filter((b) => b.source !== 'ai' || savedUrlsRef.current.has(b.id) || !failed.has(b.id)));
+    commit((prev) =>
+      prev.filter((b) => b.source !== 'ai' || savedUrlsRef.current.has(b.id) || !failed.has(b.id)),
+    );
   };
 
   const canvasBoxes: CanvasBox[] = boxes.map((b) => ({
@@ -2576,7 +2954,8 @@ export function VerifyWorkspace({
   // Published-bank navigation carries a question id, not display pixels. Project its persisted natural
   // source bbox into this page's fitted canvas only while the transient focus is active.
   const sourceFocus = (() => {
-    if (!sourceHighlightId || !size || size.displayWidth === 0 || size.naturalWidth === 0) return null;
+    if (!sourceHighlightId || !size || size.displayWidth === 0 || size.naturalWidth === 0)
+      return null;
     const target = questionById.get(sourceHighlightId);
     if (!target || target.sourceRegion.page !== page) return null;
     const [x, y, width, height] = target.sourceRegion.bbox;
@@ -2592,16 +2971,17 @@ export function VerifyWorkspace({
   })();
   // What the magnifier zooms into: a crop being drawn takes priority, else the box being adjusted.
   const magnifierBox: BoxRect | null =
-    drawPreview ?? (activeBoxId ? boxes.find((b) => b.id === activeBoxId) ?? null : null);
+    drawPreview ?? (activeBoxId ? (boxes.find((b) => b.id === activeBoxId) ?? null) : null);
   // Main-page crops take precedence while they are active; sibling previews publish the same shape
   // so Answer and Solution drawing/resizing uses this exact magnifier too.
-  const activeMagnifier: SourcePreviewMagnifier | null = magnifierBox && size && size.displayWidth > 0
-    ? { imageSrc, box: magnifierBox, size, label: 'Live crop preview' }
-    : siblingMagnifier;
+  const activeMagnifier: SourcePreviewMagnifier | null =
+    magnifierBox && size && size.displayWidth > 0
+      ? { imageSrc, box: magnifierBox, size, label: 'Live crop preview' }
+      : siblingMagnifier;
   // The main canvas is armed either for a box draw (drawLabel) or for a question-source field crop.
   const cropDrawLabel =
     cropRequest && cropRequest.source === 'question'
-      ? `Crop image · Q${String(questionNumberById.get(cropRequest.questionId) ?? '?')}`
+      ? `${cropRequest.mode === 'transcribe' ? 'Select text area' : 'Crop image'} · Q${String(questionNumberById.get(cropRequest.questionId) ?? '?')}`
       : null;
   const mainPageTranscriptionTarget = regionTranscriptionTarget &&
     (!regionTranscriptionTarget.source || regionTranscriptionTarget.source.documentId === documentId)
@@ -2612,13 +2992,20 @@ export function VerifyWorkspace({
   // presence in the card is its attached image, and adjustments happen on the canvas box itself.
   const cardBoxesFor = (questionId: string): CardBox[] =>
     boxes
-      .filter((b): b is Box & { type: 'question' | 'option' } =>
-        b.questionId === questionId &&
-        b.source === 'manual' &&
-        !savedUrls.has(b.id) &&
-        (b.type === 'question' || b.type === 'option'),
+      .filter(
+        (b): b is Box & { type: 'question' | 'option' } =>
+          b.questionId === questionId &&
+          b.source === 'manual' &&
+          !savedUrls.has(b.id) &&
+          (b.type === 'question' || b.type === 'option'),
       )
-      .map((b) => ({ id: b.id, type: b.type, optionIndex: b.optionIndex, label: b.label, saving: busy.has(b.id) }));
+      .map((b) => ({
+        id: b.id,
+        type: b.type,
+        optionIndex: b.optionIndex,
+        label: b.label,
+        saving: busy.has(b.id),
+      }));
   const cardDrawTargetFor = (questionId: string): CardDrawTarget | null =>
     drawTarget && drawTarget.questionId === questionId
       ? { type: drawTarget.type, optionIndex: drawTarget.optionIndex }
@@ -2667,16 +3054,34 @@ export function VerifyWorkspace({
         drawTarget={cardDrawTargetFor(question.id)}
         cropDisabled={runActive}
         nested={nested}
-        {...(!nested ? { selection: { checked: selectedIds.has(question.id), onChange: () => { toggleSelect(question.id); } } } : {})}
+        {...(!nested
+          ? {
+              selection: {
+                checked: selectedIds.has(question.id),
+                onChange: () => {
+                  toggleSelect(question.id);
+                },
+              },
+            }
+          : {})}
         answerSource={answerSource}
         solutionSource={solutionSource}
         inlineAnswers={inlineAnswers}
-        onDraftUpdate={(updater) => { drafts.updateDraft(question.id, updater); }}
-        onSave={() => { void drafts.save([question.id]); }}
-        onDelete={() => { void handleDeleteQuestion(question); }}
+        onDraftUpdate={(updater) => {
+          drafts.updateDraft(question.id, updater);
+        }}
+        onSave={() => {
+          void drafts.save([question.id]);
+        }}
+        onDelete={() => {
+          void handleDeleteQuestion(question);
+        }}
         onRequestCrop={requestCrop}
+        onRequestTranscription={requestTranscription}
         onDrawRegion={toggleDrawTarget}
-        onSaveBox={(boxId) => { void requestSave(boxId); }}
+        onSaveBox={(boxId) => {
+          void requestSave(boxId);
+        }}
         onDeleteBox={deleteBox}
         onTranscribeRegion={armRegionTranscription}
         transcribingRegion={regionTranscriptionBusy || regionTranscriptionTarget !== null}
@@ -2762,71 +3167,111 @@ export function VerifyWorkspace({
   };
 
   return (
-    <div className="verify" style={{ '--verify-panel-w': `${String(panelWidth)}px` } as CSSProperties}>
+    <div
+      className="verify"
+      style={{ '--verify-panel-w': `${String(panelWidth)}px` } as CSSProperties}
+    >
       <div className="verify__canvas" ref={canvasRef}>
-          {visibleViews.has('question') ? (
+        {visibleViews.has('question') ? (
           <div className="verify__rail" role="toolbar" aria-label="Source page tools">
-          <div className="verify__rail-group">
-            <IconButton
-              icon={<IconChevronLeft />}
-              label="Previous page"
-              disabled={page <= 1}
-              onClick={() => { goToPage(page - 1); }}
-            />
-            <span className="verify__rail-count">
-              {page}<br />/ {totalPages}
-            </span>
-            <IconButton
-              icon={<IconChevronRight />}
-              label="Next page"
-              disabled={page >= totalPages}
-              onClick={() => { goToPage(page + 1); }}
-            />
+            <div className="verify__rail-group">
+              <IconButton
+                icon={<IconChevronLeft />}
+                label="Previous page"
+                disabled={page <= 1}
+                onClick={() => {
+                  goToPage(page - 1);
+                }}
+              />
+              <label className="verify__rail-page" title={`Jump to a page (1–${String(totalPages)})`}>
+                <span className="sr-only">Go to page</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={totalPages}
+                  inputMode="numeric"
+                  aria-label={`Go to page, from 1 to ${String(totalPages)}`}
+                  value={pageJump}
+                  onChange={(event) => { setPageJump(event.target.value); }}
+                  onBlur={() => { setPageJump(String(page)); }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      submitPageJump();
+                    }
+                  }}
+                />
+                <span>/ {totalPages}</span>
+              </label>
+              <IconButton
+                icon={<IconChevronRight />}
+                label="Next page"
+                disabled={page >= totalPages}
+                onClick={() => {
+                  goToPage(page + 1);
+                }}
+              />
+            </div>
+
+            <span className="verify__rail-divider" aria-hidden="true" />
+
+            <div className="verify__rail-group">
+              <IconButton
+                icon={<IconUndo />}
+                label="Undo"
+                disabled={past.current.length === 0}
+                onClick={undo}
+              />
+              <IconButton
+                icon={<IconRedo />}
+                label="Redo"
+                disabled={future.current.length === 0}
+                onClick={redo}
+              />
+              <IconButton
+                icon={<IconTrash />}
+                label="Remove every box on this page (saved crops stay attached)"
+                disabled={boxes.length === 0}
+                onClick={() => {
+                  commit(() => []);
+                }}
+              />
+            </div>
+
+            <span className="verify__rail-divider" aria-hidden="true" />
+
+            <div className="verify__rail-group">
+              <IconButton
+                icon={aiBusy ? <Spinner /> : <IconSparkle />}
+                label="Auto-detect figures on this page"
+                disabled={aiBusy || allProgress !== null || siblingDetecting.size > 0 || !size}
+                onClick={() => {
+                  void detectCurrentPage();
+                }}
+              />
+              <IconButton
+                icon={allProgress ? <Spinner /> : <IconLayers />}
+                label="Detect figures across all pages"
+                disabled={aiBusy || allProgress !== null || siblingDetecting.size > 0}
+                onClick={() => {
+                  void detectAllPages();
+                }}
+              />
+            </div>
+
+            <span className="verify__rail-spacer" />
+
+            <ToolbarHelp>
+              <b>Add region</b> on a question, then draw — the crop uploads and attaches by itself.
+              <b> Drag</b> a box or its <b>handles</b> to adjust; a saved (green) box re-saves on
+              release. <b>Right-click</b> removes a box — a saved box&rsquo;s image is detached too.
+              <b> Auto-detect</b> finds figures on this page and attaches each one automatically —
+              adjust or remove any box afterwards, just like a manual crop.
+              <b> Detect all pages</b> detects and attaches figures across the whole document in one
+              run, skipping targets that already have an image — review the cards afterwards.
+            </ToolbarHelp>
           </div>
-
-          <span className="verify__rail-divider" aria-hidden="true" />
-
-          <div className="verify__rail-group">
-            <IconButton icon={<IconUndo />} label="Undo" disabled={past.current.length === 0} onClick={undo} />
-            <IconButton icon={<IconRedo />} label="Redo" disabled={future.current.length === 0} onClick={redo} />
-            <IconButton
-              icon={<IconTrash />}
-              label="Remove every box on this page (saved crops stay attached)"
-              disabled={boxes.length === 0}
-              onClick={() => { commit(() => []); }}
-            />
-          </div>
-
-          <span className="verify__rail-divider" aria-hidden="true" />
-
-          <div className="verify__rail-group">
-            <IconButton
-              icon={aiBusy ? <Spinner /> : <IconSparkle />}
-              label="Auto-detect figures on this page"
-              disabled={aiBusy || allProgress !== null || siblingDetecting.size > 0 || !size}
-              onClick={() => { void detectCurrentPage(); }}
-            />
-            <IconButton
-              icon={allProgress ? <Spinner /> : <IconLayers />}
-              label="Detect figures across all pages"
-              disabled={aiBusy || allProgress !== null || siblingDetecting.size > 0}
-              onClick={() => { void detectAllPages(); }}
-            />
-          </div>
-
-          <span className="verify__rail-spacer" />
-
-          <ToolbarHelp>
-            <b>Add region</b> on a question, then draw — the crop uploads and attaches by itself.
-            <b> Drag</b> a box or its <b>handles</b> to adjust; a saved (green) box re-saves on
-            release. <b>Right-click</b> removes a box — a saved box&rsquo;s image is detached too.
-            <b> Auto-detect</b> finds figures on this page and attaches each one automatically —
-            adjust or remove any box afterwards, just like a manual crop.
-            <b> Detect all pages</b> detects and attaches figures across the whole document in one
-            run, skipping targets that already have an image — review the cards afterwards.
-          </ToolbarHelp>
-          </div>
-          ) : null}
+        ) : null}
 
         {visibleViews.has('question') ? (
           <div
@@ -2834,25 +3279,25 @@ export function VerifyWorkspace({
             data-verify-source-pane="question"
             style={sourcePaneFlex('question')}
           >
-          <CropCanvas
-            imageSrc={imageSrc}
-            boxes={canvasBoxes}
-            onUpdateBox={updateBox}
-            onDeleteBox={deleteBox}
-            onSize={handleSize}
-            draw={activeDrawLabel !== null ? { label: activeDrawLabel } : null}
-            onDraw={handleCanvasDraw}
-            onDrawProgress={setDrawPreview}
-            onDrawCancel={() => {
-              setDrawTarget(null);
-              cancelCropRequest();
-              regionTranscriptionTargetRef.current = null;
-              setRegionTranscriptionTarget(null);
-            }}
-            onBoxGrab={handleBoxGrab}
-            onBoxRelease={handleBoxRelease}
-            focus={sourceFocus}
-          />
+            <CropCanvas
+              imageSrc={imageSrc}
+              boxes={canvasBoxes}
+              onUpdateBox={updateBox}
+              onDeleteBox={deleteBox}
+              onSize={handleSize}
+              draw={activeDrawLabel !== null ? { label: activeDrawLabel } : null}
+              onDraw={handleCanvasDraw}
+              onDrawProgress={setDrawPreview}
+              onDrawCancel={() => {
+                setDrawTarget(null);
+                cancelCropRequest();
+                regionTranscriptionTargetRef.current = null;
+                setRegionTranscriptionTarget(null);
+              }}
+              onBoxGrab={handleBoxGrab}
+              onBoxRelease={handleBoxRelease}
+              focus={sourceFocus}
+            />
           </div>
         ) : null}
         {visibleViews.has('question') ? sourcePaneResizerAfter('question') : null}
@@ -2869,17 +3314,26 @@ export function VerifyWorkspace({
             transcription={transcriptionForSource(companionSource)}
             crop={{
               armed: cropRequest?.source === 'answer' || cropRequest?.source === 'solution',
-              onCrop: (imageUrl, natural, sourcePage) => { void fulfilCrop(imageUrl, natural, sourcePage); },
+              onCrop: (imageUrl, natural, sourcePage) => {
+                void fulfilCrop(imageUrl, natural, sourcePage);
+              },
               onCancel: cancelCropRequest,
               existingCrops: [...answerPreviewCrops, ...solutionPreviewCrops].map((item) => ({
                 id: item.id,
                 url: item.crop.url,
-                rect: { x: item.crop.nx, y: item.crop.ny, width: item.crop.nw, height: item.crop.nh },
+                rect: {
+                  x: item.crop.nx,
+                  y: item.crop.ny,
+                  width: item.crop.nw,
+                  height: item.crop.nh,
+                },
                 page: item.page,
                 label: item.label,
               })),
               onExistingCrop: (id, replacedUrl, imageUrl, natural, sourcePage) => {
-                const target = [...answerPreviewCrops, ...solutionPreviewCrops].find((item) => item.id === id);
+                const target = [...answerPreviewCrops, ...solutionPreviewCrops].find(
+                  (item) => item.id === id,
+                );
                 const type = target?.crop.type;
                 if (!target || (type !== 'answer' && type !== 'solution')) return null;
                 return replacePreviewCrop(
@@ -2901,7 +3355,9 @@ export function VerifyWorkspace({
               },
             }}
             destination={{ target: companionTarget, onTargetChange: setCompanionTarget }}
-            onPageChange={(sourcePage) => { rememberSourcePage(companionSource, sourcePage); }}
+            onPageChange={(sourcePage) => {
+              rememberSourcePage(companionSource, sourcePage);
+            }}
             onMagnifierChange={setSiblingMagnifier}
           />
         ) : null}
@@ -2918,12 +3374,19 @@ export function VerifyWorkspace({
             transcription={transcriptionForSource(sources.answer)}
             crop={{
               armed: cropRequest?.source === 'answer',
-              onCrop: (imageUrl, natural, sourcePage) => { void fulfilCrop(imageUrl, natural, sourcePage); },
+              onCrop: (imageUrl, natural, sourcePage) => {
+                void fulfilCrop(imageUrl, natural, sourcePage);
+              },
               onCancel: cancelCropRequest,
               existingCrops: answerPreviewCrops.map((item) => ({
                 id: item.id,
                 url: item.crop.url,
-                rect: { x: item.crop.nx, y: item.crop.ny, width: item.crop.nw, height: item.crop.nh },
+                rect: {
+                  x: item.crop.nx,
+                  y: item.crop.ny,
+                  width: item.crop.nw,
+                  height: item.crop.nh,
+                },
                 page: item.page,
                 label: item.label,
               })),
@@ -2949,7 +3412,9 @@ export function VerifyWorkspace({
                 if (source) void detectSiblingPage('answer', source.document.id, sourcePage);
               },
             }}
-            onPageChange={(sourcePage) => { rememberSourcePage(sources.answer as VerifySibling, sourcePage); }}
+            onPageChange={(sourcePage) => {
+              rememberSourcePage(sources.answer as VerifySibling, sourcePage);
+            }}
             onMagnifierChange={setSiblingMagnifier}
           />
         ) : null}
@@ -2966,12 +3431,19 @@ export function VerifyWorkspace({
             transcription={transcriptionForSource(sources.solution)}
             crop={{
               armed: cropRequest?.source === 'solution',
-              onCrop: (imageUrl, natural, sourcePage) => { void fulfilCrop(imageUrl, natural, sourcePage); },
+              onCrop: (imageUrl, natural, sourcePage) => {
+                void fulfilCrop(imageUrl, natural, sourcePage);
+              },
               onCancel: cancelCropRequest,
               existingCrops: solutionPreviewCrops.map((item) => ({
                 id: item.id,
                 url: item.crop.url,
-                rect: { x: item.crop.nx, y: item.crop.ny, width: item.crop.nw, height: item.crop.nh },
+                rect: {
+                  x: item.crop.nx,
+                  y: item.crop.ny,
+                  width: item.crop.nw,
+                  height: item.crop.nh,
+                },
                 page: item.page,
                 label: item.label,
               })),
@@ -2997,7 +3469,9 @@ export function VerifyWorkspace({
                 if (source) void detectSiblingPage('solution', source.document.id, sourcePage);
               },
             }}
-            onPageChange={(sourcePage) => { rememberSourcePage(sources.solution as VerifySibling, sourcePage); }}
+            onPageChange={(sourcePage) => {
+              rememberSourcePage(sources.solution as VerifySibling, sourcePage);
+            }}
             onMagnifierChange={setSiblingMagnifier}
           />
         ) : null}
@@ -3010,7 +3484,10 @@ export function VerifyWorkspace({
         aria-label="Resize the source page and question panel"
         title="Drag to resize · double-click to reset"
         onMouseDown={onPanelResizeStart}
-        onDoubleClick={() => { setPanel(DEFAULT_PANEL); writeVerifyPanelWidth(DEFAULT_PANEL); }}
+        onDoubleClick={() => {
+          setPanel(DEFAULT_PANEL);
+          writeVerifyPanelWidth(DEFAULT_PANEL);
+        }}
       >
         <span className="verify__grip" aria-hidden="true" />
       </div>
@@ -3074,7 +3551,9 @@ export function VerifyWorkspace({
                 }}
               >
                 {drafts.isSaving || passageDrafts.isSaving ? (
-                  <><Spinner /> Saving…</>
+                  <>
+                    <Spinner /> Saving…
+                  </>
                 ) : (
                   `Update all${
                     drafts.dirtyIds.size + passageDrafts.dirtyIds.size > 0
@@ -3088,8 +3567,9 @@ export function VerifyWorkspace({
               <div className="flex items-start gap-2 rounded-md bg-warn-soft p-2 text-[13px] text-warn">
                 <IconWarning />
                 <span>
-                  {missingNumbers.length === 1 ? 'Question' : 'Questions'} possibly missing from extraction:{' '}
-                  <strong>{missingNumbers.join(', ')}</strong>. Re-run extraction on this file, or add them by hand.
+                  {missingNumbers.length === 1 ? 'Question' : 'Questions'} possibly missing from
+                  extraction: <strong>{missingNumbers.join(', ')}</strong>. Re-run extraction on
+                  this file, or add them by hand.
                 </span>
               </div>
             ) : null}
@@ -3111,7 +3591,13 @@ export function VerifyWorkspace({
                   {aiRetry.length} AI crop{aiRetry.length === 1 ? '' : 's'} failed to save
                 </h2>
                 <div className="row">
-                  <Button size="xs" disabled={runActive} onClick={() => { void retryAll(); }}>
+                  <Button
+                    size="xs"
+                    disabled={runActive}
+                    onClick={() => {
+                      void retryAll();
+                    }}
+                  >
                     <IconCheck /> Retry all
                   </Button>
                   <Button variant="ghost" size="xs" onClick={dismissFailed}>
@@ -3129,12 +3615,13 @@ export function VerifyWorkspace({
                       <button
                         type="button"
                         className="ai-review__match"
-                        onClick={() => { focusQuestion(b.questionId); }}
+                        onClick={() => {
+                          focusQuestion(b.questionId);
+                        }}
                         title="Show the matched question"
                       >
                         <span className="ai-review__label">
-                          <IconSparkle />
-                          Q{questionNumberById.get(b.questionId) ?? '?'}
+                          <IconSparkle />Q{questionNumberById.get(b.questionId) ?? '?'}
                           {b.type === 'option' ? ` · option ${String(b.optionIndex + 1)}` : ''}
                         </span>
                         {stemLine ? <span className="ai-review__stem">{stemLine}</span> : null}
@@ -3143,14 +3630,28 @@ export function VerifyWorkspace({
                         ) : null}
                       </button>
                       <div className="row">
-                        <Button size="xs" disabled={busy.has(b.id) || runActive} onClick={() => { retryBox(b.id); }}>
-                          {busy.has(b.id) ? 'Saving…' : <><IconCheck /> Retry</>}
+                        <Button
+                          size="xs"
+                          disabled={busy.has(b.id) || runActive}
+                          onClick={() => {
+                            retryBox(b.id);
+                          }}
+                        >
+                          {busy.has(b.id) ? (
+                            'Saving…'
+                          ) : (
+                            <>
+                              <IconCheck /> Retry
+                            </>
+                          )}
                         </Button>
                         <IconButton
                           icon={<IconX />}
                           label="Discard this crop"
                           size="sm"
-                          onClick={() => { deleteBox(b.id); }}
+                          onClick={() => {
+                            deleteBox(b.id);
+                          }}
                         />
                       </div>
                     </li>
@@ -3171,7 +3672,9 @@ export function VerifyWorkspace({
               : `Attaching crops — ${String(allProgress.done)}/${String(allProgress.total)} figures…`}
           </p>
         ) : null}
-        {!allProgress && allSummary ? <p className="note">{allPagesSummaryText(allSummary)}</p> : null}
+        {!allProgress && allSummary ? (
+          <p className="note">{allPagesSummaryText(allSummary)}</p>
+        ) : null}
         {!aiBusy && pendingAi.length === 0 && aiResult ? (
           <p className="note">
             {aiResult.placed === 0 && aiResult.detected === 0
@@ -3195,7 +3698,9 @@ export function VerifyWorkspace({
         ) : (
           renderItems.map((item) =>
             item.kind === 'single' ? (
-              <div key={item.question.id} className="min-w-0">{renderCard(item.question)}</div>
+              <div key={item.question.id} className="min-w-0">
+                {renderCard(item.question)}
+              </div>
             ) : (
               // ONE card for the whole comprehension: the passage on top, then its sub-questions
               // nested inside (flattened cards, divider-separated).
@@ -3211,12 +3716,21 @@ export function VerifyWorkspace({
                   passageImage={passageById.get(item.passageId)?.passageImage ?? null}
                   dirty={passageDrafts.dirtyIds.has(item.passageId)}
                   disabled={runActive}
-                  onPassageChange={(value) => { passageDrafts.setText(item.passageId, value); }}
-                  onReExtracted={(result) => { applyGroupReExtract(item.passageId, item.questions, result); }}
-                  onUngroup={() => { ungroupMutation.mutate(item.passageId); }}
+                  onPassageChange={(value) => {
+                    passageDrafts.setText(item.passageId, value);
+                  }}
+                  onReExtracted={(result) => {
+                    applyGroupReExtract(item.passageId, item.questions, result);
+                  }}
+                  onUngroup={() => {
+                    ungroupMutation.mutate(item.passageId);
+                  }}
                   onRequestCrop={() => requestCrop(item.passageId, 'question')}
                   onImageChange={(url) => {
-                    void passageImageUpdate.mutateAsync({ id: item.passageId, patch: { passageImage: url } });
+                    void passageImageUpdate.mutateAsync({
+                      id: item.passageId,
+                      patch: { passageImage: url },
+                    });
                   }}
                 />
                 {item.questions.map((question) => (
@@ -3232,9 +3746,21 @@ export function VerifyWorkspace({
           <div className="fixed bottom-5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full border border-line bg-surface px-4 py-2 shadow-lg">
             <span className="text-sm text-ink-2">{orderedSelection.length} selected</span>
             <Button size="xs" disabled={groupMutation.isPending} onClick={groupSelected}>
-              {groupMutation.isPending ? <><Spinner /> Grouping…</> : 'Group into comprehension'}
+              {groupMutation.isPending ? (
+                <>
+                  <Spinner /> Grouping…
+                </>
+              ) : (
+                'Group into comprehension'
+              )}
             </Button>
-            <Button size="xs" variant="ghost" onClick={() => { setSelectedIds(new Set()); }}>
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => {
+                setSelectedIds(new Set());
+              }}
+            >
               Cancel
             </Button>
           </div>

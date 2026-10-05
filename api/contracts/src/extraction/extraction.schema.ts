@@ -27,7 +27,7 @@ export type StartExtraction = z.infer<typeof StartExtractionSchema>;
 export const ExtractionJobSchema = z.object({
   id: z.string(),
   documentId: z.string(),
-  status: z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled']),
+  status: z.enum(['queued', 'running', 'paused', 'succeeded', 'failed', 'cancelled']),
   model: z.string(),
   questionsFound: z.number().int().nonnegative(),
   pagesTotal: z.number().int().nonnegative(),

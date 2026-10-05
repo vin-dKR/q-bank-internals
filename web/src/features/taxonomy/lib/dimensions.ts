@@ -2,7 +2,7 @@ import type { TaxonomyDimension } from '@ingest/contracts';
 
 /** Display + behaviour metadata for one managed dimension — the UI's single source for tab labels,
  * whether operators may freely create/delete entries (OPEN vocab) vs only edit seeded ones (CLOSED),
- * whether a canonical seed set exists, and the parent scope a chapter/topic is filtered/created under. */
+ * whether a canonical seed set exists, and the parent scope a chapter/section/topic is filtered/created under. */
 export type DimensionMeta = {
   label: string;
   singular: string;
@@ -12,7 +12,7 @@ export type DimensionMeta = {
   creatable: boolean;
   /** A curated canonical starting set can be seeded for this dimension. */
   seedable: boolean;
-  /** Parent dimension a row is scoped to (chapters → subject, topics → chapter). */
+  /** Parent dimension a row is scoped to (chapters → subject, sections → module, topics → chapter). */
   scope?: TaxonomyDimension;
   /** The closed-vocab field shown as a badge on each row. */
   extra?: 'kind' | 'rank';
@@ -36,14 +36,16 @@ export const DIMENSION_META: Record<TaxonomyDimension, DimensionMeta> = {
   module: {
     label: 'Modules',
     singular: 'module',
-    description: 'The content providers or institutes questions come from, such as Allen, PW, or Resonance.',
+    description:
+      'The content providers or institutes questions come from, such as Allen, PW, or Resonance.',
     creatable: true,
     seedable: false,
   },
   chapter: {
     label: 'Chapters',
     singular: 'chapter',
-    description: 'Chapters, scoped to a subject. Pick a subject to narrow the list or add under it.',
+    description:
+      'Chapters, scoped to a subject. Pick a subject to narrow the list or add under it.',
     creatable: true,
     seedable: false,
     scope: 'subject',
@@ -51,14 +53,17 @@ export const DIMENSION_META: Record<TaxonomyDimension, DimensionMeta> = {
   section: {
     label: 'Sections',
     singular: 'section',
-    description: 'The exercise / section bands within a chapter (e.g. Exercise-1, PYQ).',
+    description:
+      'The exercise / section bands published by a module (e.g. Allen Exercise-1 or PW DPP).',
     creatable: true,
-    seedable: true,
+    seedable: false,
+    scope: 'module',
   },
   questionType: {
     label: 'Question types',
     singular: 'question type',
-    description: 'The canonical question kinds the AI classifies into. Closed set — edit names & spellings.',
+    description:
+      'The canonical question kinds the AI classifies into. Closed set — edit names & spellings.',
     creatable: false,
     seedable: true,
     extra: 'kind',

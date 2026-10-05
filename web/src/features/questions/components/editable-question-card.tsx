@@ -1,6 +1,7 @@
 import type { JSX } from 'react';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
+  mergeMatrixKeyWithAnswer,
   parseMatchKey,
   synthesizeMatrixChoiceOptions,
   type MatchData,
@@ -8,6 +9,7 @@ import {
   type QuestionOption,
   type ReExtractedQuestion,
   type ReExtractSource,
+  type TranscribeAreaTarget,
 } from '@ingest/contracts';
 import {
   Badge,
@@ -34,6 +36,7 @@ import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { toQuestionTypeOptions, useDictionary } from '../../taxonomy/index.js';
 import { questionsApi } from '../api/questions.api.js';
 import { useSetQuestionImageMode, useUpdateQuestion } from '../hooks/use-questions.js';
+import { nextOptionLabel, optionLabelKey } from '../lib/option-labels.js';
 import type { QuestionDraft } from '../hooks/use-question-drafts.js';
 
 /** A not-yet-saved crop region of this question: uploading (`saving`) or awaiting a manual retry. */
@@ -101,6 +104,11 @@ type Props = {
     source: 'question' | 'answer' | 'solution',
     replaceUrl?: string,
   ) => Promise<string | null>;
+  /** Arm a tight source-area selection and transcribe it into a matrix title or entry. */
+  onRequestTranscription: (
+    questionId: string,
+    target: TranscribeAreaTarget,
+  ) => Promise<string | null>;
   /** Arm (or, on the armed target, cancel) draw mode — the drawn crop then saves automatically. */
   onDrawRegion: (question: Question, type: 'question' | 'option', optionIndex?: number) => void;
   /** Retry the auto-save of a region whose upload failed. */
@@ -128,19 +136,6 @@ type LabeledOption = Pick<
   QuestionDraft['options'][number],
   'label' | 'body' | 'isCorrect' | 'generated'
 >;
-
-/**
- * A displayed label is the canonical identity of a choice. Do not infer a choice from arbitrary
- * letters in the answer text: that made an answer of "False" select option A, and discarded the
- * printed labels on numbered/Roman/custom-choice papers.
- */
-function optionLabelKey(value: string): string {
-  return value
-    .trim()
-    .replace(/^[\s([{]+/, '')
-    .replace(/[\s)\]}.:]+$/, '')
-    .toLocaleUpperCase();
-}
 
 /** Return a truth value only when the entire choice is a truth token (including simple LaTex text). */
 function truthValue(value: string): 'true' | 'false' | null {
@@ -233,24 +228,7 @@ function parseOptionMatching(
   body: string,
   knownTargetLabels?: readonly string[],
 ): Record<string, string[]> {
-  const key: Record<string, string[]> = {};
-  let current: string | null = null;
-  const parseTargets = (token: string): string[] =>
-    parseMatchKey(`X → ${token}`, knownTargetLabels).X ?? [];
-  for (const segment of body.split(/[;,\n]/)) {
-    const token = segment.trim();
-    if (!token) continue;
-    const pair = /^([A-Za-z0-9]+)\s*[-–—>:→=.)]+\s*([A-Za-z0-9]+)$/.exec(token);
-    if (pair) {
-      current = (pair[1] ?? '').trim();
-      key[current] = parseTargets((pair[2] ?? '').trim());
-    } else if (current !== null && /^[A-Za-z0-9]+$/.test(token)) {
-      const targets = key[current] ?? [];
-      targets.push(...parseTargets(token));
-      key[current] = targets;
-    }
-  }
-  return key;
+  return parseMatchKey(body, knownTargetLabels);
 }
 
 function targetLabelsForMatch(match: MatchData): string[] {
@@ -269,12 +247,11 @@ function matrixKeySignature(key: Record<string, readonly string[]>): string {
     .join('|');
 }
 
-function optionMatchesMatrixKey(
-  option: Pick<QuestionOption, 'body'>,
-  match: MatchData,
-): boolean {
+function optionMatchesMatrixKey(option: Pick<QuestionOption, 'body'>, match: MatchData): boolean {
   const parsed = parseOptionMatching(option.body, targetLabelsForMatch(match));
-  return Object.keys(parsed).length > 0 && matrixKeySignature(parsed) === matrixKeySignature(match.key);
+  return (
+    Object.keys(parsed).length > 0 && matrixKeySignature(parsed) === matrixKeySignature(match.key)
+  );
 }
 
 function isGeneratedMatrixOption(option: Pick<QuestionOption, 'generated'>): boolean {
@@ -293,66 +270,65 @@ function selectedMatrixOptionIndex(options: readonly QuestionOption[], answer: s
   return options.findIndex((option) => option.isCorrect);
 }
 
-type MatrixChoiceState = Pick<QuestionDraft, 'options' | 'answer'>;
+type MatrixChoiceState = Pick<QuestionDraft, 'match' | 'options' | 'answer'>;
 
 /**
- * Keep a matrix's selected answer choice honest after the table changes. The synthesis helper only
- * acts on a complete, unambiguous table; source/manual choices are retained verbatim. A generated
- * selected row is replaceable, while a source/manual selected row gets a new generated companion so
- * a teacher's wording is never silently overwritten.
+ * Keep a matrix's selected answer choice honest after the table changes. A direct-response table
+ * remains table-only; when a paper printed choices, the answer must be one of those visible choices.
  */
 function synchronizeMatrixChoiceState(
   options: readonly QuestionOption[],
   answer: string,
   match: MatchData,
 ): MatrixChoiceState {
-  const synthesis = synthesizeMatrixChoiceOptions(match);
+  // Older extracted rows can have a complete answer-map string but an empty
+  // structured key. Merge it before validation so opening Verify repairs the
+  // row instead of requiring an unreliable full-page re-extract.
+  const completedMatch = mergeMatrixKeyWithAnswer(match, answer);
+  const visibleOptions = options.filter((option) => !isGeneratedMatrixOption(option));
+  if (visibleOptions.length === 0) {
+    // A table without a printed option panel is a valid direct-response matrix. Keep its raw mapping
+    // if present, but do not invent the conventional A–D rows.
+    const hasDirectMap = Object.keys(
+      parseOptionMatching(answer, targetLabelsForMatch(completedMatch)),
+    ).length > 0;
+    return { match: completedMatch, options: [], answer: hasDirectMap ? answer : '' };
+  }
+  const synthesis = synthesizeMatrixChoiceOptions(completedMatch);
   if (synthesis.status === 'blocked') {
-    // An incomplete table must not leave a generated "correct" answer looking trustworthy. Printed
-    // answer choices, however, remain source evidence and are deliberately preserved.
-    if (options.length > 0 && options.every(isGeneratedMatrixOption)) {
-      return { options: options.map((option) => ({ ...option, isCorrect: false })), answer: '' };
-    }
-    return { options: [...options], answer };
+    // An incomplete table does not alter the source choice panel.
+    return { match: completedMatch, options: visibleOptions, answer };
   }
 
-  // A pristine generated set is disposable as a unit. Rebuild all distractors as well as the correct
-  // choice so a manual table edit never leaves choices derived from the old relationship behind.
-  if (options.length === 0 || options.every(isGeneratedMatrixOption)) {
-    return { options: synthesis.options, answer: synthesis.answer };
-  }
-
-  const matchingIndex = options.findIndex((option) => optionMatchesMatrixKey(option, match));
-  const matchingOption = matchingIndex >= 0 ? options[matchingIndex] : undefined;
+  const matchingIndex = visibleOptions.findIndex((option) =>
+    optionMatchesMatrixKey(option, completedMatch),
+  );
+  const matchingOption = matchingIndex >= 0 ? visibleOptions[matchingIndex] : undefined;
   if (matchingOption) {
     const selected = matchingOption;
-    return { options: withCorrectOptions(options, [selected.label]), answer: selected.label };
-  }
-
-  const selectedIndex = selectedMatrixOptionIndex(options, answer);
-  const selectedOption = selectedIndex >= 0 ? options[selectedIndex] : undefined;
-  if (selectedOption && isGeneratedMatrixOption(selectedOption)) {
-    const selected = selectedOption;
     return {
-      options: options.map((option, index) =>
-        index === selectedIndex
-          ? { ...option, body: synthesis.correctMapping, isCorrect: true, generated: true }
-          : { ...option, isCorrect: false },
-      ),
+      match: completedMatch,
+      options: withCorrectOptions(visibleOptions, [selected.label]),
       answer: selected.label,
     };
   }
 
-  // Existing source/manual choices remain untouched. Add the exact custom map as a labelled generated
-  // choice so every completed table still has one unambiguously correct selectable answer.
-  const label = nextOptionLabel(options);
-  const generated: QuestionOption = {
-    label,
-    body: synthesis.correctMapping,
-    isCorrect: true,
-    generated: true,
+  // The paper supplied a fixed option panel. Do not append a synthetic fifth choice when the
+  // table's current key does not match any of those choices — that makes the exam's convention
+  // ambiguous. Discard any stale generated helper and retain an existing explicitly selected
+  // printed/custom choice only when there is one; the operator can choose a printed option or
+  // correct the table to reconcile the two.
+  const selectedVisibleIndex = selectedMatrixOptionIndex(visibleOptions, answer);
+  const selectedVisible =
+    selectedVisibleIndex >= 0 ? visibleOptions[selectedVisibleIndex] : undefined;
+  return {
+    match: completedMatch,
+    options: visibleOptions.map((option) => ({
+      ...option,
+      isCorrect: option.label === selectedVisible?.label,
+    })),
+    answer: selectedVisible?.label ?? '',
   };
-  return { options: [...withCorrectOptions(options, []), generated], answer: label };
 }
 
 /**
@@ -381,9 +357,7 @@ function selectExistingMatrixOption(
     draft.match ? targetLabelsForMatch(draft.match) : undefined,
   );
   const match =
-    draft.match && Object.keys(parsed).length > 0
-      ? { ...draft.match, key: parsed }
-      : draft.match;
+    draft.match && Object.keys(parsed).length > 0 ? { ...draft.match, key: parsed } : draft.match;
 
   return {
     ...draft,
@@ -434,20 +408,6 @@ function withCorrectOptions(
     ...option,
     isCorrect: selected.has(optionLabelKey(option.label)),
   }));
-}
-
-/**
- * The next unused uppercase option label (A, B, C, …) for an "Add option" click. Derived from the labels
- * already present rather than the count, so adding after a mid-list removal (e.g. [A, C] → add) fills the
- * gap ("B") instead of duplicating an existing label ("C").
- */
-function nextOptionLabel(options: readonly { label: string }[]): string {
-  const taken = new Set(options.map((option) => option.label.trim().toUpperCase()));
-  for (let i = 0; i < 26; i += 1) {
-    const label = String.fromCharCode(65 + i);
-    if (!taken.has(label)) return label;
-  }
-  return String.fromCharCode(65 + options.length);
 }
 
 const FIELD_LABEL = 'text-[13px] font-medium text-ink-2';
@@ -565,16 +525,13 @@ function AiButton({
   onClick: () => void;
 }): JSX.Element {
   return (
-    <Button
-      variant="ghost"
+    <IconButton
+      icon={busy ? <Spinner /> : icon}
+      label={title}
       size="xs"
       disabled={busy || disabled}
       onClick={onClick}
-      title={title}
-      aria-label={title}
-    >
-      {busy ? '…' : icon}
-    </Button>
+    />
   );
 }
 
@@ -754,6 +711,7 @@ export function EditableQuestionCard({
   onSave,
   onDelete,
   onRequestCrop,
+  onRequestTranscription,
   onDrawRegion,
   onSaveBox,
   onDeleteBox,
@@ -855,7 +813,7 @@ export function EditableQuestionCard({
   const setMatch = (next: MatchData): void => {
     onDraftUpdate((prev) => {
       const synced = synchronizeMatrixChoiceState(prev.options, prev.answer, next);
-      return { ...prev, match: next, ...synced };
+      return { ...prev, ...synced };
     });
   };
   const seedMatch = (): void => {
@@ -867,18 +825,6 @@ export function EditableQuestionCard({
       key: {},
     });
   };
-  // Existing sessions can predate generated matrix choices. As soon as their saved table contains a
-  // complete unambiguous key, create the deterministic choice set locally so opening Verify is enough
-  // to repair the legacy direct-response shape. Incomplete tables remain untouched and show guidance.
-  useEffect(() => {
-    if (!draft.match || draft.options.length > 0) return;
-    if (synthesizeMatrixChoiceOptions(draft.match).status !== 'generated') return;
-    onDraftUpdate((prev) => {
-      if (!prev.match || prev.options.length > 0) return prev;
-      const synced = synchronizeMatrixChoiceState(prev.options, prev.answer, prev.match);
-      return { ...prev, ...synced };
-    });
-  }, [draft.match, draft.options.length, onDraftUpdate, question.id]);
   /** Keep the draft structurally valid when the teacher changes its type before re-extracting it. */
   const setQuestionType = (questionType: string): void => {
     onDraftUpdate((prev) => {
@@ -901,23 +847,11 @@ export function EditableQuestionCard({
       return selectExistingMatrixOption(prev, label, body);
     });
   };
-  /**
-   * Generated choice sets stay complete: deleting one of an untouched all-generated set simply
-   * rebuilds the deterministic four choices. Editing a generated row first turns it into manual
-   * content, after which removal behaves like any teacher-authored choice.
-   */
+  /** Removing a choice never manufactures a replacement; source-panel format remains explicit. */
   const removeMatrixOption = (index: number): void => {
     onDraftUpdate((prev) => {
       const remaining = prev.options.filter((_, optionIndex) => optionIndex !== index);
       if (!prev.match) return { ...prev, options: remaining };
-      const wasEntireGeneratedSet =
-        prev.options.length > 0 && prev.options.every(isGeneratedMatrixOption);
-      if (wasEntireGeneratedSet) {
-        const synthesis = synthesizeMatrixChoiceOptions(prev.match);
-        if (synthesis.status === 'generated') {
-          return { ...prev, options: synthesis.options, answer: synthesis.answer };
-        }
-      }
       const nextAnswer = selectedMatrixOptionIndex(remaining, prev.answer) >= 0 ? prev.answer : '';
       const synced = synchronizeMatrixChoiceState(remaining, nextAnswer, prev.match);
       return { ...prev, ...synced };
@@ -1023,11 +957,9 @@ export function EditableQuestionCard({
     }
   };
 
-  // Re-read the WHOLE question from its page using the type the operator has selected, and replace the
-  // structure at once — the fix for "a matrix/comprehension hidden in a same-type batch". Switch the
-  // type in the dropdown, click this, and the model re-extracts with that type's config: a matrix
-  // rebuilds its columns/match table (not garbled options); a plain type rebuilds its options. Non-empty
-  // reads win; an empty answer/explanation is kept, so a question paper that prints neither never wipes.
+  // Re-read this ONE card from its question page plus its linked Answer/Solution source pages. The API
+  // keeps structure exclusively from the question PDF, then applies answer-key/solution fields using
+  // their source-specific precedence. Inline papers naturally remain a single question-page read.
   const reExtractWhole = async (): Promise<void> => {
     setReading(WHOLE_REEXTRACT);
     try {
@@ -1036,6 +968,10 @@ export function EditableQuestionCard({
         question.id,
         undefined,
         draft.questionType,
+        {
+          ...(answerSource ? { answer: answerSource } : {}),
+          ...(solutionSource ? { solution: solutionSource } : {}),
+        },
       );
       // Fold the fresh read onto the LATEST draft (not this closure's snapshot), so it survives a
       // concurrent per-field re-read finishing around the same time.
@@ -1044,11 +980,12 @@ export function EditableQuestionCard({
         if (fresh.stem.trim() !== '') next.stem = fresh.stem;
         const profile = choiceProfile(next.questionType, fresh.options.length);
         if (profile === 'matrix') {
-          // A matrix keeps its structured table plus source choices. If the page had no choice panel,
-          // the shared deterministic synthesis creates one only after it has validated the whole key.
+          // A matrix keeps its structured table plus source choices. A page with no printed choice
+          // panel remains table-only; Verify never invents a conventional A–D panel.
           next.match = fresh.match;
           if (fresh.match) {
             const synced = synchronizeMatrixChoiceState(fresh.options, fresh.answer, fresh.match);
+            next.match = synced.match;
             next.options = synced.options;
             next.answer = synced.answer;
           } else {
@@ -1252,6 +1189,14 @@ export function EditableQuestionCard({
   const customMatrixChoiceCount = draft.options.filter(
     (option) => option.generated === false,
   ).length;
+  const hasPrintedMatrixChoices = draft.options.some((option) => !isGeneratedMatrixOption(option));
+  const printedMatrixChoiceMatchesTable =
+    draft.match !== null &&
+    draft.options.some(
+      (option) =>
+        !isGeneratedMatrixOption(option) &&
+        optionMatchesMatrixKey(option, draft.match as MatchData),
+    );
   // A bare true/false question is faster to review as two answer buttons. When the extractor supplied
   // printed choices, it still gets the normal choice-card editor so their wording and figures survive.
   const usesCompactTruthAnswer = draft.questionType === 'true_false' && draft.options.length === 0;
@@ -1296,7 +1241,7 @@ export function EditableQuestionCard({
         if (Object.keys(parsed).length > 0) {
           const nextMatch = { columns: prev.match.columns, key: parsed };
           const synced = synchronizeMatrixChoiceState(prev.options, prev.answer, nextMatch);
-          return { ...prev, match: nextMatch, ...synced };
+          return { ...prev, ...synced };
         }
         return { ...prev, answer };
       }
@@ -1326,7 +1271,7 @@ export function EditableQuestionCard({
       const answer = fresh.answer.trim() || prev.answer;
       if (match === null) return { ...prev, options, answer };
       const synced = synchronizeMatrixChoiceState(options, answer, match);
-      return { ...prev, match, ...synced };
+      return { ...prev, ...synced };
     });
     return true;
   };
@@ -1381,13 +1326,22 @@ export function EditableQuestionCard({
       ? 'Assertion & reason choices'
       : draft.questionType === 'true_false'
         ? 'True / false choices'
-        : 'Options';
+      : 'Options';
+  const levelAiTag = question.aiFilled?.level;
   const settingPills = [
     { label: 'Type', value: selectedQuestionType },
     { label: 'Level', value: draft.level },
+    { label: 'Class', value: question.className },
     { label: 'Section', value: draft.sectionName },
     { label: 'Topic', value: draft.topic },
-  ].filter((item): item is { label: string; value: string } =>
+    ...(levelAiTag
+      ? [{
+          label: 'AI-generated',
+          value: 'difficulty',
+          title: `Difficulty classified during extraction by ${levelAiTag.model} (${String(Math.round(levelAiTag.confidence * 100))}% confidence).`,
+        }]
+      : []),
+  ].filter((item): item is { label: string; value: string; title?: string } =>
     Boolean(item.value && item.value.trim()),
   );
 
@@ -1834,7 +1788,10 @@ export function EditableQuestionCard({
               value={draft.match}
               onChange={setMatch}
               disabled={saving}
+              sourceActionsDisabled={cropDisabled}
               onCropImage={() => onRequestCrop(question.id, 'question')}
+              onRefineText={questionsApi.refine}
+              onRequestTranscription={(target) => onRequestTranscription(question.id, target)}
             />
 
             <div className="flex flex-col gap-1.5 border-t border-line pt-2">
@@ -1860,6 +1817,17 @@ export function EditableQuestionCard({
                 <p className="m-0 text-[13px] leading-relaxed text-ink-3">
                   Generated choices use only the labels in this table. Edit the matching and its
                   generated correct choice stays aligned; source and custom choices are preserved.
+                </p>
+              ) : null}
+              {hasPrintedMatrixChoices &&
+              matrixSynthesis?.status === 'generated' &&
+              !printedMatrixChoiceMatchesTable ? (
+                <p
+                  role="status"
+                  className="m-0 rounded-md border border-warn/30 bg-warn-soft px-2.5 py-2 text-[13px] leading-relaxed text-ink-2"
+                >
+                  The current matching does not equal any printed answer choice. No extra choice is
+                  created — correct the table or select the correct printed option.
                 </p>
               ) : null}
               {draft.options.length === 0 ? (
@@ -2349,7 +2317,7 @@ export function EditableQuestionCard({
               settingPills.map((item) => (
                 <span
                   key={item.label}
-                  title={`${item.label}: ${item.value}`}
+                  title={item.title ?? `${item.label}: ${item.value}`}
                   className="inline-flex max-w-48 items-center overflow-hidden rounded-full border border-line bg-surface-2 text-[11px] text-ink-2"
                 >
                   <span className="flex-none bg-white px-1.5 py-0.5 font-semibold text-ink-3">
