@@ -3,7 +3,6 @@ import {
   type Document,
   matchKeyToAnswer,
   mergeMatrixKeyWithAnswer,
-  synthesizeMatrixChoiceOptions,
   type QuestionOption,
 } from '@ingest/contracts';
 import { logger } from '../../shared/logger/logger.js';
@@ -196,29 +195,24 @@ function toNewQuestion(
       }
     : null;
 
-  // A match-the-column question persists both the structured columns and (when printed) its A–D answer
-  // choices. Those are different things: the canonical `answer` for a choice-based matrix is the
-  // selected choice label (for example "C"), while `match.key` retains the underlying mapping when it
-  // is visible. A source table with no printed choice panel receives deterministic generated choices
-  // ONLY after the complete key is known; incomplete/ambiguous tables retain their direct mapping for
-  // Verify instead of gaining an invented correct answer.
+  // A match-the-column question persists both the structured columns and its printed answer choices,
+  // when the source actually contains them. Those are different things: the canonical `answer` for a
+  // choice-based matrix is the selected source label, while `match.key` retains the underlying mapping.
+  // A source table without a readable choice panel remains a direct-response table: never invent an
+  // A–D panel merely because the table/key is complete.
   if (match) {
     const optionRows = draft.options.map(parseOption);
     const selectedLabels = normalizeAnswerLabels(draft.answer, optionRows);
     const hasPrintedChoices = optionRows.length > 0;
     // A separate answer key often carries the missing rows as `A→p; B→q`. Fold only those missing
-    // rows into the table before validating/synthesizing — it must never overwrite an already-read row.
+    // rows into the table; it must never overwrite an already-read row or create source-less options.
     const completedMatch = mergeMatrixKeyWithAnswer(match, draft.answer);
-    const generated = hasPrintedChoices ? null : synthesizeMatrixChoiceOptions(completedMatch);
-    const synthesized = generated?.status === 'generated' ? generated : null;
-    const answer = synthesized
-      ? synthesized.answer
-      : draft.answer?.trim()
-        ? canonicalOptionAnswer(draft.answer, selectedLabels, questionType)
-        : !hasPrintedChoices && Object.keys(completedMatch.key).length > 0
-          ? matchKeyToAnswer(completedMatch.key)
-          : '';
-    const options = synthesized?.options ?? optionRows.map(({ label, body }) => ({
+    const answer = draft.answer?.trim()
+      ? canonicalOptionAnswer(draft.answer, selectedLabels, questionType)
+      : !hasPrintedChoices && Object.keys(completedMatch.key).length > 0
+        ? matchKeyToAnswer(completedMatch.key)
+        : '';
+    const options = optionRows.map(({ label, body }) => ({
       label,
       body,
       isCorrect: selectedLabels.has(label),

@@ -251,30 +251,34 @@ function isMatrixQuestion(question: Question): boolean {
 type MatrixPublishProjection = { options: QuestionOption[]; answer: string };
 
 /**
- * Convert a valid direct-response matrix into deterministic answer choices at the publish boundary.
- * This keeps historic rows compatible without trusting an AI-invented panel. Real printed/manual panels
- * remain untouched, but must name exactly one real option. A malformed matrix is the only new publish
- * rejection; every non-matrix still follows the existing permissive publish path.
+ * Preserve a matrix's source layout at the publish boundary. A table-only source remains table-only;
+ * printed/manual panels retain their exact labels and order, but must name exactly one real option.
  */
-function matrixProjectionForPublish(question: Question): MatrixPublishProjection | null {
+export function matrixProjectionForPublish(question: Question): MatrixPublishProjection | null {
   if (!isMatrixQuestion(question)) return null;
   if (!question.match) {
     throw errors.matrixNotPublishable(question.id, 'the matching columns/key are missing');
   }
 
-  const generated = synthesizeMatrixChoiceOptions(question.match);
-  if (generated.status === 'blocked') {
-    throw errors.matrixNotPublishable(question.id, matrixReason(generated.reason));
+  // Validate the structural key without using the planner's generated option rows. A publishable
+  // direct-response table must still be complete and unambiguous; only its visual choice panel is
+  // source-owned.
+  const synthesis = synthesizeMatrixChoiceOptions(question.match);
+  if (synthesis.status === 'blocked') {
+    throw errors.matrixNotPublishable(question.id, matrixReason(synthesis.reason));
   }
 
-  // No panel is the legacy direct-response layout. The complete table is enough to create a safe,
-  // deterministic panel at publish time. Likewise, refresh an all-generated panel after a table edit
-  // so the selected choice always represents the current key, not an old draft.
-  if (question.options.length === 0 || question.options.every((option) => option.generated === true)) {
-    return { options: generated.options, answer: generated.answer };
+  const sourceOptions = question.options.filter((option) => option.generated !== true);
+  if (sourceOptions.length === 0) {
+    // A direct-response table is a first-class source format. Its structured key is preserved in the
+    // bank and its flat answer mirrors that key; publishing must not invent a multiple-choice panel.
+    return {
+      options: [],
+      answer: question.answer.trim() || matchKeyToAnswer(question.match.key),
+    };
   }
 
-  const selected = selectedMatrixOption(question.answer, question.options);
+  const selected = selectedMatrixOption(question.answer, sourceOptions);
   if (!selected) {
     throw errors.matrixNotPublishable(
       question.id,
@@ -282,7 +286,7 @@ function matrixProjectionForPublish(question: Question): MatrixPublishProjection
     );
   }
 
-  const marked = question.options.filter((option) => option.isCorrect);
+  const marked = sourceOptions.filter((option) => option.isCorrect);
   if (marked.length > 1 || (marked.length === 1 && matrixOptionLabelKey(marked[0]?.label ?? '') !== matrixOptionLabelKey(selected))) {
     throw errors.matrixNotPublishable(
       question.id,
@@ -291,7 +295,7 @@ function matrixProjectionForPublish(question: Question): MatrixPublishProjection
   }
 
   return {
-    options: question.options.map((option) => ({
+    options: sourceOptions.map((option) => ({
       ...option,
       isCorrect: matrixOptionLabelKey(option.label) === matrixOptionLabelKey(selected),
     })),
