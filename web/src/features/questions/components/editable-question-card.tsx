@@ -36,6 +36,7 @@ import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { toQuestionTypeOptions, useDictionary } from '../../taxonomy/index.js';
 import { questionsApi } from '../api/questions.api.js';
 import { useSetQuestionImageMode, useUpdateQuestion } from '../hooks/use-questions.js';
+import { nextOptionLabel, optionLabelKey } from '../lib/option-labels.js';
 import type { QuestionDraft } from '../hooks/use-question-drafts.js';
 
 /** A not-yet-saved crop region of this question: uploading (`saving`) or awaiting a manual retry. */
@@ -135,19 +136,6 @@ type LabeledOption = Pick<
   QuestionDraft['options'][number],
   'label' | 'body' | 'isCorrect' | 'generated'
 >;
-
-/**
- * A displayed label is the canonical identity of a choice. Do not infer a choice from arbitrary
- * letters in the answer text: that made an answer of "False" select option A, and discarded the
- * printed labels on numbered/Roman/custom-choice papers.
- */
-function optionLabelKey(value: string): string {
-  return value
-    .trim()
-    .replace(/^[\s([{]+/, '')
-    .replace(/[\s)\]}.:]+$/, '')
-    .toLocaleUpperCase();
-}
 
 /** Return a truth value only when the entire choice is a truth token (including simple LaTex text). */
 function truthValue(value: string): 'true' | 'false' | null {
@@ -420,20 +408,6 @@ function withCorrectOptions(
     ...option,
     isCorrect: selected.has(optionLabelKey(option.label)),
   }));
-}
-
-/**
- * The next unused uppercase option label (A, B, C, …) for an "Add option" click. Derived from the labels
- * already present rather than the count, so adding after a mid-list removal (e.g. [A, C] → add) fills the
- * gap ("B") instead of duplicating an existing label ("C").
- */
-function nextOptionLabel(options: readonly { label: string }[]): string {
-  const taken = new Set(options.map((option) => option.label.trim().toUpperCase()));
-  for (let i = 0; i < 26; i += 1) {
-    const label = String.fromCharCode(65 + i);
-    if (!taken.has(label)) return label;
-  }
-  return String.fromCharCode(65 + options.length);
 }
 
 const FIELD_LABEL = 'text-[13px] font-medium text-ink-2';
@@ -983,11 +957,9 @@ export function EditableQuestionCard({
     }
   };
 
-  // Re-read the WHOLE question from its page using the type the operator has selected, and replace the
-  // structure at once — the fix for "a matrix/comprehension hidden in a same-type batch". Switch the
-  // type in the dropdown, click this, and the model re-extracts with that type's config: a matrix
-  // rebuilds its columns/match table (not garbled options); a plain type rebuilds its options. Non-empty
-  // reads win; an empty answer/explanation is kept, so a question paper that prints neither never wipes.
+  // Re-read this ONE card from its question page plus its linked Answer/Solution source pages. The API
+  // keeps structure exclusively from the question PDF, then applies answer-key/solution fields using
+  // their source-specific precedence. Inline papers naturally remain a single question-page read.
   const reExtractWhole = async (): Promise<void> => {
     setReading(WHOLE_REEXTRACT);
     try {
@@ -996,6 +968,10 @@ export function EditableQuestionCard({
         question.id,
         undefined,
         draft.questionType,
+        {
+          ...(answerSource ? { answer: answerSource } : {}),
+          ...(solutionSource ? { solution: solutionSource } : {}),
+        },
       );
       // Fold the fresh read onto the LATEST draft (not this closure's snapshot), so it survives a
       // concurrent per-field re-read finishing around the same time.

@@ -90,11 +90,20 @@ export function createQuestionsController(service: QuestionsService): {
     }),
 
     reExtract: asyncHandler(async (req, res) => {
-      const { documentId, questionId, source, questionType } = parseOrThrow(
+      const { documentId, questionId, source, supportingSources, questionType } = parseOrThrow(
         ReExtractQuestionSchema,
         req.body,
       );
-      ok(res, await service.reExtractQuestion(documentId, questionId, source, questionType));
+      ok(
+        res,
+        await service.reExtractQuestion(
+          documentId,
+          questionId,
+          source,
+          questionType,
+          supportingSources,
+        ),
+      );
     }),
 
     reExtractGroup: asyncHandler(async (req, res) => {
