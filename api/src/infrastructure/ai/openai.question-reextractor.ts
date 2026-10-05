@@ -41,6 +41,8 @@ const AREA_TRANSCRIBE_MAX_TOKENS = 4096;
 /** Shape the re-extract prompt asks the model to return, before we normalise each field. */
 type RawOption = { label?: unknown; body?: unknown; is_correct?: unknown };
 type RawReExtract = {
+  question_number?: unknown;
+  question_text?: unknown;
   stem?: unknown;
   options?: unknown;
   answer?: unknown;
@@ -87,13 +89,13 @@ function toMemberIndex(value: unknown): number | null {
   return value;
 }
 
-/** Preserve a short printed label; use a stable ordinal only when the model leaks prose or a column row. */
-function normalizeLabel(raw: unknown, index: number): string {
+/** Preserve only a real printed option label; never fabricate an A/B/C fallback. */
+function normalizeLabel(raw: unknown): string | null {
   const token = asString(raw)
     .trim()
-    .replace(/^[([{\s]+|[)\]}\s.:]+$/g, '');
-  if (/^[A-Za-z0-9]{1,12}$/.test(token)) return token;
-  return index < 26 ? String.fromCharCode(65 + index) : `Option${String(index + 1)}`;
+    .replace(/^[([{\s]+/, '')
+    .replace(/[)\]}.:\s]+$/, '');
+  return /^[A-Za-z0-9]{1,12}$/.test(token) ? token : null;
 }
 
 /** A model string with its mhchem `\ce{…}` JSON-escape corruption repaired (see {@link sanitizeExtractedLatex}), trimmed. */
@@ -124,6 +126,44 @@ function parseReply(content: string): unknown {
   }
 }
 
+/**
+ * Re-extract has a target-only envelope, but historic production prompt overrides may cause a model
+ * to answer using the batch `{ questions: [...] }` shape. Select the requested printed number from
+ * that shape instead of treating an otherwise readable response as empty.
+ */
+function targetReply(content: string, questionNumber: number | null): RawReExtract {
+  const parsed = parseReply(content);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const record = parsed as RawReExtract & { questions?: unknown };
+  if (!Array.isArray(record.questions)) return record;
+  const candidates = record.questions.filter(
+    (candidate): candidate is RawReExtract => Boolean(candidate) && typeof candidate === 'object' && !Array.isArray(candidate),
+  );
+  const selected = questionNumber === null
+    ? candidates[0]
+    : candidates.find((candidate) => toQuestionNumber(candidate.question_number) === questionNumber) ??
+      (candidates.length === 1 ? candidates[0] : undefined);
+  if (!selected) return {};
+  return {
+    ...selected,
+    stem: selected.stem ?? selected.question_text,
+  };
+}
+
+/** Safe reply diagnostics for production logs: schema only, never question text. */
+function replyShape(content: string): { length: number; keys: string[]; batchQuestions: number } {
+  const parsed = parseReply(content);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { length: content.length, keys: [], batchQuestions: 0 };
+  }
+  const record = parsed as { questions?: unknown };
+  return {
+    length: content.length,
+    keys: Object.keys(record).slice(0, 12),
+    batchQuestions: Array.isArray(record.questions) ? record.questions.length : 0,
+  };
+}
+
 function stringOption(value: string): { label: string; body: string } {
   const match = /^\s*(?:\(\s*([^()]+?)\s*\)|([A-Za-z0-9]+)\s*[.)])\s*([\s\S]*)$/.exec(value);
   const label = match?.[1] ?? match?.[2] ?? '';
@@ -133,7 +173,7 @@ function stringOption(value: string): { label: string; body: string } {
 /** Normalise the raw `options` array into the contract shape without erasing 5th/Roman/custom labels. */
 function toOptions(raw: unknown): QuestionOption[] {
   if (!Array.isArray(raw)) return [];
-  return raw.flatMap((item, index) => {
+  return raw.flatMap((item) => {
     const source =
       typeof item === 'string'
         ? stringOption(item)
@@ -141,11 +181,12 @@ function toOptions(raw: unknown): QuestionOption[] {
           ? (item as RawOption)
           : null;
     if (!source) return [];
+    const label = normalizeLabel(source.label);
     const body = cleanString(source.body);
-    if (!body && typeof item !== 'string') return [];
+    if (!label || (!body && typeof item !== 'string')) return [];
     return [
       {
-        label: normalizeLabel(source.label, index),
+        label,
         body,
         isCorrect:
           typeof item === 'object' &&
@@ -378,7 +419,7 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     );
     type Fields = Omit<QuestionReExtraction, 'usage'>;
     const readFields = (content: string): Fields => {
-      const parsed = parseReply(content) as RawReExtract;
+      const parsed = targetReply(content, input.questionNumber);
       // A MATRIX MATCH question stores structured columns instead of options — parse them first, and when
       // present clear options so the flat option array is never cluttered with leaked column entries
       // (the "1 4 1 2 3 4 / same value four times" garbage). Non-matrix replies leave match null.
@@ -410,6 +451,32 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     const needsMatrixMapping = (fields: Fields): boolean =>
       input.questionType === 'matrix' &&
       (fields.match === null || Object.keys(fields.match.key).length === 0);
+    const mergeRetryFields = (primary: Fields, retry: Fields): Fields => {
+      const primaryMatch = primary.match;
+      const retryMatch = retry.match;
+      const match = !primaryMatch
+        ? retryMatch
+        : !retryMatch
+          ? primaryMatch
+          : {
+              // The first read owns the source layout. A retry may fill only missing mappings, but it
+              // must not replace a readable table with a different reconstruction.
+              columns: primaryMatch.columns,
+              key: Object.fromEntries(
+                primaryMatch.columns[0]?.entries.map((entry) => {
+                  const existing = primaryMatch.key[entry.label] ?? [];
+                  const recovered = retryMatch.key[entry.label] ?? [];
+                  return [entry.label, existing.length > 0 ? existing : recovered];
+                }) ?? Object.entries(primaryMatch.key)),
+            };
+      return {
+        stem: primary.stem || retry.stem,
+        options: primary.options.length > 0 ? primary.options : retry.options,
+        answer: primary.answer || retry.answer,
+        explanation: primary.explanation ?? retry.explanation,
+        match,
+      };
+    };
 
     let response = await this.callVision(prompt, input.png, MAX_TOKENS);
     let fields = readFields(response.content);
@@ -417,26 +484,57 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     // empty-response retry and immediately surface "could not read". Give that failure shape one
     // focused retry before asking the operator to intervene.
     if (!hasUsableFields(fields) || needsMatrixMapping(fields)) {
-      const retryReason = !hasUsableFields(fields)
+      const firstRead = fields;
+      const firstReadUsable = hasUsableFields(firstRead);
+      const retryReason = !firstReadUsable
         ? 'The prior reply contained no usable fields for the target question. Return the required JSON object only, with at least its stem or matrix columns.'
-        : 'The prior reply did not contain a complete matrix matching key. Re-read the table, solve every readable Column-I relation, and return a non-empty complete "match" object. Do not guess any unreadable or ambiguous relation.';
+        : 'The prior reply did not contain a complete matrix matching key. Re-read the table and fill only mappings that are clearly readable. Keep all readable question text, columns, and printed options; an incomplete key must never cause a blank reply.';
       const retryPrompt = `${prompt}\n\nRETRY: ${retryReason} Do not return prose, commentary, or a blank object.`;
-      const retry = await this.callVision(retryPrompt, input.png, MAX_TOKENS);
-      response = {
-        content: retry.content,
-        usage: {
-          model: response.usage.model,
-          promptTokens: response.usage.promptTokens + retry.usage.promptTokens,
-          completionTokens: response.usage.completionTokens + retry.usage.completionTokens,
-          totalTokens: response.usage.totalTokens + retry.usage.totalTokens,
-          callCount: response.usage.callCount + retry.usage.callCount,
-        },
-      };
-      fields = readFields(response.content);
+      try {
+        const retry = await this.callVision(retryPrompt, input.png, MAX_TOKENS);
+        response = {
+          content: retry.content,
+          usage: {
+            model: response.usage.model,
+            promptTokens: response.usage.promptTokens + retry.usage.promptTokens,
+            completionTokens: response.usage.completionTokens + retry.usage.completionTokens,
+            totalTokens: response.usage.totalTokens + retry.usage.totalTokens,
+            callCount: response.usage.callCount + retry.usage.callCount,
+          },
+        };
+        const retryFields = readFields(retry.content);
+        fields = firstReadUsable && !hasUsableFields(retryFields)
+          ? firstRead
+          : mergeRetryFields(firstRead, retryFields);
+        if (firstReadUsable && !hasUsableFields(retryFields)) {
+          logger.warn(
+            { questionNumber: input.questionNumber },
+            'matrix mapping retry was blank; preserving the usable first re-extraction',
+          );
+        }
+      } catch (error) {
+        // Completing a matrix key is best-effort. The readable table/options from the first call are
+        // more useful than a 502, so a failed retry cannot discard them.
+        if (!firstReadUsable) throw error;
+        fields = firstRead;
+        logger.warn(
+          { err: error, questionNumber: input.questionNumber },
+          'matrix mapping retry failed; preserving the usable first re-extraction',
+        );
+      }
     }
     // A genuine question always has a stem, options, or a match table; a reply with none means the read
     // failed (bad JSON, wrong page, refusal) rather than a truly blank question — don't hand back a wipe.
     if (!hasUsableFields(fields)) {
+      logger.warn(
+        {
+          model: this.model,
+          questionNumber: input.questionNumber,
+          sourceKind: input.sourceKind ?? 'question',
+          reply: replyShape(response.content),
+        },
+        're-extract returned no usable target fields',
+      );
       throw errors.extractionFailed(
         'The model could not read this question from the page. Please try again or edit the field manually.',
       );
