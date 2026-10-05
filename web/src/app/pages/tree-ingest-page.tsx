@@ -543,14 +543,15 @@ export function TreeIngestPage(): JSX.Element {
     // matched to each other during extraction, yet a fresh click (even of the same file) mints a new
     // id and becomes a distinct document. Kept out of the tree/exported config so it never leaks reuse.
     const uploadGroupId = crypto.randomUUID();
-    // One unit for the whole chapter: question (primary, carries per-section topics) plus the
-    // layout-specific supporting source(s). `combined` uploads one companion rather than separate
-    // answer and solution documents; never one file per leaf.
+    // One unit for the whole chapter: layout-specific supporting source(s) plus the question PDF
+    // (which carries the per-section topics). Keep the question LAST: an auto-run session queues it
+    // the instant it is uploaded, and its first extraction must already be able to see the matching
+    // Answer/Solution/Companion rows. Inline papers intentionally have no supporting source.
     const parts: { kind: ChapterKind; bytes: Uint8Array; topics?: ChapterTopic[] }[] = [
-      { kind: 'question', bytes: assembled.question.bytes, topics: assembled.question.topics },
       ...(assembled.answer ? [{ kind: 'answer' as const, bytes: assembled.answer }] : []),
       ...(assembled.solution ? [{ kind: 'solution' as const, bytes: assembled.solution }] : []),
       ...(assembled.companion ? [{ kind: 'companion' as const, bytes: assembled.companion }] : []),
+      { kind: 'question', bytes: assembled.question.bytes, topics: assembled.question.topics },
     ];
     const lines: string[] = [];
     let failed = false;

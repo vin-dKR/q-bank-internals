@@ -79,7 +79,7 @@ const TYPE_RULES: Record<string, string> = {
     'This is a MULTIPLE CORRECT type: preserve every printed option and its actual label/count; one or more options may be correct.',
   integer: 'This is an INTEGER type: the answer is a number; options is usually an empty array [].',
   matrix:
-    'This is a MATRIX MATCH (match-the-column) type. Return ONE JSON entry for the whole question. Put ONLY the instruction/stem (e.g. "Match Column I with Columns II and III") in question_text — do NOT copy the columns into it. Add a "columns" field: an array of EVERY column in printed order (there are usually TWO, sometimes THREE), each { "title": the column heading e.g. "Column I (Velocity)", "entries": [ { "label": the printed label e.g. "A"/"p"/"t", "body": that entry\'s text with math as LaTeX } ] }. ALSO fill "options" with the printed multiple-choice ANSWER CHOICES the student selects from (usually four, labelled (A)(B)(C)(D); normalize (1)(2)(3)(4) to (A)(B)(C)(D)): keep the SAME string form as every other type — an array of strings each prefixed "(A) …", "(B) …", where the text is that choice\'s FULL matching EXACTLY as printed, e.g. "(A) A-i, B-ii, C-iii, D-iv". Use an empty array [] when the page prints no readable answer choices. ALWAYS return a complete "match" field mapping every FIRST-column label to the labels it matches, e.g. { "A": ["p","t"], "B": ["q","u"] }: copy a printed key when present; otherwise solve the readable table yourself. Do not guess — omit "match" only if one or more required rows/relations are genuinely unreadable or ambiguous. When printed answer choices exist, the canonical "answer" is the selected choice label only (for example "C") if the page marks it correct; NEVER replace it with mapping text. With no printed choices, use mapping text as "answer" only for a genuine direct-response matrix. Never reconstruct a missing/illegible printed choice panel: return options []; once the complete key is returned, the server generates verified A–D choices from it.',
+    'This is a MATRIX MATCH (match-the-column) type. Return ONE JSON entry for the whole question. Put ONLY the instruction/stem (e.g. "Match Column I with Columns II and III") in question_text — do NOT copy the columns into it. Add a "columns" field: an array of EVERY column in printed order (there are usually TWO, sometimes THREE), each { "title": the column heading e.g. "Column I (Velocity)", "entries": [ { "label": the printed label e.g. "A"/"p"/"t", "body": that entry\'s text with math as LaTeX } ] }. ALSO fill "options" with every printed multiple-choice ANSWER CHOICE in its printed order, keeping the SAME string form as every other type. Prefix each string with its exact source label — for example "(1) …", "(5) …", "(E) …", "(F) …", "(I) …", or "(iv) …" — and keep the full matching text exactly as printed. Never convert numeric, Roman, or extended labels to A–D, even when there are four choices. Use an empty array [] when the page prints no readable answer choices; never invent a missing option panel. Return "match" for every relation that is clearly readable: copy a printed key when present, otherwise solve only unambiguous relations from the table. If a relation is unreadable or ambiguous, leave that mapping absent while still returning every readable stem, column, and printed option. When printed answer choices exist, the canonical "answer" is the visibly marked source choice label only (for example "5" or "E"); NEVER replace it with mapping text. With no printed choices, use mapping text as "answer" only for a genuine direct-response matrix.',
   comprehension:
     'This is a COMPREHENSION type: a shared passage is followed by several sub-questions of ANY type. Return ONE JSON entry PER SUB-QUESTION. Put ONLY that sub-question\'s own text in question_text — do NOT copy the passage into it. Add a "passage" field to every sub-question carrying the FULL shared passage VERBATIM, byte-for-byte IDENTICAL across all sub-questions that share it (this is how they are grouped). Add a "question_type" field to EACH sub-question naming ITS OWN type — one of "single_correct", "multi_correct", "integer", "matrix", "assertion_reason", "true_false", "fill_blank", "subjective" — because a comprehension group can mix types; use "single_correct" when unsure. question_number is each sub-question\'s printed number; options are that sub-question\'s own choices.',
   assertion_reason:
@@ -101,13 +101,13 @@ const TYPE_RULES: Record<string, string> = {
  */
 const ANSWER_TYPE_RULES: Record<string, string> = {
   single_correct:
-    'SINGLE CORRECT: each answer is exactly ONE actual printed choice label (for example A–E, 1–5, or I–IV). Preserve its printed label; normalize 1–4 to A–D only when the page itself uses the canonical A–D choice convention.',
+    'SINGLE CORRECT: each answer is exactly ONE actual printed choice label (for example A–E, 1–5, or I–IV). Preserve that source label exactly; never convert numeric, Roman, or extended labels to A–D.',
   multi_correct:
     'MULTIPLE CORRECT: each answer is EVERY correct printed choice label in printed order. Use compact "AC" only for one-character A/B/C-style labels; otherwise separate labels clearly, e.g. "1, 3" or "I, III".',
   integer:
     'INTEGER / NUMERICAL: each answer is the exact numeric value as printed (integer or decimal), with no surrounding text and no units unless the printed answer itself carries them.',
   matrix:
-    'MATRIX MATCH: preserve the answer source\'s printed format. When the answer key/solution prints a first-column label → matched-label mapping, return that COMPLETE mapping exactly (for example "A→P,Q; B→R; C→S,T; D→P") even if the question paper may have answer choices; the server uses it to fill the matching grid and create/select its choices. Return only a bare choice label (for example "C" or "3") when the answer source itself gives only that bare label. Never reduce a printed mapping to a guessed A–D label.',
+    'MATRIX MATCH: preserve the answer source\'s printed format. When the answer key/solution prints a first-column label → matched-label mapping, return that COMPLETE mapping exactly (for example "A→P,Q; B→R; C→S,T; D→P") even if the question paper may have answer choices; the server uses it to fill the matching grid. Return only a bare choice label (for example "C", "3", or "E") when the answer source itself gives only that bare label. Never reduce a printed mapping or source label to a guessed A–D label, and never invent an option panel that was not printed on the question page.',
   assertion_reason:
     'ASSERTION-REASON: each answer is the single chosen printed option label for the standard evaluation of the Assertion and the Reason. In the explanation, state which of the Assertion and the Reason are true and whether the Reason correctly explains the Assertion.',
   comprehension:
@@ -255,6 +255,9 @@ function detectedTypeStructureRule(): string {
   ].join('\n');
 }
 
+/** Source labels are data, not ordinal aliases — this guard wins over editable batch-prompt prose. */
+const SOURCE_OPTION_LABEL_GUARD = `SOURCE OPTION LABEL CONTRACT (authoritative): Copy every printed option marker exactly as it appears. A question may have A–E, 1–5, I–IV, E/F, or any other short source labels; do not convert numeric/Roman/extended labels to A–D, even when there are four choices. Never invent a source-less option panel. The answer must use the same printed label vocabulary as that question's options.`;
+
 /**
  * The question-extraction prompt for one page of a document. The model classifies each question's own
  * type + difficulty (see {@link classificationRule}); a concrete operator topic-config type is a
@@ -286,6 +289,7 @@ export function questionPrompt(
     DRAWN_CHEMISTRY_STRUCTURE_GUARD,
     document.answerLayout === 'inline' ? resolvePrompt(overrides, 'inlineAnswer') : '',
     resolvePyq(document, binding) ? resolvePrompt(overrides, 'pyq') : '',
+    SOURCE_OPTION_LABEL_GUARD,
   ]
     .filter(Boolean)
     .join('\n\n');
