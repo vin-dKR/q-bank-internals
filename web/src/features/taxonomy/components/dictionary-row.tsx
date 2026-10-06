@@ -25,6 +25,11 @@ export type ExamLinksEditor = {
   options: readonly { id: string; name: string }[];
 };
 
+/** Symmetric exam-to-exam links used to group historic/successor exams in bank filters. */
+export type RelatedExamLinksEditor = {
+  options: readonly { id: string; name: string }[];
+};
+
 /** How many alias chips to show inline before collapsing the rest into a "+N" chip. */
 const MAX_ALIAS_CHIPS = 3;
 
@@ -38,6 +43,8 @@ type DictionaryRowProps = {
   parentScope?: ParentScopeEditor | undefined;
   /** Optional Exam associations on a Subject. They narrow suggestions but never make a Subject required. */
   examLinks?: ExamLinksEditor | undefined;
+  /** Optional symmetric exam relations managed on an Exam row. */
+  relatedExamLinks?: RelatedExamLinksEditor | undefined;
   saving: boolean;
   onSave: (body: UpdateDictionaryEntry) => Promise<void>;
   onDelete: () => void;
@@ -72,6 +79,7 @@ export function DictionaryRow({
   scopeName,
   parentScope,
   examLinks,
+  relatedExamLinks,
   saving,
   onSave,
   onDelete,
@@ -81,12 +89,14 @@ export function DictionaryRow({
   const [aliases, setAliases] = useState(entry.aliases.join(', '));
   const [parentId, setParentId] = useState(parentScope?.valueId ?? '');
   const [examIds, setExamIds] = useState<string[]>([...entry.examIds]);
+  const [relatedExamIds, setRelatedExamIds] = useState<string[]>([...entry.relatedExamIds]);
 
   const startEdit = (): void => {
     setName(entry.name);
     setAliases(entry.aliases.join(', '));
     setParentId(parentScope?.valueId ?? '');
     setExamIds([...entry.examIds]);
+    setRelatedExamIds([...entry.relatedExamIds]);
     setEditing(true);
   };
 
@@ -96,6 +106,7 @@ export function DictionaryRow({
     if (parentScope?.field === 'chapterId') body.chapterId = parentId || null;
     if (parentScope?.field === 'moduleId') body.moduleId = parentId || null;
     if (examLinks) body.examIds = examIds;
+    if (relatedExamLinks) body.relatedExamIds = relatedExamIds;
     await onSave(body);
     setEditing(false);
   };
@@ -188,6 +199,38 @@ export function DictionaryRow({
               </div>
             </fieldset>
           ) : null}
+          {relatedExamLinks ? (
+            <fieldset className="sm:col-span-2 flex flex-col gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-2">
+              <legend className="px-1 text-[11px] font-medium uppercase tracking-wide text-ink-3">
+                Related exams
+              </legend>
+              <p className="text-xs text-ink-3">
+                Questions filed under either exam will appear when either one is selected in Advanced filters.
+              </p>
+              <div className="flex max-h-28 flex-wrap gap-x-3 gap-y-1 overflow-y-auto pr-1">
+                {relatedExamLinks.options.map((option) => {
+                  const checked = relatedExamIds.includes(option.id);
+                  return (
+                    <label key={option.id} className="flex items-center gap-1.5 text-sm text-ink-2">
+                      <input
+                        type="checkbox"
+                        className="size-3.5 accent-brand"
+                        checked={checked}
+                        onChange={(event) => {
+                          setRelatedExamIds((current) =>
+                            event.target.checked
+                              ? [...new Set([...current, option.id])]
+                              : current.filter((id) => id !== option.id),
+                          );
+                        }}
+                      />
+                      {option.name}
+                    </label>
+                  );
+                })}
+              </div>
+            </fieldset>
+          ) : null}
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -222,6 +265,10 @@ export function DictionaryRow({
     examLinks?.options
       .filter((option) => entry.examIds.includes(option.id))
       .map((option) => option.name) ?? [];
+  const relatedExamNames =
+    relatedExamLinks?.options
+      .filter((option) => entry.relatedExamIds.includes(option.id))
+      .map((option) => option.name) ?? [];
 
   return (
     <li className="group flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-surface-2/40">
@@ -243,6 +290,11 @@ export function DictionaryRow({
           {examLinks ? (
             <span className="truncate" title={linkedExamNames.join(', ')}>
               · {linkedExamNames.length > 0 ? `for ${linkedExamNames.join(', ')}` : 'all exams'}
+            </span>
+          ) : null}
+          {relatedExamLinks ? (
+            <span className="truncate" title={relatedExamNames.join(', ')}>
+              · {relatedExamNames.length > 0 ? `with ${relatedExamNames.join(', ')}` : 'not linked'}
             </span>
           ) : null}
         </div>

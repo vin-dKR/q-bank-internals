@@ -66,6 +66,7 @@ const RawDictSchema = z
     chapterId: optionalOid,
     moduleId: optionalOid,
     examIds: oidList,
+    relatedExamIds: oidList,
   })
   .transform((doc): DictionaryRow => ({
     id: doc._id,
@@ -78,6 +79,7 @@ const RawDictSchema = z
     chapterId: doc.chapterId,
     moduleId: doc.moduleId,
     examIds: doc.examIds,
+    relatedExamIds: doc.relatedExamIds,
   }));
 
 /**
@@ -133,6 +135,8 @@ export class MongoTaxonomyStore implements TaxonomyStore {
     if (row.chapterId !== null) doc.chapterId = { $oid: row.chapterId };
     if (row.moduleId !== null) doc.moduleId = { $oid: row.moduleId };
     if (row.examIds.length > 0) doc.examIds = row.examIds.map((id) => ({ $oid: id }));
+    if (row.relatedExamIds.length > 0)
+      doc.relatedExamIds = row.relatedExamIds.map((id) => ({ $oid: id }));
 
     const command = {
       insert: COLLECTION[dimension],
@@ -171,6 +175,8 @@ export class MongoTaxonomyStore implements TaxonomyStore {
     if (patch.moduleId !== undefined)
       set.moduleId = patch.moduleId === null ? null : { $oid: patch.moduleId };
     if (patch.examIds !== undefined) set.examIds = patch.examIds.map((id) => ({ $oid: id }));
+    if (patch.relatedExamIds !== undefined)
+      set.relatedExamIds = patch.relatedExamIds.map((id) => ({ $oid: id }));
 
     const command = {
       update: COLLECTION[dimension],

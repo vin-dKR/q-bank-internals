@@ -341,6 +341,11 @@ export function DictionaryPanel({
                     : undefined
                 }
                 examLinks={dimension === 'subject' ? { options: examOptions } : undefined}
+                relatedExamLinks={
+                  dimension === 'exam'
+                    ? { options: examOptions.filter((option) => option.id !== entry.id) }
+                    : undefined
+                }
                 saving={update.isPending}
                 onSave={onSaveRow(entry.id)}
                 onDelete={() => void onDeleteRow(entry.id, entry.name)()}

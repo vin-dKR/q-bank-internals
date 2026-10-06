@@ -22,7 +22,8 @@ export const DIMENSION_META: Record<TaxonomyDimension, DimensionMeta> = {
   exam: {
     label: 'Exams',
     singular: 'exam',
-    description: 'The exam families every question is tagged with — the bank’s top-level filter.',
+    description:
+      'The exam families every question is tagged with. Link historic or successor exams so Advanced filters include either one.',
     creatable: true,
     seedable: false,
   },

@@ -77,6 +77,9 @@ export class MastersService {
     if (input.examIds !== undefined && dimension !== 'subject') {
       throw errors.dictionaryFieldNotAllowed(dimension, 'examIds');
     }
+    if (input.relatedExamIds !== undefined) {
+      throw errors.dictionaryFieldNotAllowed(dimension, 'relatedExamIds');
+    }
     if (dimension === 'section' && !input.moduleId) {
       throw errors.dictionaryParentRequired('section', 'module');
     }
@@ -103,6 +106,7 @@ export class MastersService {
       chapterId: dimension === 'topic' ? (input.chapterId ?? null) : null,
       moduleId: dimension === 'section' ? (input.moduleId ?? null) : null,
       examIds: dimension === 'subject' ? examIds : [],
+      relatedExamIds: [],
     };
     const created = await this.store.create(dimension, row);
     return this.toEntry(dimension, created, 0);
@@ -167,7 +171,18 @@ export class MastersService {
       patch.examIds = examIds;
     }
 
+    if (input.relatedExamIds !== undefined) {
+      if (dimension !== 'exam') throw errors.dictionaryFieldNotAllowed(dimension, 'relatedExamIds');
+      const relatedExamIds = this.uniqueIds(input.relatedExamIds);
+      if (relatedExamIds.includes(id)) throw errors.dictionaryValueRejected('exam relation', current.name);
+      await this.assertExamRelations(relatedExamIds);
+      patch.relatedExamIds = relatedExamIds;
+    }
+
     const updated = await this.store.update(dimension, id, patch);
+    if (dimension === 'exam' && patch.relatedExamIds !== undefined) {
+      await this.syncExamRelations(id, current.relatedExamIds, patch.relatedExamIds);
+    }
     const counts = await this.store.usageCounts(dimension, [id]);
     return this.toEntry(dimension, updated, counts.get(id) ?? 0);
   }
@@ -190,6 +205,23 @@ export class MastersService {
     const counts = await this.store.usageCounts(dimension, [id]);
     const used = counts.get(id) ?? 0;
     if (used > 0) throw errors.dictionaryEntryInUse(current.name, used);
+
+    if (dimension === 'exam') {
+      // Do not leave dangling graph edges when an unused exam is deleted.
+      // Scan the tiny dictionary instead of trusting the current row alone so
+      // this also cleans an old one-sided relation written before symmetry was
+      // enforced.
+      const exams = await this.store.list('exam', {});
+      await Promise.all(
+        exams
+          .filter((exam) => exam.relatedExamIds.includes(id))
+          .map((exam) =>
+            this.store.update('exam', exam.id, {
+              relatedExamIds: exam.relatedExamIds.filter((relatedId) => relatedId !== id),
+            }),
+          ),
+      );
+    }
 
     await this.store.remove(dimension, id);
   }
@@ -221,6 +253,7 @@ export class MastersService {
       chapterId: null,
       moduleId: null,
       examIds: [],
+      relatedExamIds: [],
     };
     switch (dimension) {
       case 'questionType':
@@ -285,6 +318,43 @@ export class MastersService {
     }
   }
 
+  /** Validate the other end of an exam relation before any link is changed. */
+  private async assertExamRelations(ids: readonly string[]): Promise<void> {
+    await Promise.all(
+      ids.map(async (examId) => {
+        const exam = await this.store.findById('exam', examId);
+        if (!exam) throw errors.dictionaryParentNotFound('exam', examId);
+      }),
+    );
+  }
+
+  /**
+   * Exam links are an undirected graph: selecting either linked exam expands
+   * the bank filter to the same connected set. Keep both stored ends in sync
+   * so a direct database read remains understandable and robust to cache
+   * boundaries. Existing one-sided legacy links are repaired on the next save.
+   */
+  private async syncExamRelations(
+    id: string,
+    before: readonly string[],
+    after: readonly string[],
+  ): Promise<void> {
+    const affected = new Set([...before, ...after]);
+    await Promise.all(
+      [...affected].map(async (otherId) => {
+        const other = await this.store.findById('exam', otherId);
+        // The set was validated before the write. A concurrent delete simply
+        // means there is no reciprocal row left to repair.
+        if (!other) return;
+        const shouldLink = after.includes(otherId);
+        const related = shouldLink
+          ? this.uniqueIds([...other.relatedExamIds, id])
+          : other.relatedExamIds.filter((relatedId) => relatedId !== id);
+        await this.store.update('exam', otherId, { relatedExamIds: related });
+      }),
+    );
+  }
+
   /** Trim and de-duplicate ObjectId strings before validation/storage. */
   private uniqueIds(ids: readonly string[] | undefined): string[] {
     const seen = new Set<string>();
@@ -330,6 +400,7 @@ export class MastersService {
       chapterId: row.chapterId,
       moduleId: row.moduleId,
       examIds: row.examIds,
+      relatedExamIds: row.relatedExamIds,
       questionCount,
     };
   }

@@ -200,6 +200,7 @@ class DimensionDict {
       chapterId: this.dimension === 'topic' ? parentId : null,
       moduleId: this.dimension === 'section' ? parentId : null,
       examIds: [],
+      relatedExamIds: [],
     };
     try {
       const created = await this.store.create(this.dimension, row);
