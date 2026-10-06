@@ -5,6 +5,8 @@ import {
   type StructureRule,
   type StructureRuleScope,
   type StructureDetectionContext,
+  StructureRuleScopeSchema,
+  type DeleteStructureRuleResult,
 } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { StructureRuleStore } from './structure-rules.repository.js';
@@ -35,5 +37,12 @@ export class StructureRulesService implements StructureRuleResolver {
     const rule = { ...parsed.data, updatedAt: new Date().toISOString() };
     await this.store.save(rule);
     return rule;
+  }
+
+  async remove(scope: StructureRuleScope): Promise<DeleteStructureRuleResult> {
+    const parsed = StructureRuleScopeSchema.safeParse(scope);
+    if (!parsed.success) throw errors.validation(parsed.error.flatten());
+    await this.store.remove(parsed.data);
+    return { ok: true };
   }
 }

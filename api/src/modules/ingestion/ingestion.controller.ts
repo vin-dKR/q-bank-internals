@@ -5,10 +5,14 @@ import {
   SignedUploadRequestSchema,
   UploadChapterRequestSchema,
   StructureCropOcrRequestSchema,
+  JSON_STREAM_CONTENT_TYPE,
+  type StructureDetectionProgress,
+  type StructureDetectionStreamEvent,
 } from '@ingest/contracts';
 import { asyncHandler } from '../../shared/http/async-handler.js';
 import { ok } from '../../shared/http/api-response.js';
 import { parseOrThrow } from '../../shared/http/parse.js';
+import { startJsonStream, writeJsonStreamEvent } from '../../shared/http/json-stream.js';
 import type { IngestionService } from './ingestion.service.js';
 
 export function createIngestionController(service: IngestionService): {
@@ -29,7 +33,39 @@ export function createIngestionController(service: IngestionService): {
     }),
     detectStructure: asyncHandler(async (req, res) => {
       const input = parseOrThrow(DetectStructureRequestSchema, req.body);
-      ok(res, await service.detectStructure(input));
+      if (req.get('accept') !== JSON_STREAM_CONTENT_TYPE) {
+        ok(res, await service.detectStructure(input));
+        return;
+      }
+      startJsonStream(res);
+      let latest: StructureDetectionProgress = {
+        completed: 0,
+        total: input.crops.length,
+        phase: 'extracting',
+      };
+      const sendProgress = (progress: StructureDetectionProgress): void => {
+        latest = progress;
+        writeJsonStreamEvent(res, {
+          type: 'progress',
+          progress,
+        } satisfies StructureDetectionStreamEvent);
+      };
+      sendProgress(latest);
+      // Keep a single connection alive during slow AI calls; never poll or restart generation.
+      const heartbeat = setInterval(() => {
+        sendProgress(latest);
+      }, 15000);
+      const cleanup = (): void => {
+        clearInterval(heartbeat);
+      };
+      res.once('close', cleanup);
+      res.once('finish', cleanup);
+      const data = await service.detectStructure(input, {
+        onProgress: sendProgress,
+        isDisconnected: () => res.destroyed,
+      });
+      writeJsonStreamEvent(res, { type: 'result', data } satisfies StructureDetectionStreamEvent);
+      if (!res.destroyed && !res.writableEnded) res.end();
     }),
     // Step 1: hand the browser a signed slot to upload the PDF bytes straight to storage.
     signedUpload: asyncHandler(async (req, res) => {

@@ -8,6 +8,12 @@ import type { StructureDetectionUsage } from '@ingest/contracts';
 export const errors = {
   structureRuleWriteFailed: (): AppError =>
     new AppError('STRUCTURE_RULE_WRITE_FAILED', 500, 'Could not save structure rules. Try again.'),
+  structureRuleDeleteFailed: (): AppError =>
+    new AppError(
+      'STRUCTURE_RULE_DELETE_FAILED',
+      500,
+      'Could not delete structure rules. Try again.',
+    ),
   structureDetectionChargedFailure: (error: AppError, usage: StructureDetectionUsage): AppError =>
     new AppError(error.code, error.status, error.message, { usage }),
   structureDetectionFailed: (reason: string): AppError =>

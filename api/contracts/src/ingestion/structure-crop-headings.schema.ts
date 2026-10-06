@@ -1,11 +1,13 @@
 import { z } from 'zod';
 import { KNOWN_QUESTION_TYPES } from '../common/vocabulary.js';
+import { StructureCropRoleSchema } from './structure-crop.schema.js';
+import { StructureLevelIdSchema } from '../structure-rules/structure-hierarchy.schema.js';
 
 export const StructureQuestionTypeObservationSchema = z
   .object({
     value: z.enum(KNOWN_QUESTION_TYPES),
     printed: z.string().trim().min(1).max(500),
-    level: z.enum(['section', 'part', 'topic']),
+    level: StructureLevelIdSchema,
   })
   .strict();
 
@@ -22,6 +24,8 @@ export const StructureCropHeadingSchema = z
     section: HeadingSchema,
     part: HeadingSchema,
     topic: HeadingSchema,
+    // New profiles carry all configured levels; legacy fields remain for old OCR drafts.
+    headings: z.record(StructureLevelIdSchema, HeadingSchema).optional(),
     questionType: StructureQuestionTypeObservationSchema.nullable(),
   })
   .strict();
@@ -32,7 +36,9 @@ export const StructureExtractedCropSchema = z
   .object({
     cropId: z.string().min(1).max(80),
     text: z.string().max(12000),
-    contextKey: z.string().max(20000),
+    // A full 16-level guide plus legacy examples/notes can exceed the old three-level limit.
+    contextKey: z.string().max(60000),
+    role: StructureCropRoleSchema.optional(),
     items: z.array(StructureCropHeadingSchema).max(500),
   })
   .strict();

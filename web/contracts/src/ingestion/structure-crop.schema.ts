@@ -1,4 +1,9 @@
 import { z } from 'zod';
+import { StructureLevelIdSchema } from '../structure-rules/structure-hierarchy.schema.js';
+
+export const STRUCTURE_CROP_ROLES = ['combined', 'section', 'part', 'topic'] as const;
+export const StructureCropRoleSchema = z.union([z.literal('combined'), StructureLevelIdSchema]);
+export type StructureCropRole = z.infer<typeof StructureCropRoleSchema>;
 
 /** Coordinates refer to the displayed page, measured from its top-left corner. */
 export const StructureCropBoundsSchema = z
@@ -20,6 +25,8 @@ export const StructureCropSchema = z
     id: z.string().min(1).max(80),
     pageNumber: z.number().int().positive(),
     bounds: StructureCropBoundsSchema,
+    // Missing roles in older drafts retain combined-heading behavior.
+    role: StructureCropRoleSchema.optional(),
   })
   .strict();
 export type StructureCrop = z.infer<typeof StructureCropSchema>;
@@ -29,6 +36,7 @@ export const StructureTextCropSchema = z
     id: z.string().min(1).max(80),
     pageNumber: z.number().int().positive(),
     text: z.string().max(12000),
+    role: StructureCropRoleSchema.optional(),
   })
   .strict();
 export type StructureTextCrop = z.infer<typeof StructureTextCropSchema>;

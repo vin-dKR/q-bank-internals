@@ -1,5 +1,6 @@
 import type {
   StructureDetectionContext,
+  StructureDetectionProgress,
   StructureDetectionUsage,
   StructureEstimate,
   StructureEstimateRequest,
@@ -18,7 +19,10 @@ export interface StructureExtractor {
     context: StructureDetectionContext;
     rule?: StructureRule | null;
     savedCrops?: StructureExtractedCrop[];
+    /** Full generation assigns the split question PDF's pages in code; single-crop cleanup does not. */
+    assignQuestionPages?: boolean;
     onUsage: (usage: StructureDetectionUsage) => Promise<void>;
+    onProgress?: (progress: StructureDetectionProgress) => void;
     beforeBatch?: () => Promise<void>;
   }): Promise<unknown>;
 }

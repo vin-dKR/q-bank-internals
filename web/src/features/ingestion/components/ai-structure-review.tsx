@@ -1,11 +1,12 @@
 import type { JSX } from 'react';
-import { StructureEstimateRequestSchema } from '@ingest/contracts';
-import { IconSparkle, Spinner } from '../../../shared/ui/index.js';
+import { StructureEstimateRequestSchema, structureHierarchy } from '@ingest/contracts';
+import { IconSparkle, InfoButton, Spinner } from '../../../shared/ui/index.js';
 import type { AiStructureController } from '../hooks/use-ai-structure.js';
 import type { ChapterMetadataDraft } from '../types/chapter-group.js';
 import { StructureCostSummary } from './structure-cost-summary.js';
 import { StructureRulesNotice } from '../../structure-rules/index.js';
 import { StructureCropReview } from './structure-crop-review.js';
+import { StructureTaskLoader } from './structure-task-loader.js';
 
 export function AiStructureReview({
   controller,
@@ -28,18 +29,38 @@ export function AiStructureReview({
       ? 'Retry JSON with AI'
       : 'Generate JSON with AI';
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-brand/20 bg-brand/5 p-3">
+    <div
+      className="relative flex flex-col gap-2 rounded-lg border border-brand/20 bg-brand/5 p-3"
+      aria-busy={busy}
+    >
       <span className="text-[13px] font-semibold text-ink">Build structure from heading crops</span>
       <StructureCropReview
         controller={controller.crops}
         disabled={busy || !canDetect}
         contextKey={controller.contextKey}
         onExtract={controller.extractCrop}
+        rules={<StructureRulesNotice context={metadata} />}
       />
-      <StructureRulesNotice context={metadata} />
-      <StructureCostSummary cost={controller.cost} hasPdf={canDetect} />
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-brand/20 pt-2">
-        <span className="text-[13px] font-semibold text-ink">4. Build structure JSON</span>
+        <div className="flex items-center gap-1">
+          <span className="text-[13px] font-semibold text-ink">4. Build structure JSON</span>
+          <InfoButton label="Building structure JSON">
+            <p>
+              AI reads saved OCR text using your source examples and hierarchy. JSON generation
+              reuses unchanged crop results and requests any remaining crops.
+            </p>
+            <p className="mt-2">
+              Code retains preceding parents and clears deeper levels when a parent changes. Nodes
+              are added only for printed headings. Missing or ambiguous question types stay blank.
+            </p>
+            <p className="mt-2">
+              Review the JSON before applying it. Question types and page attachments belong to the
+              last node in each branch. Code assigns the split question PDF's pages to final
+              children; answer and solution attachments remain manual.
+            </p>
+          </InfoButton>
+          <StructureCostSummary cost={controller.cost} hasPdf={canDetect} />
+        </div>
         <button
           type="button"
           className="btn btn--primary btn--xs"
@@ -55,20 +76,10 @@ export function AiStructureReview({
           }
           onClick={controller.detect}
         >
-          {busy ? <Spinner /> : <IconSparkle />}
-          {busy ? 'Working…' : generateLabel}
+          {controller.task === 'generate-json' ? <Spinner /> : <IconSparkle />}
+          {controller.task === 'generate-json' ? 'Generating JSON…' : generateLabel}
         </button>
       </div>
-      <p className="text-[12px] text-ink-3">
-        Saving text prepares the input. JSON generation reuses unchanged crop AI results and
-        requests any remaining crops. Review the JSON before applying it.
-      </p>
-      <p className="text-[12px] text-ink-3">
-        AI reads only saved OCR text, using your source examples. Code carries preceding Exercise
-        and Part headings, resets children when a parent changes, and leaves unnamed Topics blank.
-        Printed question types are added to Topics; missing or ambiguous types stay blank. Review
-        the JSON and bind PDF pages manually after applying.
-      </p>
       {controller.status ? (
         <p role="status" className="text-[12px] font-medium text-brand">
           {controller.status}
@@ -109,13 +120,22 @@ export function AiStructureReview({
           <details className="text-[12px] text-ink-2">
             <summary className="cursor-pointer">Review generated JSON</summary>
             <pre className="mt-2 max-h-72 overflow-auto rounded bg-surface-1 p-2 text-[11px]">
-              {JSON.stringify({ version: 1, metadata, nodes: proposal.nodes }, null, 2)}
+              {JSON.stringify(
+                {
+                  version: 1,
+                  metadata,
+                  hierarchy: structureHierarchy(proposal.rule),
+                  nodes: proposal.nodes,
+                },
+                null,
+                2,
+              )}
             </pre>
           </details>
           {hasNodes ? (
             <p className="text-[12px] text-ink-2">
-              Applying replaces your current nodes and clears their attachments. Rebind pages
-              manually.
+              Applying replaces your current nodes and attaches the assigned question pages.
+              Existing answer and solution attachments are cleared; bind those manually.
             </p>
           ) : null}
           <div className="flex gap-2">
@@ -137,6 +157,23 @@ export function AiStructureReview({
             </button>
           </div>
         </>
+      ) : null}
+      {controller.task ? (
+        <div className="absolute inset-0 z-40 flex items-center justify-center rounded-lg bg-surface/90 p-4">
+          <StructureTaskLoader
+            {...(controller.task === 'generate-json' && controller.progress
+              ? { progress: controller.progress, progressLabel: 'JSON generation completion' }
+              : {})}
+            label={
+              controller.task === 'generate-json'
+                ? 'Building structure JSON'
+                : controller.task === 'extract-crop'
+                  ? 'Extracting headings with AI'
+                  : 'Attaching question pages'
+            }
+            {...(controller.status ? { detail: controller.status } : {})}
+          />
+        </div>
       ) : null}
     </div>
   );

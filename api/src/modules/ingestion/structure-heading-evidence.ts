@@ -1,9 +1,10 @@
 import {
-  STRUCTURE_HEADING_LEVELS,
   headingWithoutOcrNoise,
   topicNameFromHeading,
   type StructureHeadingLevel,
   type StructureRule,
+  type StructureCropRole,
+  structureHierarchy,
 } from '@ingest/contracts';
 
 export type StructureHeadingCandidates = Record<StructureHeadingLevel, string[]>;
@@ -38,13 +39,27 @@ function exampleMatches(heading: string, example: string): boolean {
   );
 }
 
+function isCropHeadingLine(heading: string): boolean {
+  return (
+    !isExamYearHeading(heading) &&
+    !/^(?:[\s*#|!]+|\d+\s+)*(?:answers?|solutions?|questions?|answer\s+key|marked\s+questions?|jee\s*\(|iit[-\s]*jee)\b/iu.test(
+      heading,
+    ) &&
+    !/^(?:\(?[a-z]\d*\)?[-.\s]*)?\d+\s*[-.):]/iu.test(heading)
+  );
+}
+
 /** The model can select only structural heading candidates read from this PDF page. */
 export function structureHeadingCandidates(
   lines: readonly string[],
   rule: StructureRule | null = null,
   reviewedCrop = false,
+  role: StructureCropRole = 'combined',
 ): StructureHeadingCandidates {
-  const candidates: StructureHeadingCandidates = { section: [], part: [], topic: [] };
+  const hierarchy = structureHierarchy(rule);
+  const candidates: StructureHeadingCandidates = Object.fromEntries(
+    hierarchy.map((level) => [level.id, []]),
+  );
   const markers: Record<StructureHeadingLevel, RegExp> = {
     section: /^(?:exercise\b|section\s*[-:]?\s*(?:\d+|[ivxlcdm]+)\b)/iu,
     part: /^part\b/iu,
@@ -54,24 +69,27 @@ export function structureHeadingCandidates(
     const heading = text.trim();
     if (!heading || heading.length > 500) continue;
     const markerText = headingWithoutOcrNoise(heading);
-    for (const level of STRUCTURE_HEADING_LEVELS) {
+    if (role !== 'combined') {
+      // The operator supplies the hierarchy role; evidence must still be present in this crop.
+      if (candidates[role] && isCropHeadingLine(heading) && !candidates[role].includes(heading))
+        candidates[role].push(heading);
+      continue;
+    }
+    for (const entry of hierarchy) {
+      const level = entry.id;
       if (level === 'topic' && isExamYearHeading(heading)) continue;
       const unmarkedCropLine =
         level === 'topic' &&
         reviewedCrop &&
         !Object.values(markers).some((marker) => marker.test(markerText)) &&
-        !isExamYearHeading(heading) &&
-        !/^(?:[\s*#|!]+|\d+\s+)*(?:answers?|solutions?|questions?|answer\s+key|marked\s+questions?|jee\s*\(|iit[-\s]*jee)\b/iu.test(
-          heading,
-        ) &&
-        !/^(?:\(?[a-z]\d*\)?[-.\s]*)?\d+\s*[-.):]/iu.test(heading);
+        isCropHeadingLine(heading);
       if (
-        !markers[level].test(markerText) &&
-        !exampleMatches(markerText, rule?.examples[level] ?? '') &&
+        !markers[level]?.test(markerText) &&
+        !exampleMatches(markerText, entry.example) &&
         !unmarkedCropLine
       )
         continue;
-      if (!candidates[level].includes(heading)) candidates[level].push(heading);
+      if (!candidates[level]?.includes(heading)) candidates[level]?.push(heading);
     }
   }
   return candidates;

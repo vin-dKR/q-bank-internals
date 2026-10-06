@@ -3,30 +3,47 @@ import type {
   StructureCropBounds,
   StructureTextCrop,
   StructureExtractedCrop,
+  StructureCropRole,
+  StructureHierarchyLevel,
 } from '@ingest/contracts';
+import { DEFAULT_STRUCTURE_HIERARCHY } from '@ingest/contracts';
 import type { PdfInput } from '../lib/cut-pdf.js';
 import { ingestionApi } from '../api/ingestion.api.js';
 import { renderPageToPng } from '../lib/render-page-image.js';
+import type { StructureTaskProgress } from '../lib/structure-task-progress.js';
 import {
   StructureCropDraftSchema,
   orderStructureCrops,
   movedStructureCrop,
+  retypedStructureCrop,
   reviewedStructureText,
+  saveStructureCropResults,
+  lockStructureCropSize,
+  unlockStructureCropSize,
   type StructureCropDraft,
   type StructureCropDraftItem,
   type StructureCropMode,
+  type StructureCropSize,
 } from '../lib/structure-crops.js';
 
 export type StructureCropsController = {
   mode: StructureCropMode;
+  role: StructureCropRole;
+  hierarchy: readonly StructureHierarchyLevel[];
   crops: StructureCropDraftItem[];
+  lockedSizes: Readonly<Record<string, StructureCropSize>>;
   ready: boolean;
   ordered: boolean;
   busy: boolean;
   status: string | null;
+  progress: StructureTaskProgress | null;
   error: string | null;
   textCrops: StructureTextCrop[];
   setMode: (mode: StructureCropMode) => void;
+  setRole: (role: StructureCropRole) => void;
+  setCropRole: (id: string, role: StructureCropRole) => void;
+  lockSize: (id: string) => void;
+  unlockSize: (role: StructureCropRole) => void;
   add: (pageNumber: number, bounds: StructureCropBounds) => void;
   remove: (id: string) => void;
   clear: () => void;
@@ -40,7 +57,11 @@ export type StructureCropsController = {
   reviewText: () => void;
   saveText: () => void;
   exportText: () => void;
-  saveAi: (result: StructureExtractedCrop, contextKey: string, warnings: string[]) => void;
+  saveAi: (
+    results: readonly StructureExtractedCrop[],
+    contextKey: string,
+    warnings: string[],
+  ) => void;
 };
 
 /** Persist coordinates and reviewed text, never PDF or image blobs. Drafts match the PDF hash. */
@@ -48,6 +69,7 @@ export function useStructureCrops(input: {
   bytes: PdfInput | null;
   sessionId: string | null;
   onSelectTool: () => void;
+  hierarchy?: StructureHierarchyLevel[];
 }): StructureCropsController {
   const { bytes, sessionId } = input;
   const storageKey = `ingest:structure-crops:${sessionId ?? 'scratch'}`;
@@ -60,6 +82,11 @@ export function useStructureCrops(input: {
     null,
   );
   const [status, setStatus] = useState<string | null>(null);
+  const [progress, setProgress] = useState<StructureTaskProgress | null>(null);
+  const [role, setRole] = useState<StructureCropRole>('combined');
+  const hierarchy = input.hierarchy ?? DEFAULT_STRUCTURE_HIERARCHY;
+  const activeRole =
+    role === 'combined' || hierarchy.some((level) => level.id === role) ? role : 'combined';
   const [error, setError] = useState<string | null>(null);
   const running = useRef(false);
   const latest = useRef({ bytes, storageKey });
@@ -133,6 +160,7 @@ export function useStructureCrops(input: {
     if (!pending.length) return;
     running.current = true;
     setError(null);
+    setProgress({ completed: 0, total: pending.length });
     const selected = new Set(pending.map((crop) => crop.id));
     // Keep the previous text until OCR succeeds, but require review even when a rerun fails.
     update((draft) => ({
@@ -187,33 +215,65 @@ export function useStructureCrops(input: {
                     : item,
                 ),
               }));
+          } finally {
+            if (isCurrent()) setProgress({ completed: index + 1, total: pending.length });
           }
         }
       } finally {
         running.current = false;
         setStatus(null);
+        setProgress(null);
       }
     })();
   };
   return {
-    saveAi: (result, contextKey, warnings) => {
-      update((draft) => ({
-        ...draft,
-        crops: draft.crops.map((crop) =>
-          crop.id === result.cropId && crop.ocrDone && crop.text === result.text
-            ? { ...crop, ai: { result, contextKey, warnings } }
-            : crop,
-        ),
-      }));
+    saveAi: (results, contextKey, warnings) => {
+      update((draft) => saveStructureCropResults(draft, results, contextKey, warnings));
     },
     mode: selection?.bytes === bytes ? selection.mode : 'none',
+    role: activeRole,
+    hierarchy,
     crops: current?.crops ?? [],
+    lockedSizes: current?.lockedSizes ?? {},
     ready: current !== null,
     ordered: current?.ordered ?? false,
     busy: status !== null,
     status,
+    progress,
     error,
-    textCrops: reviewedStructureText(current),
+    textCrops: current?.crops.every(
+      (crop) =>
+        (crop.role ?? 'combined') === 'combined' ||
+        hierarchy.some((level) => level.id === crop.role),
+    )
+      ? reviewedStructureText(current)
+      : [],
+    setRole: (next) => {
+      if (!running.current) setRole(next);
+    },
+    setCropRole: (id, next) => {
+      if (running.current) return;
+      update((draft) => ({
+        ...draft,
+        crops: draft.crops.map((crop) =>
+          crop.id === id ? retypedStructureCrop(crop, next) : crop,
+        ),
+      }));
+    },
+    lockSize: (id) => {
+      if (running.current || !bytes) return;
+      const crop = current?.crops.find((item) => item.id === id);
+      if (!crop) return;
+      const cropRole = crop.role ?? 'combined';
+      if (cropRole !== 'combined' && !hierarchy.some((level) => level.id === cropRole)) return;
+      update((draft) => lockStructureCropSize(draft, id));
+      setRole(cropRole);
+      input.onSelectTool();
+      setSelection({ bytes, mode: 'rectangle' });
+    },
+    unlockSize: (cropRole) => {
+      if (!running.current) update((draft) => unlockStructureCropSize(draft, cropRole));
+    },
     setMode: (mode) => {
       if (!bytes || running.current) return;
       if (mode !== 'none') input.onSelectTool();
@@ -234,6 +294,7 @@ export function useStructureCrops(input: {
             id: crypto.randomUUID(),
             pageNumber,
             bounds,
+            role: activeRole,
             text: '',
             reviewedText: null,
             ocrDone: false,

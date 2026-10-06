@@ -4,3 +4,4 @@ export * from './structure-label.js';
 export * from './structure-cost.schema.js';
 export * from './structure-crop.schema.js';
 export * from './structure-crop-headings.schema.js';
+export * from './structure-progress.schema.js';

@@ -20,4 +20,8 @@ export class InMemoryStructureRuleStore implements StructureRuleStore {
     this.rows.set(structureRuleScopeKey(rule), structuredClone(rule));
     return Promise.resolve();
   }
+  remove(scope: StructureRuleScope): Promise<void> {
+    this.rows.delete(structureRuleScopeKey(scope));
+    return Promise.resolve();
+  }
 }

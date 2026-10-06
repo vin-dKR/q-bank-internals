@@ -58,20 +58,43 @@ export class MongoStructureRuleStore implements StructureRuleStore {
               provider: rule.provider,
               examples: rule.examples,
               expectedOutputs: rule.expectedOutputs ?? { section: null, part: null, topic: null },
+              ...(rule.hierarchy ? { hierarchy: rule.hierarchy } : {}),
               notes: rule.notes,
               updatedAt: rule.updatedAt,
             },
+            ...(!rule.hierarchy ? { $unset: { hierarchy: '' } } : {}),
           },
           upsert: true,
         },
       ],
     };
-    const reply = WriteReplySchema.parse(await this.prisma.$runCommandRaw(command));
+    await this.write(command, 'save');
+  }
+
+  async remove(scope: StructureRuleScope): Promise<void> {
+    await this.write(
+      {
+        delete: COLLECTION,
+        deletes: [{ q: { _id: structureRuleScopeKey(scope) }, limit: 1 }],
+        ordered: true,
+      },
+      'delete',
+    );
+  }
+
+  private async write(
+    command: Prisma.InputJsonObject,
+    operation: 'save' | 'delete',
+  ): Promise<void> {
+    const parsed = WriteReplySchema.safeParse(await this.prisma.$runCommandRaw(command));
     if (
-      reply.ok !== 1 ||
-      (reply.writeErrors?.length ?? 0) > 0 ||
-      reply.writeConcernError !== undefined
+      !parsed.success ||
+      parsed.data.ok !== 1 ||
+      (parsed.data.writeErrors?.length ?? 0) > 0 ||
+      parsed.data.writeConcernError !== undefined
     )
-      throw errors.structureRuleWriteFailed();
+      throw operation === 'save'
+        ? errors.structureRuleWriteFailed()
+        : errors.structureRuleDeleteFailed();
   }
 }

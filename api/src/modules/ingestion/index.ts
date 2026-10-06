@@ -9,4 +9,10 @@ export type { StructureHeadingCandidates } from './structure-heading-evidence.js
 export { structureQuestionTypeEvidence } from './structure-question-type.js';
 export type { StructureQuestionTypeEvidence } from './structure-question-type.js';
 export type { OcrLine, PageOcr, PageOcrSession } from './page-ocr.js';
-export { structureTextBatches, structureCropContextKey, reusableStructureCrop } from './structure-text-batches.js';
+export {
+  structureTextBatches,
+  structureRequestGroups,
+  STRUCTURE_TYPED_CROP_CONCURRENCY,
+  structureCropContextKey,
+  reusableStructureCrop,
+} from './structure-text-batches.js';

@@ -2,6 +2,7 @@ import {
   useQuery,
   useMutation,
   useQueryClient,
+  useIsMutating,
   type UseQueryResult,
   type UseMutationResult,
 } from '@tanstack/react-query';
@@ -11,11 +12,17 @@ import {
   type StructureRule,
   type SaveStructureRule,
   type StructureDetectionContext,
+  type StructureRuleScope,
+  type DeleteStructureRuleResult,
 } from '@ingest/contracts';
 import { structureRulesApi } from '../api/structure-rules.api.js';
 import { useToast } from '../../../shared/ui/index.js';
 
 const RULES_KEY = ['structure-rules'];
+
+export function useStructureRulesWriting(): boolean {
+  return useIsMutating({ mutationKey: RULES_KEY }) > 0;
+}
 
 export function useStructureRules(): UseQueryResult<StructureRule[]> {
   return useQuery({ queryKey: RULES_KEY, queryFn: () => structureRulesApi.list() });
@@ -37,6 +44,7 @@ export function useSaveStructureRule(): UseMutationResult<StructureRule, Error, 
   const client = useQueryClient();
   const { success, error } = useToast();
   return useMutation({
+    mutationKey: [...RULES_KEY, 'save'],
     mutationFn: (rule: SaveStructureRule) => structureRulesApi.save(rule),
     onSuccess: (rule) => {
       client.setQueryData<StructureRule[]>(RULES_KEY, (previous) => {
@@ -50,6 +58,31 @@ export function useSaveStructureRule(): UseMutationResult<StructureRule, Error, 
     },
     onError: (err) => {
       error('Could not save structure rules', err.message);
+    },
+  });
+}
+
+export function useDeleteStructureRule(): UseMutationResult<
+  DeleteStructureRuleResult,
+  Error,
+  StructureRuleScope
+> {
+  const client = useQueryClient();
+  const { success, error } = useToast();
+  return useMutation({
+    mutationKey: [...RULES_KEY, 'delete'],
+    mutationFn: (scope: StructureRuleScope) => structureRulesApi.remove(scope),
+    onSuccess: (_result, scope) => {
+      const key = structureRuleScopeKey(scope);
+      client.setQueryData<StructureRule[]>(RULES_KEY, (previous) =>
+        (previous ?? []).filter((rule) => structureRuleScopeKey(rule) !== key),
+      );
+      client.setQueryData([...RULES_KEY, 'resolve', key], null);
+      void client.invalidateQueries({ queryKey: [...RULES_KEY, 'resolve', key] });
+      success('Rule set deleted', `${scope.provider}: new detections use the default hierarchy.`);
+    },
+    onError: (err) => {
+      error('Could not delete rule set', err.message);
     },
   });
 }

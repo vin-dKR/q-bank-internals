@@ -14,6 +14,7 @@ import {
   type LoadedPdf,
   type PreviewView,
   type ReadingOrder,
+  type StructureEntryMode,
   PdfModeSelector,
   PdfPagesToolbar,
   PdfPreviewer,
@@ -120,6 +121,7 @@ export function TreeIngestPage(): JSX.Element {
   const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
   const [anchorPage, setAnchorPage] = useState<number | null>(null);
   const [view, setView] = useState<PreviewView>('list');
+  const [structureEntryMode, setStructureEntryMode] = useState<StructureEntryMode>('auto');
   const [gridColumns, setGridColumns] = useState(DEFAULT_GRID_COLUMNS);
   const [panelWidth, setPanelWidth] = useState(readPanelWidth);
   const panelWidthRef = useRef(panelWidth);
@@ -149,6 +151,7 @@ export function TreeIngestPage(): JSX.Element {
     bytes: activeBytes,
     pageCount: numPages,
     context: tree.tree.metadata,
+    ...(tree.tree.hierarchy ? { hierarchy: tree.tree.hierarchy } : {}),
     sessionId,
     replaceNodes: tree.replaceNodes,
     onSelectTool: () => {
@@ -705,7 +708,7 @@ export function TreeIngestPage(): JSX.Element {
           <div className="cutter-layout__scroll">
             <PdfPreviewer
               pdfBytes={activeBytes}
-              structureCrops={aiStructure.crops}
+              {...(structureEntryMode === 'auto' ? { structureCrops: aiStructure.crops } : {})}
               structureBusy={aiStructure.busy}
               mode={cutMode}
               order={readingOrder}
@@ -863,6 +866,12 @@ export function TreeIngestPage(): JSX.Element {
             onAiFillPaper={handleAiFillPaper}
             aiFillingPaper={aiFillingPaper}
             aiStructure={aiStructure}
+            entryMode={structureEntryMode}
+            onEntryModeChange={(mode) => {
+              if (aiStructure.busy) return;
+              if (mode === 'manual') aiStructure.crops.setMode('none');
+              setStructureEntryMode(mode);
+            }}
             canDetectStructure={
               Boolean(activeBytes) &&
               numPages > 0 &&

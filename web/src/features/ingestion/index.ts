@@ -30,6 +30,7 @@ export { leaves, resolveQuestionType } from './lib/structure-tree.js';
 export { configPageBindings, type ParsedConfig } from './lib/structure-config.js';
 export {
   type StructureTree,
+  type StructureEntryMode,
   type StructureNode,
   type NodeLevel,
   type MaterializedArtifact,

@@ -18,3 +18,4 @@ export * from './quality/index.js';
 export * from './exam-access/index.js';
 export * from './masters/index.js';
 export * from './structure-rules/index.js';
+export * from './common/json-stream.schema.js';

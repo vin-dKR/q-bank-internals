@@ -37,7 +37,13 @@ import { cascadeMetadata } from '../lib/metadata-cascade.js';
 import { isPageDrag, readDraggedPages } from '../lib/page-dnd.js';
 import { parsePageRange, pageRangeLabel, pageRangeText } from '../lib/page-range.js';
 import { parseConfig, serializeConfig, type ParsedConfig } from '../lib/structure-config.js';
-import { type NodeLevel, type StructureNode, isLeaf } from '../types/structure-node.js';
+import {
+  type NodeLevel,
+  type StructureNode,
+  type StructureEntryMode,
+  isLeaf,
+} from '../types/structure-node.js';
+import { DEFAULT_STRUCTURE_HIERARCHY, type StructureHierarchyLevel } from '@ingest/contracts';
 import { AiStructureReview } from './ai-structure-review.js';
 import type { AiStructureController } from '../hooks/use-ai-structure.js';
 
@@ -60,9 +66,10 @@ type StructureTreePanelProps = {
   aiFillingPaper: boolean;
   aiStructure: AiStructureController;
   canDetectStructure: boolean;
+  entryMode: StructureEntryMode;
+  onEntryModeChange: (mode: StructureEntryMode) => void;
 };
 
-const LEVEL_OPTIONS = ['Section', 'Part', 'Topic'] as const;
 const KIND_LABEL: Record<ChapterKind, string> = {
   question: 'Question',
   answer: 'Answer',
@@ -93,12 +100,14 @@ const KIND_TONE: Record<ChapterKind, { empty: string; filled: string; chip: stri
   },
 };
 
-function toLevel(display: string): NodeLevel | null {
-  const value = display.trim().toLowerCase();
-  return value === 'section' || value === 'part' || value === 'topic' ? value : null;
+function toLevel(display: string, hierarchy: readonly StructureHierarchyLevel[]): NodeLevel | null {
+  return hierarchy.find((level) => level.name === display)?.id ?? null;
 }
-function levelDisplay(level: NodeLevel | null): string {
-  return level ? level.charAt(0).toUpperCase() + level.slice(1) : '';
+function levelDisplay(
+  level: NodeLevel | null,
+  hierarchy: readonly StructureHierarchyLevel[],
+): string {
+  return hierarchy.find((item) => item.id === level)?.name ?? level ?? '';
 }
 /** A filesystem-safe stem for the exported config, derived from the chapter (or module) name. */
 function configFileName(chapter: string, module: string): string {
@@ -125,6 +134,8 @@ export function StructureTreePanel({
   aiFillingPaper,
   aiStructure,
   canDetectStructure,
+  entryMode,
+  onEntryModeChange,
 }: StructureTreePanelProps): JSX.Element {
   const { tree } = controller;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -192,7 +203,11 @@ export function StructureTreePanel({
               label={tree.metadata.source === 'textbook' ? 'Textbook / publisher' : 'Module'}
               value={tree.metadata.module}
               options={vocabulary.modules}
-              placeholder={tree.metadata.source === 'textbook' ? 'e.g. NCERT / textbook title' : 'e.g. Allen / PW'}
+              placeholder={
+                tree.metadata.source === 'textbook'
+                  ? 'e.g. NCERT / textbook title'
+                  : 'e.g. Allen / PW'
+              }
               onChange={(v) => {
                 controller.setMetadata(cascadeMetadata('module', v, tree.metadata, vocabulary));
               }}
@@ -252,10 +267,32 @@ export function StructureTreePanel({
       ) : null}
 
       <section className="flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="m-0 text-[13px] font-semibold uppercase tracking-wide text-ink-3">
-            Structure
-          </h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="m-0 text-[13px] font-semibold uppercase tracking-wide text-ink-3">
+              Structure
+            </h3>
+            <div
+              role="group"
+              aria-label="Structure entry mode"
+              className="flex gap-1 rounded-lg border border-line bg-surface-1 p-0.5"
+            >
+              {(['auto', 'manual'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className={`btn btn--xs ${entryMode === mode ? 'btn--primary' : 'btn--ghost'}`}
+                  aria-pressed={entryMode === mode}
+                  disabled={aiStructure.busy}
+                  onClick={() => {
+                    onEntryModeChange(mode);
+                  }}
+                >
+                  {mode === 'auto' ? 'Auto' : 'Manual'}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="flex items-center gap-1">
             <button
               type="button"
@@ -275,15 +312,17 @@ export function StructureTreePanel({
             >
               Import
             </button>
-            <button
-              type="button"
-              className="btn btn--ghost btn--xs"
-              onClick={() => {
-                controller.addNode(null, null);
-              }}
-            >
-              <IconPlus /> Add node
-            </button>
+            {entryMode === 'manual' || controller.hasNodes ? (
+              <button
+                type="button"
+                className="btn btn--ghost btn--xs"
+                onClick={() => {
+                  controller.addNode(null, null);
+                }}
+              >
+                <IconPlus /> Add node
+              </button>
+            ) : null}
             <input
               ref={importInputRef}
               type="file"
@@ -296,13 +335,15 @@ export function StructureTreePanel({
           </div>
         </div>
 
-        <AiStructureReview
-          pageCount={maxPages}
-          controller={aiStructure}
-          canDetect={canDetectStructure}
-          hasNodes={controller.hasNodes}
-          metadata={tree.metadata}
-        />
+        {entryMode === 'auto' ? (
+          <AiStructureReview
+            pageCount={maxPages}
+            controller={aiStructure}
+            canDetect={canDetectStructure}
+            hasNodes={controller.hasNodes}
+            metadata={tree.metadata}
+          />
+        ) : null}
 
         {controller.hasNodes ? (
           <>
@@ -332,11 +373,11 @@ export function StructureTreePanel({
               <IconPlus /> Add node
             </button>
           </>
-        ) : (
+        ) : entryMode === 'manual' ? (
           <EmptyState
             icon={<IconLayers />}
-            title="No structure yet"
-            body="Add a section, part, or topic — then bind the question and its answer source onto each leaf. A flat paper is just one node."
+            title="Build your structure manually"
+            body="Add the heading levels you need, enter their names and bind pages to the final children."
             action={
               <button
                 type="button"
@@ -349,7 +390,7 @@ export function StructureTreePanel({
               </button>
             }
           />
-        )}
+        ) : null}
       </section>
     </div>
   );
@@ -617,19 +658,31 @@ function TreeNodeRow({
         )}
         <div className="w-[104px] flex-none">
           <Combobox
-            value={levelDisplay(node.level)}
-            options={LEVEL_OPTIONS}
+            value={levelDisplay(
+              node.level,
+              controller.tree.hierarchy ?? DEFAULT_STRUCTURE_HIERARCHY,
+            )}
+            options={(controller.tree.hierarchy ?? DEFAULT_STRUCTURE_HIERARCHY).map(
+              (level) => level.name,
+            )}
             allowCustom={false}
             placeholder="Level"
             onChange={(display) => {
-              controller.setNodeLevel(node.id, toLevel(display));
+              controller.setNodeLevel(
+                node.id,
+                toLevel(display, controller.tree.hierarchy ?? DEFAULT_STRUCTURE_HIERARCHY),
+              );
             }}
           />
         </div>
         <input
           className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-sm text-ink outline-none placeholder:text-ink-3 focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-brand/25"
           value={node.label}
-          placeholder={node.level ? `${levelDisplay(node.level)} name` : 'Name'}
+          placeholder={
+            node.level
+              ? `${levelDisplay(node.level, controller.tree.hierarchy ?? DEFAULT_STRUCTURE_HIERARCHY)} name`
+              : 'Name'
+          }
           onChange={(event) => {
             controller.renameNode(node.id, event.target.value);
           }}

@@ -209,7 +209,7 @@ function primaryOptions(): QuestionOption[] {
   ];
 }
 
-test('whole selected-question re-extract merges the linked answer and solution pages', async () => {
+void test('whole selected-question re-extract merges the linked answer and solution pages', async () => {
   const questionDocument = sourceDocument(QUESTION_DOCUMENT_ID, 'question', 'separate');
   const answerDocument = sourceDocument(ANSWER_DOCUMENT_ID, 'answer', 'separate');
   const solutionDocument = sourceDocument(SOLUTION_DOCUMENT_ID, 'solution', 'separate');
@@ -303,12 +303,12 @@ test('whole selected-question re-extract merges the linked answer and solution p
   ]);
 });
 
-test('an inline paper re-extracts only its question page and keeps its inline answer and explanation', async () => {
+void test('an inline paper re-extracts only its question page and keeps its inline answer and explanation', async () => {
   const questionDocument = sourceDocument(QUESTION_DOCUMENT_ID, 'question', 'inline');
   const { service, reads, rendered, recordedUsage } = createHarness({
     answerLayout: 'inline',
     documents: [questionDocument],
-    reExtract: async (read) =>
+    reExtract: async (_read) =>
       reExtractResult({
         stem: 'Inline question.',
         options: primaryOptions(),
@@ -330,7 +330,7 @@ test('an inline paper re-extracts only its question page and keeps its inline an
   assert.equal(result.explanation, 'Inline worked explanation.');
   assert.equal(reads.length, 1);
   assert.equal(reads[0]?.sourceKind, 'question');
-  assert.equal(reads[0]?.inlineAnswers, true);
+  assert.equal(reads[0].inlineAnswers, true);
   assert.deepEqual(rendered, [{ documentId: QUESTION_DOCUMENT_ID, page: 52 }]);
   assert.deepEqual(recordedUsage, [
     {
@@ -341,7 +341,7 @@ test('an inline paper re-extracts only its question page and keeps its inline an
   ]);
 });
 
-test('a failed supporting read preserves the primary selected-question result', async () => {
+void test('a failed supporting read preserves the primary selected-question result', async () => {
   const questionDocument = sourceDocument(QUESTION_DOCUMENT_ID, 'question', 'separate');
   const answerDocument = sourceDocument(ANSWER_DOCUMENT_ID, 'answer', 'separate');
   const { service, reads, rendered, recordedUsage } = createHarness({

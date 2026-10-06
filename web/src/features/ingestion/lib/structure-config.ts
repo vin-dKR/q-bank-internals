@@ -4,10 +4,12 @@ import {
   type StructurePages,
   PAPER_METADATA_FIELDS,
   structureLabelFromHeading,
+  StructureLevelIdSchema,
+  StructureHierarchySchema,
+  type StructureHierarchyLevel,
 } from '@ingest/contracts';
 import { emptyMetadata, type ChapterMetadataDraft } from '../types/chapter-group.js';
 import {
-  NODE_LEVELS,
   isLeaf,
   type LeafBindings,
   type NodeLevel,
@@ -42,12 +44,14 @@ export type StructureConfig = {
   version: 1;
   metadata: ChapterMetadataDraft;
   nodes: ConfigNode[];
+  hierarchy?: StructureHierarchyLevel[];
 };
 
 /** The metadata + nodes recovered from a config file, ready to rebuild a live tree from. */
 export type ParsedConfig = {
   metadata: ChapterMetadataDraft;
   nodes: ConfigNode[];
+  hierarchy?: StructureHierarchyLevel[];
 };
 
 const CONFIG_VERSION = 1;
@@ -106,6 +110,7 @@ export function serializeConfig(tree: StructureTree): StructureConfig {
     version: CONFIG_VERSION,
     metadata: { ...tree.metadata },
     nodes: tree.nodes.map((node) => toConfigNode(node, tree.metadata.answerLayout)),
+    ...(tree.hierarchy ? { hierarchy: tree.hierarchy } : {}),
   };
 }
 
@@ -127,9 +132,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function parseLevel(value: unknown): NodeLevel | null {
-  return typeof value === 'string' && (NODE_LEVELS as readonly string[]).includes(value)
-    ? (value as NodeLevel)
-    : null;
+  const parsed = StructureLevelIdSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 /**
@@ -214,6 +218,9 @@ export function parseConfig(text: string): ParsedConfig | null {
     return null;
   }
   if (!isRecord(raw) || !Array.isArray(raw.nodes)) return null;
+  const hierarchy =
+    raw.hierarchy === undefined ? undefined : StructureHierarchySchema.safeParse(raw.hierarchy);
+  if (hierarchy && !hierarchy.success) return null;
 
   const nodes: ConfigNode[] = [];
   for (const node of raw.nodes) {
@@ -222,7 +229,11 @@ export function parseConfig(text: string): ParsedConfig | null {
     nodes.push(parsed);
   }
 
-  return { metadata: parseMetadata(raw.metadata), nodes };
+  return {
+    metadata: parseMetadata(raw.metadata),
+    nodes,
+    ...(hierarchy?.success ? { hierarchy: hierarchy.data } : {}),
+  };
 }
 
 /** One page assignment recovered from an imported config, addressed to its rebuilt live leaf. */

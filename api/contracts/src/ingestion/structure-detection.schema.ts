@@ -9,6 +9,7 @@ import { StructureDetectionUsageSchema } from './structure-cost.schema.js';
 import { StructureRuleSchema } from '../structure-rules/structure-rule.schema.js';
 import { StructureTextCropSchema } from './structure-crop.schema.js';
 import { StructureExtractedCropSchema } from './structure-crop-headings.schema.js';
+import { StructureLevelIdSchema } from '../structure-rules/structure-hierarchy.schema.js';
 
 /** Operator-supplied context, never generated or overwritten by detection. */
 export const StructureDetectionContextSchema = z
@@ -100,7 +101,7 @@ export const StructurePagesSchema = z
 export type StructurePages = z.infer<typeof StructurePagesSchema>;
 export const DetectedStructureNodeFieldsSchema = z.object({
   label: z.string(),
-  level: z.enum(['section', 'part', 'topic']).nullable(),
+  level: StructureLevelIdSchema.nullable(),
   questionType: z.enum(['', ...KNOWN_QUESTION_TYPES]),
   subject: z.string(),
   pyq: z.boolean(),

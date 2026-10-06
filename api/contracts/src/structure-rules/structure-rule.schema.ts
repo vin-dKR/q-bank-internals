@@ -2,6 +2,11 @@ import { z } from 'zod';
 import { KNOWN_SOURCES } from '../common/vocabulary.js';
 import type { StructureDetectionContext } from '../ingestion/structure-detection.schema.js';
 import { structureLabelFromHeading, isPrintedTopicLabel } from '../ingestion/structure-label.js';
+import {
+  StructureHierarchySchema,
+  DEFAULT_STRUCTURE_HIERARCHY,
+  type StructureHierarchyLevel,
+} from './structure-hierarchy.schema.js';
 
 export const StructureRuleSourceSchema = z.enum(KNOWN_SOURCES);
 export type StructureRuleSource = z.infer<typeof StructureRuleSourceSchema>;
@@ -29,21 +34,22 @@ export const StructureExpectedOutputsSchema = z
   })
   .strict();
 export type StructureExpectedOutputs = z.infer<typeof StructureExpectedOutputsSchema>;
-export type StructureHeadingLevel = keyof StructureExamples;
-export const STRUCTURE_HEADING_LEVELS: readonly StructureHeadingLevel[] = [
-  'section',
-  'part',
-  'topic',
-];
+export type StructureHeadingLevel = string;
+export const STRUCTURE_HEADING_LEVELS = ['section', 'part', 'topic'] as const;
 
 export const StructureRuleFieldsSchema = StructureRuleScopeSchema.extend({
   examples: StructureExamplesSchema,
   // Existing profiles omit this field and continue to use the general label rules.
   expectedOutputs: StructureExpectedOutputsSchema.optional(),
+  hierarchy: StructureHierarchySchema.optional(),
   notes: z.string().trim().max(2000),
 }).strict();
 export const SaveStructureRuleSchema = StructureRuleFieldsSchema.superRefine((value, ctx) => {
-  if (!Object.values(value.examples).some((example) => example.length > 0) && !value.notes.length)
+  if (
+    !value.hierarchy &&
+    !Object.values(value.examples).some((example) => example.length > 0) &&
+    !value.notes.length
+  )
     ctx.addIssue({
       code: 'custom',
       message: 'Enter at least one heading example or recognition rule.',
@@ -78,17 +84,36 @@ export const StructureRuleSchema = StructureRuleFieldsSchema.extend({
 export type StructureRule = z.infer<typeof StructureRuleSchema>;
 export const StructureRuleListSchema = z.array(StructureRuleSchema);
 export const ResolvedStructureRuleSchema = StructureRuleSchema.nullable();
+export const DeleteStructureRuleResultSchema = z.object({ ok: z.literal(true) }).strict();
+export type DeleteStructureRuleResult = z.infer<typeof DeleteStructureRuleResultSchema>;
 
 /** Null means the general rule; an explicit empty Topic output deliberately leaves its name blank. */
 export function hasExpectedStructureOutput(
   rule: StructureRule | null | undefined,
   level: StructureHeadingLevel,
 ): boolean {
-  return Boolean(rule?.examples[level].trim()) && rule?.expectedOutputs?.[level] != null;
+  const entry = structureHierarchy(rule).find((item) => item.id === level);
+  return Boolean(entry?.example.trim()) && entry?.expectedOutput != null;
 }
 
 export function structureExampleOutput(rule: StructureRule, level: StructureHeadingLevel): string {
-  return rule.expectedOutputs?.[level] ?? structureLabelFromHeading(level, rule.examples[level]);
+  const entry = structureHierarchy(rule).find((item) => item.id === level);
+  return entry?.expectedOutput ?? structureLabelFromHeading(level, entry?.example ?? '');
+}
+
+/** Older saved rules resolve to the original three levels without rewriting their stored data. */
+export function structureHierarchy(
+  rule?: Pick<StructureRule, 'hierarchy' | 'examples' | 'expectedOutputs'> | null,
+): StructureHierarchyLevel[] {
+  if (rule?.hierarchy) return rule.hierarchy.map((level) => ({ ...level }));
+  return DEFAULT_STRUCTURE_HIERARCHY.map((level) => {
+    const id = STRUCTURE_HEADING_LEVELS.find((key) => key === level.id);
+    return {
+      ...level,
+      example: id ? (rule?.examples[id] ?? '') : '',
+      expectedOutput: id ? (rule?.expectedOutputs?.[id] ?? null) : null,
+    };
+  });
 }
 
 /** Names match the ingestion form; no provider's examples fall back to a different provider. */

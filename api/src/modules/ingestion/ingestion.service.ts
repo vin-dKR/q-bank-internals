@@ -12,6 +12,9 @@ import {
   type StructureEstimateRequest,
   type StructureCropOcrRequest,
   type StructureCropOcrResult,
+  type StructureRule,
+  type StructureTextCrop,
+  structureHierarchy,
 } from '@ingest/contracts';
 import { DetectedStructureSchema } from '@ingest/contracts';
 import { logger } from '../../shared/logger/logger.js';
@@ -32,6 +35,14 @@ import { reusableStructureCrop, structureCropContextKey } from './structure-text
 /** What an upload produces: the Drive file that was filed, plus the durable Document row it created. */
 export type UploadChapterResult = { document: Document; driveFile: DriveFile };
 
+function validateCropRoles(crops: readonly StructureTextCrop[], rule: StructureRule | null): void {
+  const levels = structureHierarchy(rule).map((level) => level.id);
+  if (crops.some((crop) => crop.role && crop.role !== 'combined' && !levels.includes(crop.role)))
+    throw errors.structureDetectionFailed(
+      'A crop uses a removed or unknown hierarchy level. Choose its heading type again.',
+    );
+}
+
 /**
  * Give every Cut & Upload action a stable, visible suffix. Its question and supporting PDFs share
  * the same upload-group id, so operators can tell one pair from another even within one session.
@@ -45,15 +56,16 @@ function fileNameForUpload(metadata: ChapterUploadMetadata): string {
 /** The supporting parts a question upload explicitly declares through its bound page ranges. */
 function requiredSupportingKinds(question: Document): Array<'answer' | 'solution' | 'companion'> {
   if (question.answerLayout === 'inline') return [];
-  const hasRange = (kind: 'answer' | 'solution' | 'companion'): boolean => question.topics.some((topic) =>
-    topic.types.some((block) =>
-      kind === 'answer'
-        ? block.answerPageRange !== undefined
-        : kind === 'solution'
-          ? block.solutionPageRange !== undefined
-          : block.companionPageRange !== undefined,
-    ),
-  );
+  const hasRange = (kind: 'answer' | 'solution' | 'companion'): boolean =>
+    question.topics.some((topic) =>
+      topic.types.some((block) =>
+        kind === 'answer'
+          ? block.answerPageRange !== undefined
+          : kind === 'solution'
+            ? block.solutionPageRange !== undefined
+            : block.companionPageRange !== undefined,
+      ),
+    );
   if (question.answerLayout === 'combined') return hasRange('companion') ? ['companion'] : [];
   return [
     ...(hasRange('answer') ? ['answer' as const] : []),
@@ -95,6 +107,7 @@ export class IngestionService {
 
   async estimateStructure(input: StructureEstimateRequest): Promise<StructureEstimate> {
     const rule = await this.structureRules.resolveContext(input.context);
+    validateCropRoles(input.crops, rule);
     return this.structureExtractor.estimate({ ...input, rule });
   }
 
@@ -166,11 +179,18 @@ export class IngestionService {
   }
 
   /** Text-only detection is pre-upload; no PDF images are sent to the model. */
-  async detectStructure(input: DetectStructureRequest): Promise<DetectStructureResult> {
+  async detectStructure(
+    input: DetectStructureRequest,
+    options: {
+      onProgress?: Parameters<StructureExtractor['extract']>[0]['onProgress'];
+      isDisconnected?: () => boolean;
+    } = {},
+  ): Promise<DetectStructureResult> {
     const report: { usage: StructureDetectionUsage | null } = { usage: null };
     try {
       if (input.sessionId) await this.sessions.getById(input.sessionId);
       const rule = await this.structureRules.resolveContext(input.context);
+      validateCropRoles(input.crops, rule);
       const contextKey = structureCropContextKey(input.context, rule);
       if (
         input.crops.some(
@@ -185,8 +205,16 @@ export class IngestionService {
         pageCount: input.pageCount,
         context: input.context,
         rule,
+        assignQuestionPages: !input.cropOnly,
         ...(input.savedCrops && !input.cropOnly ? { savedCrops: input.savedCrops } : {}),
-        beforeBatch: () => this.usage.assertWithinLimit(),
+        ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+        beforeBatch: async () => {
+          if (options.isDisconnected?.())
+            throw errors.structureDetectionFailed('The progress connection was closed.');
+          await this.usage.assertWithinLimit();
+          if (options.isDisconnected?.())
+            throw errors.structureDetectionFailed('The progress connection was closed.');
+        },
         onUsage: async (usage) => {
           const previous = report.usage;
           report.usage = previous
@@ -234,7 +262,9 @@ export class IngestionService {
         rule,
         ...(input.cropOnly && parsed.data.nodes.length === 0
           ? { nodes: [], warnings: parsed.data.warnings ?? [] }
-          : validateStructure(raw, input.pageCount, input.context.answerLayout, rule)),
+          : validateStructure(raw, input.pageCount, input.context.answerLayout, rule, {
+              allowQuestionPages: !input.cropOnly,
+            })),
         cropResults: parsed.data.cropResults ?? [],
         ...(parsed.data.aiCallCount !== undefined ? { aiCallCount: parsed.data.aiCallCount } : {}),
         usage: report.usage,
@@ -265,17 +295,22 @@ export class IngestionService {
   private async enqueueReadyQuestion(sessionId: string, uploaded: Document): Promise<void> {
     const documents = await this.documents.listBySession(sessionId);
     const supportKind = uploaded.kind === 'question' ? null : uploaded.kind;
-    const question = supportKind === null
-      ? uploaded
-      : documents.find((candidate) =>
-          candidate.kind === 'question' &&
-          belongsToQuestionUpload(candidate, uploaded) &&
-          requiredSupportingKinds(candidate).includes(supportKind),
-        );
+    const question =
+      supportKind === null
+        ? uploaded
+        : documents.find(
+            (candidate) =>
+              candidate.kind === 'question' &&
+              belongsToQuestionUpload(candidate, uploaded) &&
+              requiredSupportingKinds(candidate).includes(supportKind),
+          );
     if (!question || question.status !== 'uploaded') return;
     const required = requiredSupportingKinds(question);
-    const missing = required.filter((kind) =>
-      !documents.some((candidate) => candidate.kind === kind && belongsToQuestionUpload(question, candidate)),
+    const missing = required.filter(
+      (kind) =>
+        !documents.some(
+          (candidate) => candidate.kind === kind && belongsToQuestionUpload(question, candidate),
+        ),
     );
     if (missing.length > 0) {
       logger.info(
@@ -364,7 +399,7 @@ export class IngestionService {
       // authoritative value from here, not the first-write-wins session backfill below.
       exam: metadata.exam,
       className: shouldCollectClassName(metadata.exam, metadata.module)
-        ? metadata.className ?? null
+        ? (metadata.className ?? null)
         : null,
       subject: metadata.subject,
       pyq: metadata.pyq ?? false,

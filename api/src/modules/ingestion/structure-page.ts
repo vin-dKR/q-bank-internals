@@ -13,6 +13,9 @@ import {
   type DetectedStructureNode,
   type StructureDetectionContext,
   type StructureCropHeading,
+  type StructureCropRole,
+  StructureLevelIdSchema,
+  structureHierarchy,
 } from '@ingest/contracts';
 import {
   isExamYearHeading,
@@ -38,13 +41,20 @@ export const StructurePageObservationSchema = z
     items: z.array(
       z
         .object({
-          section: PrintedHeadingSchema,
-          part: PrintedHeadingSchema,
-          topic: PrintedHeadingSchema,
+          section: PrintedHeadingSchema.optional(),
+          part: PrintedHeadingSchema.optional(),
+          topic: PrintedHeadingSchema.optional(),
+          headings: z.record(StructureLevelIdSchema, PrintedHeadingSchema).optional(),
           // Optional for previously saved observations; new AI responses always include this field.
           questionType: StructureQuestionTypeObservationSchema.nullable().optional(),
         })
-        .strict(),
+        .strict()
+        .refine(
+          (item) =>
+            item.headings !== undefined ||
+            [item.section, item.part, item.topic].every((value) => value !== undefined),
+          'Return headings or the three legacy heading fields.',
+        ),
     ),
   })
   .strict();
@@ -54,8 +64,8 @@ type Headings = Record<StructureHeadingLevel, string | null>;
 type DetectedQuestionType = (typeof KNOWN_QUESTION_TYPES)[number] | '';
 type QuestionTypes = Record<StructureHeadingLevel, DetectedQuestionType>;
 
-function printedHeading(value: HeadingValue): string | null {
-  return typeof value === 'object' && value !== null ? value.printed : value;
+function printedHeading(value: HeadingValue | undefined): string | null {
+  return typeof value === 'object' && value !== null ? value.printed : (value ?? null);
 }
 
 function headingKey(value: string): string {
@@ -83,7 +93,7 @@ function topicHeading(value: string): string | null {
   return value;
 }
 
-/** Collect printed headings only. Every attachment remains empty for the operator. */
+/** Collect verified headings; optional question-page ownership is derived from their PDF positions. */
 export class StructurePageAccumulator {
   private readonly nodes: DetectedStructureNode[] = [];
   private readonly warnings: string[] = [];
@@ -92,11 +102,27 @@ export class StructurePageAccumulator {
   private previous: Headings = { section: null, part: null, topic: null };
   private labels: Headings = { section: null, part: null, topic: null };
   private questionTypes: QuestionTypes = { section: '', part: '', topic: '' };
+  private readonly levels: string[];
+  private readonly pageTargets = new Map<number, DetectedStructureNode | null>();
+  private readonly failedQuestionPages = new Set<number>();
 
   constructor(
     private readonly context: StructureDetectionContext,
     private readonly rule: StructureRule | null = null,
-  ) {}
+  ) {
+    this.levels = structureHierarchy(rule).map((level) => level.id);
+    this.clearContext();
+  }
+
+  private clearContext(page?: number): void {
+    this.previous = Object.fromEntries(this.levels.map((level) => [level, null]));
+    this.labels = { ...this.previous };
+    this.questionTypes = Object.fromEntries(this.levels.map((level) => [level, '']));
+    if (page !== undefined) {
+      this.pageTargets.set(page, null);
+      this.failedQuestionPages.add(page);
+    }
+  }
 
   pageContext(): { previous: Headings; questionTypes: QuestionTypes } {
     return { previous: { ...this.previous }, questionTypes: { ...this.questionTypes } };
@@ -108,9 +134,7 @@ export class StructurePageAccumulator {
 
   failedPage(page: number, reason: string): void {
     this.warnings.push(`Page ${String(page)}: ${reason}`);
-    this.previous = { section: null, part: null, topic: null };
-    this.labels = { section: null, part: null, topic: null };
-    this.questionTypes = { section: '', part: '', topic: '' };
+    this.clearContext(page);
   }
 
   accept(
@@ -118,6 +142,7 @@ export class StructurePageAccumulator {
     raw: unknown,
     candidates: StructureHeadingCandidates,
     typeEvidence: readonly StructureQuestionTypeEvidence[] = [],
+    role: StructureCropRole = 'combined',
   ): StructureCropHeading[] {
     const accepted: StructureCropHeading[] = [];
     const parsed = StructurePageObservationSchema.safeParse(raw);
@@ -128,16 +153,44 @@ export class StructurePageAccumulator {
       );
       return accepted;
     }
+    if (role !== 'combined' && !this.levels.includes(role)) {
+      this.failedPage(
+        page,
+        'this crop uses a removed or unknown hierarchy level. Choose its heading type again.',
+      );
+      return accepted;
+    }
+    const items = parsed.data.items.map((item) => ({
+      headings: item.headings ?? {
+        section: item.section ?? null,
+        part: item.part ?? null,
+        topic: item.topic ?? null,
+      },
+      questionType: item.questionType,
+    }));
     if (
-      parsed.data.items.some((item) =>
-        STRUCTURE_HEADING_LEVELS.some(
+      items.some((item) =>
+        Object.entries(item.headings).some(
+          ([level, value]) => value !== null && !this.levels.includes(level),
+        ),
+      )
+    ) {
+      this.failedPage(
+        page,
+        'the model returned a level outside the saved hierarchy. Review this crop.',
+      );
+      return accepted;
+    }
+    if (
+      items.some((item) =>
+        this.levels.some(
           (level) =>
             hasExpectedStructureOutput(this.rule, level) &&
-            (typeof item[level] === 'string' ||
+            (typeof item.headings[level] === 'string' ||
               (level !== 'topic' &&
-                item[level] !== null &&
-                typeof item[level] === 'object' &&
-                !item[level].label)),
+                item.headings[level] != null &&
+                typeof item.headings[level] === 'object' &&
+                !item.headings[level].label)),
         ),
       )
     ) {
@@ -147,15 +200,27 @@ export class StructurePageAccumulator {
       );
       return accepted;
     }
-    for (const item of parsed.data.items) {
+    for (const observation of items) {
+      const item = observation.headings;
+      if (role !== 'combined') {
+        for (const level of this.levels)
+          if (level !== role && item[level] != null) {
+            this.warning(
+              `Page ${String(page)}: ignored ${level} heading in an operator-selected ${role} crop.`,
+            );
+            item[level] = null;
+          }
+      }
       let unsupportedParent = false;
-      for (const level of STRUCTURE_HEADING_LEVELS) {
+      for (const level of this.levels) {
         const printed = printedHeading(item[level]);
         if (printed === null) continue;
-        const source = candidates[level].find(
+        const source = candidates[level]?.find(
           (candidate) => printedHeadingKey(candidate) === printedHeadingKey(printed),
         );
         if (source === undefined) {
+          this.pageTargets.set(page, null);
+          this.failedQuestionPages.add(page);
           this.warning(
             `Page ${String(page)}: rejected ${level} heading "${printed}" because it was not a verified heading on this page.`,
           );
@@ -172,17 +237,13 @@ export class StructurePageAccumulator {
         }
       }
       if (unsupportedParent) {
-        this.previous = { section: null, part: null, topic: null };
-        this.labels = { section: null, part: null, topic: null };
-        this.questionTypes = { section: '', part: '', topic: '' };
+        this.clearContext(page);
         continue;
       }
-      const headings = {
-        section: printedHeading(item.section),
-        part: printedHeading(item.part),
-        topic: printedHeading(item.topic),
-      };
-      let detectedType = item.questionType ?? null;
+      const headings: Headings = Object.fromEntries(
+        this.levels.map((level) => [level, printedHeading(item[level])]),
+      );
+      let detectedType = observation.questionType ?? null;
       if (detectedType) {
         const observedType = detectedType;
         const evidence = typeEvidence.find(
@@ -191,21 +252,25 @@ export class StructurePageAccumulator {
             printedHeadingKey(value.printed) === printedHeadingKey(observedType.printed),
         );
         const typeHeadingCandidates = structureHeadingCandidates([observedType.printed], this.rule);
-        const explicitLevel = STRUCTURE_HEADING_LEVELS.find(
-          (level) => typeHeadingCandidates[level].length > 0,
-        );
+        const explicitLevel =
+          role === 'combined'
+            ? this.levels.find((level) => (typeHeadingCandidates[level]?.length ?? 0) > 0)
+            : this.levels.some((level) => (typeHeadingCandidates[level]?.length ?? 0) > 0)
+              ? role
+              : undefined;
         const printedLevel =
           explicitLevel ??
-          STRUCTURE_HEADING_LEVELS.find(
+          this.levels.find(
             (level) =>
-              headings[level] !== null &&
+              headings[level] != null &&
               printedHeadingKey(headings[level]) === printedHeadingKey(observedType.printed),
           );
         if (
           !evidence ||
+          (role !== 'combined' && detectedType.level !== role) ||
           (printedLevel && printedLevel !== detectedType.level) ||
           (explicitLevel &&
-            (headings[explicitLevel] === null ||
+            (headings[explicitLevel] == null ||
               printedHeadingKey(headings[explicitLevel]) !==
                 printedHeadingKey(observedType.printed)))
         ) {
@@ -215,60 +280,51 @@ export class StructurePageAccumulator {
           detectedType = null;
         }
       }
-      if (!headings.section && !headings.part && !headings.topic && !detectedType) continue;
+      if (!Object.values(headings).some(Boolean) && !detectedType) continue;
       const clean = (level: StructureHeadingLevel): StructureCropHeading['section'] => {
         const printed = printedHeading(item[level]);
         if (printed === null || (level === 'topic' && !topicHeading(printed))) return null;
         const label = this.outputLabel(level, item[level], page) ?? '';
         return { printed, label };
       };
-      const cleaned = {
-        section: clean('section'),
-        part: clean('part'),
-        topic: clean('topic'),
+      const cleanedHeadings = Object.fromEntries(this.levels.map((level) => [level, clean(level)]));
+      if (
+        this.rule?.hierarchy &&
+        this.levels.some((level) => level !== 'topic' && cleanedHeadings[level]?.label === '')
+      ) {
+        this.failedPage(
+          page,
+          'a parent label was unsupported. Its descendants were not attached to the preceding hierarchy.',
+        );
+        continue;
+      }
+      const cleaned: StructureCropHeading = {
+        section: cleanedHeadings.section ?? null,
+        part: cleanedHeadings.part ?? null,
+        topic: cleanedHeadings.topic ?? null,
+        ...(this.rule?.hierarchy ? { headings: cleanedHeadings } : {}),
         questionType: detectedType,
       };
       accepted.push(cleaned);
-      if (
-        headings.section &&
-        headingKey(headings.section) !== headingKey(this.previous.section ?? '')
-      ) {
-        this.previous = { section: headings.section, part: null, topic: null };
-        this.labels = {
-          section: cleaned.section?.label ?? null,
-          part: null,
-          topic: null,
-        };
-        this.questionTypes = { section: '', part: '', topic: '' };
-      }
-      if (headings.part && headingKey(headings.part) !== headingKey(this.previous.part ?? '')) {
-        this.previous.part = headings.part;
-        this.previous.topic = null;
-        this.labels.part = cleaned.part?.label ?? null;
-        this.labels.topic = null;
-        this.questionTypes.part = '';
-        this.questionTypes.topic = '';
-      }
-      if (headings.topic) {
-        const topic = topicHeading(headings.topic);
-        if (topic) {
-          if (headingKey(topic) !== headingKey(this.previous.topic ?? ''))
-            this.questionTypes.topic = '';
-          this.previous.topic = topic;
-          this.labels.topic = cleaned.topic?.label ?? null;
-        } else {
-          this.previous.topic = null;
-          this.labels.topic = null;
-          this.questionTypes.topic = '';
+      for (const [index, level] of this.levels.entries()) {
+        const printed = headings[level];
+        if (!printed) continue;
+        const heading = level === 'topic' ? topicHeading(printed) : printed;
+        if (!heading || headingKey(heading) !== headingKey(this.previous[level] ?? '')) {
+          this.previous[level] = heading;
+          this.labels[level] = heading ? (cleanedHeadings[level]?.label ?? null) : null;
+          this.questionTypes[level] = '';
+          for (const childLevel of this.levels.slice(index + 1)) {
+            this.previous[childLevel] = null;
+            this.labels[childLevel] = null;
+            this.questionTypes[childLevel] = '';
+          }
         }
       }
       let siblings = this.nodes;
-      const hierarchy = [
-        { label: this.previous.section, level: 'section' as const },
-        { label: this.previous.part, level: 'part' as const },
-        { label: this.previous.topic, level: 'topic' as const },
-      ];
+      const hierarchy = this.levels.map((level) => ({ label: this.previous[level], level }));
       const scopeNodes = new Map<StructureHeadingLevel, DetectedStructureNode>();
+      let deepestNode: DetectedStructureNode | null = null;
       for (const { label, level } of hierarchy) {
         if (!label) continue;
         const name = this.labels[level] ?? structureLabelFromHeading(level, label);
@@ -283,9 +339,12 @@ export class StructurePageAccumulator {
           siblings.push(node);
         }
         scopeNodes.set(level, node);
+        deepestNode = node;
         this.questionTypes[level] = this.scopeQuestionTypes.get(node) ?? '';
         siblings = node.children;
       }
+      // Later crops on the same page refine a Section/Part target to that page's final child.
+      this.pageTargets.set(page, deepestNode);
       if (detectedType) {
         const node = scopeNodes.get(detectedType.level);
         const existing = node ? this.scopeQuestionTypes.get(node) : undefined;
@@ -308,7 +367,7 @@ export class StructurePageAccumulator {
 
   private outputLabel(
     level: StructureHeadingLevel,
-    value: HeadingValue,
+    value: HeadingValue | undefined,
     page: number,
   ): string | null {
     const printed = printedHeading(value);
@@ -323,7 +382,9 @@ export class StructurePageAccumulator {
       const valid =
         level === 'part'
           ? Boolean(label) && headingKey(original) === headingKey(label)
-          : printedHeadingKey(original) === printedHeadingKey(label);
+          : !STRUCTURE_HEADING_LEVELS.some((id) => id === level)
+            ? Boolean(label) && isPrintedTopicLabel(cleanPrinted, label)
+            : printedHeadingKey(original) === printedHeadingKey(label);
       if (!valid) {
         this.warning(
           `Page ${String(page)}: rejected a cleaned ${level} label that changed its printed identifier or wording; kept the source label.`,
@@ -332,10 +393,27 @@ export class StructurePageAccumulator {
       }
       return label;
     }
-    const expected = this.rule?.expectedOutputs?.[level];
-    const matchesExample =
-      printedHeadingKey(printed) === printedHeadingKey(this.rule?.examples[level] ?? '');
+    const entry = structureHierarchy(this.rule).find((item) => item.id === level);
+    const expected = entry?.expectedOutput;
+    const matchesExample = printedHeadingKey(printed) === printedHeadingKey(entry?.example ?? '');
     const label = matchesExample && expected != null ? expected : value.label;
+    const identifier = /\b(?:\d+|[ivxlcdm]+|[a-z])\b/iu;
+    const exampleIdentifier = entry?.example.match(identifier)?.[0];
+    if (
+      level !== 'topic' &&
+      expected &&
+      /^(?:\d+|[ivxlcdm]+|[a-z])$/iu.test(expected) &&
+      exampleIdentifier &&
+      headingKey(exampleIdentifier) === headingKey(expected)
+    ) {
+      const printedIdentifier = cleanPrinted.match(identifier)?.[0];
+      if (!printedIdentifier || headingKey(printedIdentifier) !== headingKey(label)) {
+        this.warning(
+          `Page ${String(page)}: a ${level} output changed its printed identifier; it was omitted.`,
+        );
+        return '';
+      }
+    }
     const numericPart =
       level === 'part' &&
       /^\d+$/u.test(label) &&
@@ -358,7 +436,37 @@ export class StructurePageAccumulator {
     return label;
   }
 
-  result(): { nodes: DetectedStructureNode[]; warnings: string[] } {
+  private questionPageAssignments(pageCount: number): {
+    pages: WeakMap<DetectedStructureNode, number[]>;
+    warnings: string[];
+  } {
+    const pages = new WeakMap<DetectedStructureNode, number[]>();
+    const unassigned: number[] = [];
+    let current: DetectedStructureNode | null = null;
+    for (let page = 1; page <= pageCount; page += 1) {
+      if (this.failedQuestionPages.has(page)) current = null;
+      else if (this.pageTargets.has(page)) current = this.pageTargets.get(page) ?? null;
+      if (!current || current.children.length > 0) {
+        unassigned.push(page);
+        continue;
+      }
+      const assigned = pages.get(current) ?? [];
+      assigned.push(page);
+      pages.set(current, assigned);
+    }
+    return {
+      pages,
+      warnings: unassigned.length
+        ? [
+            `Question pages left unassigned: ${unassigned.slice(0, 20).join(', ')}${unassigned.length > 20 ? `… (${String(unassigned.length)} pages)` : ''}. Review missing or rejected headings; pages attach only to final children.`,
+          ]
+        : [],
+    };
+  }
+
+  result(questionPageCount?: number): { nodes: DetectedStructureNode[]; warnings: string[] } {
+    const assignment =
+      questionPageCount === undefined ? null : this.questionPageAssignments(questionPageCount);
     const copy = (
       node: DetectedStructureNode,
       inheritedType: DetectedQuestionType = '',
@@ -366,16 +474,21 @@ export class StructurePageAccumulator {
       const questionType = this.scopeQuestionTypes.get(node) || inheritedType;
       return {
         ...node,
-        questionType: node.level === 'topic' ? questionType : '',
-        pages: { ...node.pages },
-        // Parent types are applied to Topic leaves, including unnamed Topics.
-        children:
-          node.children.length === 0 && node.level !== 'topic'
-            ? [{ ...this.newNode('topic', ''), questionType }]
-            : node.children.map((child) => copy(child, questionType)),
+        questionType: node.children.length === 0 ? questionType : '',
+        pages: {
+          ...node.pages,
+          ...(assignment && node.children.length === 0
+            ? { question: assignment.pages.get(node) ?? [] }
+            : {}),
+        },
+        // Apply scoped types to the last printed node; absent Topics need no placeholder.
+        children: node.children.map((child) => copy(child, questionType)),
       };
     };
-    return { nodes: this.nodes.map((node) => copy(node)), warnings: [...this.warnings] };
+    return {
+      nodes: this.nodes.map((node) => copy(node)),
+      warnings: [...this.warnings, ...(assignment?.warnings ?? [])],
+    };
   }
 
   private newNode(level: DetectedStructureNode['level'], label: string): DetectedStructureNode {

@@ -9,6 +9,7 @@ export function createStructureRulesController(service: StructureRulesService): 
   list: RequestHandler;
   resolve: RequestHandler;
   save: RequestHandler;
+  remove: RequestHandler;
 } {
   return {
     list: asyncHandler(async (_req, res) => {
@@ -19,6 +20,9 @@ export function createStructureRulesController(service: StructureRulesService): 
     }),
     save: asyncHandler(async (req, res) => {
       ok(res, await service.save(parseOrThrow(SaveStructureRuleSchema, req.body)));
+    }),
+    remove: asyncHandler(async (req, res) => {
+      ok(res, await service.remove(parseOrThrow(StructureRuleScopeSchema, req.query)));
     }),
   };
 }

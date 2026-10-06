@@ -7,7 +7,7 @@ export function StructureRulesPage(): JSX.Element {
     <section className="page">
       <PageHeader
         title="Structure example rules"
-        subtitle="Save the printed Section, Part and Topic heading formats for each module, textbook or PYQ exam. AI loads the matching examples when you detect a PDF's structure."
+        subtitle="Set each module, textbook or PYQ exam's heading hierarchy, printed examples and expected output. Start with Section, Part and Topic, then add, rename or remove levels to match the source."
       />
       <StructureRulesSettings />
     </section>

@@ -2,12 +2,21 @@ import { z } from 'zod';
 import {
   StructureCropSchema,
   StructureExtractedCropSchema,
+  StructureCropRoleSchema,
   type StructureCropBounds,
   type StructureTextCrop,
   type StructureExtractedCrop,
+  type StructureCropRole,
 } from '@ingest/contracts';
 
 export type StructureCropMode = 'none' | 'horizontal' | 'rectangle';
+export const StructureCropSizeSchema = z
+  .object({
+    width: z.number().finite().min(0.005).max(1),
+    height: z.number().finite().min(0.005).max(1),
+  })
+  .strict();
+export type StructureCropSize = z.infer<typeof StructureCropSizeSchema>;
 export const StructureCropDraftItemSchema = StructureCropSchema.extend({
   text: z.string().max(12000),
   reviewedText: z.string().max(12000).nullable(),
@@ -31,10 +40,70 @@ export const StructureCropDraftSchema = z
     fingerprint: z.string(),
     ordered: z.boolean(),
     crops: z.array(StructureCropDraftItemSchema).max(1000),
+    lockedSizes: z.record(StructureCropRoleSchema, StructureCropSizeSchema).optional(),
   })
   .strict();
 export type StructureCropDraftItem = z.infer<typeof StructureCropDraftItemSchema>;
 export type StructureCropDraft = z.infer<typeof StructureCropDraftSchema>;
+
+export function lockStructureCropSize(draft: StructureCropDraft, id: string): StructureCropDraft {
+  const crop = draft.crops.find((item) => item.id === id);
+  if (!crop) return draft;
+  return {
+    ...draft,
+    lockedSizes: {
+      ...draft.lockedSizes,
+      [crop.role ?? 'combined']: {
+        width: crop.bounds.x1 - crop.bounds.x0,
+        height: crop.bounds.y1 - crop.bounds.y0,
+      },
+    },
+  };
+}
+
+export function unlockStructureCropSize(
+  draft: StructureCropDraft,
+  role: StructureCropRole,
+): StructureCropDraft {
+  if (!draft.lockedSizes?.[role]) return draft;
+  const lockedSizes = Object.fromEntries(
+    Object.entries(draft.lockedSizes).filter(([id]) => id !== role),
+  );
+  return { ...draft, lockedSizes };
+}
+
+/** Clamp the position, preserving the saved size even when the pointer is near a page edge. */
+export function placeLockedStructureCrop(
+  size: StructureCropSize,
+  point: { x: number; y: number },
+): StructureCropBounds {
+  const x0 = Math.max(0, Math.min(1 - size.width, point.x));
+  const y0 = Math.max(0, Math.min(1 - size.height, point.y));
+  return { x0, y0, x1: x0 + size.width, y1: y0 + size.height };
+}
+
+/** Save a whole generation in one draft update, preserving results for unchanged image/text roles. */
+export function saveStructureCropResults(
+  draft: StructureCropDraft,
+  results: readonly StructureExtractedCrop[],
+  contextKey: string,
+  warnings: readonly string[],
+): StructureCropDraft {
+  const byId = new Map(results.map((result) => [result.cropId, result]));
+  return {
+    ...draft,
+    crops: draft.crops.map((crop) => {
+      const result = byId.get(crop.id);
+      return result &&
+        crop.ocrDone &&
+        !crop.error &&
+        crop.text === result.text &&
+        (crop.role ?? 'combined') === (result.role ?? 'combined')
+        ? { ...crop, ai: { result, contextKey, warnings: [...warnings] } }
+        : crop;
+    }),
+  };
+}
 
 export function reviewedStructureCropResults(
   crops: readonly StructureCropDraftItem[],
@@ -46,7 +115,8 @@ export function reviewedStructureCropResults(
     crop.ocrDone &&
     !crop.error &&
     crop.reviewedText === crop.text &&
-    crop.ai.result.text === crop.text
+    crop.ai.result.text === crop.text &&
+    (crop.ai.result.role ?? 'combined') === (crop.role ?? 'combined')
       ? [crop.ai.result]
       : [],
   );
@@ -93,7 +163,18 @@ export function reviewedStructureText(draft: StructureCropDraft | null): Structu
     id: crop.id,
     pageNumber: crop.pageNumber,
     text: crop.reviewedText ?? '',
+    ...(crop.role ? { role: crop.role } : {}),
   }));
+}
+
+/** The image is unchanged, but previous AI classification no longer matches the operator's role. */
+export function retypedStructureCrop(
+  crop: StructureCropDraftItem,
+  role: StructureCropRole,
+): StructureCropDraftItem {
+  return (crop.role ?? 'combined') === role
+    ? crop
+    : { ...crop, role, reviewedText: null, ai: null };
 }
 
 /** Clamp translation instead of individual corners so dragging never shrinks a crop. */

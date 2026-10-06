@@ -8,5 +8,6 @@ export function createStructureRulesRouter(service: StructureRulesService): Rout
   router.get('/', controller.list);
   router.get('/resolve', controller.resolve);
   router.put('/', controller.save);
+  router.delete('/', controller.remove);
   return router;
 }

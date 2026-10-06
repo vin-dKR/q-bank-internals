@@ -15,6 +15,7 @@ import {
   structureTextBatches,
   structureCropContextKey,
   reusableStructureCrop,
+  STRUCTURE_TYPED_CROP_CONCURRENCY,
 } from '../../modules/ingestion/index.js';
 
 export const STRUCTURE_OUTPUT_TOKEN_LIMIT = 10000;
@@ -63,14 +64,15 @@ export function estimateStructure(
   const characters = batches.reduce((sum, batch) => {
     const crops = batch.map((crop) => ({
       ...crop,
-      candidates: structureHeadingCandidates(crop.text.split(/\r?\n/u), input.rule, true),
+      candidates: structureHeadingCandidates(
+        crop.text.split(/\r?\n/u),
+        input.rule,
+        true,
+        crop.role,
+      ),
       questionTypeEvidence: structureQuestionTypeEvidence(crop.text.split(/\r?\n/u)),
     }));
-    const candidates = {
-      section: [...new Set(crops.flatMap((crop) => crop.candidates.section))],
-      part: [...new Set(crops.flatMap((crop) => crop.candidates.part))],
-      topic: [...new Set(crops.flatMap((crop) => crop.candidates.topic))],
-    };
+    const candidates = crops[0]?.candidates ?? structureHeadingCandidates([], input.rule);
     return (
       sum +
       STRUCTURE_SYSTEM_PROMPT.length +
@@ -81,6 +83,7 @@ export function estimateStructure(
           candidates,
           crops.map((crop) => crop.id),
           crops.flatMap((crop) => crop.questionTypeEvidence),
+          batch[0]?.role,
         ),
       ).length +
       1500
@@ -112,10 +115,10 @@ export function estimateStructure(
     costUsd: min === null || max === null ? null : { min, max },
     assumptions: [
       'Text-based planning range using reviewed crop text, heading/type evidence, saved examples and schema. This is not a spending cap; actual usage can fall outside it.',
-      'One nonempty crop per sequential AI call, with preceding heading context. Blank reviewed crops use no AI tokens. Page assignments remain manual.',
+      `One nonempty crop per AI call. Up to ${String(STRUCTURE_TYPED_CROP_CONCURRENCY)} typed crops run together; Combined crops run sequentially with preceding heading context. Blank reviewed crops use no AI tokens. Code assigns question pages; supporting attachments remain manual.`,
       'Tesseract OCR uses no OpenAI tokens. Server compute and storage costs are outside this estimate. Images and PDFs are never sent to this AI step.',
       `Input uses roughly 3–5 characters per token and allows for preceding heading context. Output allows up to ${String(STRUCTURE_OUTPUT_TOKEN_LIMIT)} tokens per crop call including reasoning. No automatic retries.`,
-      'Uses standard USD API rates without cache discounts, taxes or other extraction steps. Unchanged per-crop AI results are reused when building JSON; changed text, metadata or source rules requires a new call.',
+      'Uses standard USD API rates without cache discounts, taxes or other extraction steps. Unchanged per-crop AI results are reused when building JSON; changed crop roles, text, metadata or source rules requires a new call.',
     ],
   };
 }
