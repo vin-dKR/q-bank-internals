@@ -29,7 +29,7 @@ export type ReExtractInput = {
 /** A tightly cropped region selected from a source PDF for literal transcription. */
 export type TranscribeRegionInput = {
   png: Buffer;
-  destination: 'stem' | 'answer' | 'solution';
+  destination: 'stem' | 'option' | 'answer' | 'solution';
 };
 
 /** The re-extracted fields plus the token spend the model reported producing them. */

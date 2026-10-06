@@ -243,7 +243,8 @@ export const questionsApi = {
       documentId: string;
       page: number;
       bbox: [number, number, number, number];
-      destination: 'stem' | 'answer' | 'solution';
+      destination: 'stem' | 'option' | 'answer' | 'solution';
+      optionIndex?: number;
       source?: ReExtractSource;
     },
   ): Promise<{ text: string }> => request(`/questions/${questionId}/transcribe-region`, {
