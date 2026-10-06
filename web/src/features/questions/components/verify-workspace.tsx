@@ -164,7 +164,8 @@ type CropRequest = {
 type RegionTranscriptionTarget = {
   questionId: string;
   page: number;
-  destination: 'stem' | 'answer' | 'solution';
+  destination: 'stem' | 'option' | 'answer' | 'solution';
+  optionIndex?: number;
   source?: ReExtractSource;
 };
 
@@ -2196,24 +2197,57 @@ export function VerifyWorkspace({
       page: target.page,
       bbox,
       destination: target.destination,
+      ...(target.destination === 'option' ? { optionIndex: target.optionIndex } : {}),
       ...(target.source ? { source: target.source } : {}),
     }).then(({ text }) => {
-      const fieldKey = target.destination === 'solution'
-        ? 'explanation'
-        : target.destination;
       const currentQuestion = questionById.get(target.questionId);
-      const currentText = currentQuestion ? drafts.draftFor(currentQuestion)[fieldKey] : '';
-      const reviewedText = currentText.trim() ? `${currentText.trim()}\n${text}` : text;
+      const currentDraft = currentQuestion ? drafts.draftFor(currentQuestion) : null;
+      const optionIndex = target.optionIndex;
+      const option =
+        target.destination === 'option' && optionIndex !== undefined
+          ? currentDraft?.options[optionIndex]
+          : undefined;
+      if (target.destination === 'option' && !option) {
+        toast.error('Option no longer exists', 'Refresh the question and select the option again.');
+        return;
+      }
+      const fieldKey =
+        target.destination === 'solution'
+          ? 'explanation'
+          : target.destination === 'option'
+            ? 'option'
+            : target.destination;
+      const currentText =
+        target.destination === 'option'
+          ? (option?.body ?? '')
+          : fieldKey === 'explanation'
+            ? (currentDraft?.explanation ?? '')
+            : target.destination === 'stem'
+              ? (currentDraft?.stem ?? '')
+              : (currentDraft?.answer ?? '');
+      // A tight option crop corrects that option, whereas a field crop can include an additional line.
+      const reviewedText =
+        target.destination === 'option'
+          ? text
+          : currentText.trim()
+            ? `${currentText.trim()}\n${text}`
+            : text;
       drafts.updateDraft(target.questionId, (previous) => ({
         ...previous,
-        ...(target.destination === 'stem'
+        ...(target.destination === 'option' && optionIndex !== undefined
+          ? {
+              options: previous.options.map((item, index) =>
+                index === optionIndex ? { ...item, body: text, generated: false } : item,
+              ),
+            }
+          : target.destination === 'stem'
           ? { stem: previous.stem.trim() ? `${previous.stem.trim()}\n${text}` : text }
           : target.destination === 'answer'
             ? { answer: previous.answer.trim() ? `${previous.answer.trim()}\n${text}` : text }
               : { explanation: previous.explanation.trim() ? `${previous.explanation.trim()}\n${text}` : text }),
       }));
       void questionsApi.checkLatexField(fieldKey, reviewedText).then(({ issues }) => {
-        const field = target.destination === 'stem' ? 'question' : target.destination;
+        const field = target.destination === 'option' ? `option ${option?.label ?? ''}` : target.destination === 'stem' ? 'question' : target.destination;
         if (issues.length > 0) {
           toast.toast({
             tone: 'info',
@@ -2224,7 +2258,7 @@ export function VerifyWorkspace({
           toast.success(`Text added to the ${field} draft`, `LaTeX check passed. Review it, then select Update to save. The source image is unchanged.`);
         }
       }).catch(() => {
-        const field = target.destination === 'stem' ? 'question' : target.destination;
+        const field = target.destination === 'option' ? `option ${option?.label ?? ''}` : target.destination === 'stem' ? 'question' : target.destination;
         toast.success(`Text added to the ${field} draft`, 'Review it, then select Update to save. The source image is unchanged.');
       });
     }).catch((caught: unknown) => {
@@ -2272,17 +2306,21 @@ export function VerifyWorkspace({
 
   const armRegionTranscription = (
     question: Question,
-    destination: 'stem' | 'answer' | 'solution',
+    destination: 'stem' | 'option' | 'answer' | 'solution',
     source?: ReExtractSource,
+    optionIndex?: number,
   ): void => {
+    const selectedOptionIndex = destination === 'option' ? optionIndex : undefined;
+    if (destination === 'option' && selectedOptionIndex === undefined) return;
     cancelCropRequest();
     setDrawTarget(null);
-    const target = {
+    const target: RegionTranscriptionTarget = {
       questionId: question.id,
       page: source?.page ?? question.sourceRegion.page,
       destination,
       ...(source ? { source } : {}),
     };
+    if (selectedOptionIndex !== undefined) target.optionIndex = selectedOptionIndex;
     regionTranscriptionTargetRef.current = target;
     setRegionTranscriptionTarget(target);
     const fromQuestionPage = !source || source.documentId === documentId;
@@ -2295,8 +2333,11 @@ export function VerifyWorkspace({
     }
     toast.toast({
       tone: 'info',
-      title: `Select the ${destination === 'stem' ? 'question' : destination} area on the PDF`,
-      description: 'Drag a box around the exact region. Press Escape to cancel.',
+      title: `Select the ${destination === 'stem' ? 'question' : destination === 'option' ? 'option' : destination} area on the PDF`,
+      description:
+        destination === 'option'
+          ? 'Drag a box around this option. Its current draft text will be replaced. Press Escape to cancel.'
+          : 'Drag a box around the exact region. Press Escape to cancel.',
     });
   };
 

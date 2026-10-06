@@ -572,6 +572,9 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     const prompt = [
       'You are transcribing a cropped region of an exam paper into a question-bank text field.',
       `Destination field: ${input.destination}.`,
+      ...(input.destination === 'option'
+        ? ['The crop is one answer option. Return its body only; do not include its printed option label (such as A., B., 1, or ii).']
+        : []),
       'Return JSON with one string property named "text".',
       'Transcribe every readable item in the crop, in its printed order. Preserve the wording, labels, numbering, punctuation, and mathematical meaning exactly.',
       'Do not solve the problem, explain it, infer content outside the crop, omit repeated items, or add labels that are not printed.',

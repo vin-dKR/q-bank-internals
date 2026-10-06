@@ -13,8 +13,25 @@ export const TranscribeQuestionRegionRequestSchema = z.object({
   documentId: z.string().min(1),
   page: z.number().int().positive(),
   bbox: NormalizedPageBoxSchema,
-  destination: z.enum(['stem', 'answer', 'solution']),
+  destination: z.enum(['stem', 'option', 'answer', 'solution']),
+  /** The one option body to replace when destination is `option`; labels remain unchanged. */
+  optionIndex: z.number().int().nonnegative().optional(),
   source: ReExtractSourceSchema.optional(),
+}).superRefine((input, context) => {
+  if (input.destination === 'option' && input.optionIndex === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['optionIndex'],
+      message: 'An option transcription requires the selected option index.',
+    });
+  }
+  if (input.destination !== 'option' && input.optionIndex !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['optionIndex'],
+      message: 'Only option transcriptions may include an option index.',
+    });
+  }
 });
 
 export const TranscribeQuestionRegionResponseSchema = z.object({
