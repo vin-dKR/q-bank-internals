@@ -502,13 +502,14 @@ export class QuestionsService {
     return { field, issues: detectLatexInField(field, text) };
   }
 
-  /** Transcribe a user-selected question/answer/solution PDF region into reviewable draft text. */
+  /** Transcribe a user-selected question/option/answer/solution PDF region into reviewable draft text. */
   async transcribeQuestionRegion(input: {
     questionId: string;
     documentId: string;
     page: number;
     bbox: [number, number, number, number];
-    destination: 'stem' | 'answer' | 'solution';
+    destination: 'stem' | 'option' | 'answer' | 'solution';
+    optionIndex?: number | undefined;
     source?: ReExtractSource | undefined;
   }): Promise<{ text: string }> {
     const [question, document] = await Promise.all([
@@ -531,7 +532,11 @@ export class QuestionsService {
       source.sourceKind === 'question' ||
       (input.destination === 'answer' && (source.sourceKind === 'answer' || source.fieldTarget === 'answer')) ||
       (input.destination === 'solution' && (source.sourceKind === 'solution' || source.fieldTarget === 'solution'));
-    if (!sourceMatchesDestination || (input.destination === 'stem' && source.sourceKind !== 'question')) {
+    if (
+      !sourceMatchesDestination ||
+      ((input.destination === 'stem' || input.destination === 'option') &&
+        source.sourceKind !== 'question')
+    ) {
       throw errors.validation({ message: 'Choose a source PDF that matches the text field you are transcribing.' });
     }
     if (source.page !== input.page) {

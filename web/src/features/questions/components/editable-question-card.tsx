@@ -117,8 +117,9 @@ type Props = {
   /** Arm drag-to-transcribe for this question's source region. */
   onTranscribeRegion: (
     question: Question,
-    destination: 'stem' | 'answer' | 'solution',
+    destination: 'stem' | 'option' | 'answer' | 'solution',
     source?: ReExtractSource,
+    optionIndex?: number,
   ) => void;
   transcribingRegion?: boolean;
 };
@@ -1487,6 +1488,15 @@ export function EditableQuestionCard({
                 />
               </div>
               <IconButton
+                icon={<IconTextSelect />}
+                label={`Select a PDF area and transcribe it into option ${option.label}`}
+                size="sm"
+                disabled={cropDisabled || transcribingRegion}
+                onClick={() => {
+                  onTranscribeRegion(question, 'option', undefined, index);
+                }}
+              />
+              <IconButton
                 icon={<IconX />}
                 label="Remove answer choice"
                 size="sm"
@@ -1891,6 +1901,15 @@ export function EditableQuestionCard({
                       />
                     </div>
                     <IconButton
+                      icon={<IconTextSelect />}
+                      label={`Select a PDF area and transcribe it into option ${option.label}`}
+                      size="sm"
+                      disabled={cropDisabled || transcribingRegion}
+                      onClick={() => {
+                        onTranscribeRegion(question, 'option', undefined, i);
+                      }}
+                    />
+                    <IconButton
                       icon={<IconX />}
                       label={`Remove ${origin.toLowerCase()} answer choice`}
                       size="sm"
@@ -2075,6 +2094,16 @@ export function EditableQuestionCard({
                               setOption(i, text);
                             },
                             (fresh) => fresh.options[i]?.body ?? null,
+                            undefined,
+                            undefined,
+                            <IconButton
+                              icon={<IconTextSelect />}
+                              label={`Select a PDF area and transcribe it into option ${option.label}`}
+                              disabled={cropDisabled || transcribingRegion}
+                              onClick={() => {
+                                onTranscribeRegion(question, 'option', undefined, i);
+                              }}
+                            />,
                           )}
                           <IconButton
                             icon={<IconX />}

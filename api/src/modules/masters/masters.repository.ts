@@ -14,6 +14,8 @@ export type DictionaryRow = {
   moduleId: string | null;
   /** Subject only — optional compatible exams. Empty means the subject remains global. */
   examIds: string[];
+  /** Exam only — symmetric links to independently-filed related exams. */
+  relatedExamIds: string[];
 };
 
 /** Parsed list filters: a name substring + parent-scope narrowing (chapters by subject, sections by module, topics by chapter). */
@@ -35,6 +37,7 @@ export type NewDictionaryRow = {
   chapterId: string | null;
   moduleId: string | null;
   examIds: string[];
+  relatedExamIds: string[];
 };
 
 /** A `$set` patch. Only the keys present are written; `null` clears a scope link. */
@@ -47,6 +50,7 @@ export type DictionaryPatch = {
   chapterId?: string | null;
   moduleId?: string | null;
   examIds?: string[];
+  relatedExamIds?: string[];
 };
 
 /**
