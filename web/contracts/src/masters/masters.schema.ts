@@ -48,6 +48,8 @@ export const DictionaryEntrySchema = z.object({
   moduleId: z.string().nullable(),
   /** subject only — optional compatible Exam ids. Empty means globally available. */
   examIds: z.array(z.string()),
+  /** exam only — independently-filed exams included together in bank filters. */
+  relatedExamIds: z.array(z.string()),
   questionCount: z.number().int().nonnegative(),
 });
 export type DictionaryEntry = z.infer<typeof DictionaryEntrySchema>;
@@ -82,6 +84,7 @@ export const CreateDictionaryEntrySchema = z.object({
   chapterId: z.string().optional(),
   moduleId: z.string().optional(),
   examIds: z.array(z.string()).optional(),
+  relatedExamIds: z.array(z.string()).optional(),
 });
 export type CreateDictionaryEntry = z.infer<typeof CreateDictionaryEntrySchema>;
 
@@ -96,6 +99,7 @@ export const UpdateDictionaryEntrySchema = z
     chapterId: z.string().nullable().optional(),
     moduleId: z.string().nullable().optional(),
     examIds: z.array(z.string()).optional(),
+    relatedExamIds: z.array(z.string()).optional(),
   })
   .refine((patch) => Object.keys(patch).length > 0, {
     message: 'Provide at least one field to update.',
