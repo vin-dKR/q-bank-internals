@@ -85,9 +85,9 @@ export type Source = z.infer<typeof SourceSchema>;
 
 /**
  * The predefined question categories, offered as first-class dropdown options. This list is the
- * operator's vocabulary for topic-level question-type configs: the AI extracts against a type chosen
- * from here and never picks or invents one (e.g. it can't relabel "only one option correct" as a
- * generic MCQ). Names follow the existing snake_case convention.
+ * vocabulary for topic-level question-type configs. Structure detection can propose a category
+ * supported by reviewed OCR text; content extraction uses the operator-approved type from here.
+ * Neither step invents categories. Names follow the existing snake_case convention.
  */
 export const KNOWN_QUESTION_TYPES = [
   'single_correct', // MCQ, exactly one option correct

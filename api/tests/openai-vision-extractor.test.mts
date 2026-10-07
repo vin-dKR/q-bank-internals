@@ -18,8 +18,8 @@ function extractor(responses: FakeResponse[]): {
   call: (prompt: string, png: Buffer, usage: { promptTokens: number; completionTokens: number; totalTokens: number; callCount: number }) => Promise<{ content: string }>;
 } {
   const instance = new OpenAiVisionExtractor('test-key', 'test-model', async () => ({}), async () => ({
-    questionTypes: [],
-    levels: [],
+    questionType: [],
+    level: [],
   }));
   Object.assign(instance, {
     client: {
@@ -39,7 +39,7 @@ function extractor(responses: FakeResponse[]): {
   };
 }
 
-test('ordinary extraction does not audit a response that emitted no SMILES tag', async () => {
+void test('ordinary extraction does not audit a response that emitted no SMILES tag', async () => {
   const instance = extractor([reply('{"questions":[]}')]);
   const usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, callCount: 0 };
 
@@ -49,7 +49,7 @@ test('ordinary extraction does not audit a response that emitted no SMILES tag',
   assert.equal(usage.callCount, 1);
 });
 
-test('ordinary extraction audits a response that emitted a SMILES tag', async () => {
+void test('ordinary extraction audits a response that emitted a SMILES tag', async () => {
   const first = '{"questions":[{"question_text":"<smiles>c1ccccc1</smiles>"}]}';
   const audited = '{"questions":[{"question_text":"<smiles>c1ccccc1</smiles>"}]}';
   const instance = extractor([reply(first), reply(audited)]);

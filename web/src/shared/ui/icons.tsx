@@ -7,6 +7,42 @@ import type { JSX, SVGProps } from 'react';
  */
 type IconProps = SVGProps<SVGSVGElement>;
 
+export function IconInfo(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v6M12 7h.01" />
+    </svg>
+  );
+}
+
+export function IconRupee(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8 7h8M8 10h8M8 13h2a3 3 0 0 0 0-6M8 13l6 6" />
+    </svg>
+  );
+}
+
+export function IconLock(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <rect x="4" y="10" width="16" height="11" rx="2" />
+      <path d="M8 10V7a4 4 0 0 1 8 0v3M12 15v2" />
+    </svg>
+  );
+}
+
+export function IconUnlock(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <rect x="4" y="10" width="16" height="11" rx="2" />
+      <path d="M8 10V7a4 4 0 0 1 7.5-2M12 15v2" />
+    </svg>
+  );
+}
+
 function base(props: IconProps): IconProps {
   return {
     viewBox: '0 0 24 24',

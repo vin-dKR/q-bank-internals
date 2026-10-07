@@ -248,6 +248,7 @@ export function AppLayout(): JSX.Element {
           <NavItem to="/masters/taxonomy" icon={<IconMasters />} label="Question taxonomy" collapsed={collapsed} />
           <NavItem to="/masters/exam-access" icon={<IconLayers />} label="Exam access" collapsed={collapsed} />
           <NavItem to="/prompts" icon={<IconFileText />} label="AI prompts" collapsed={collapsed} />
+          <NavItem to="/structure-rules" icon={<IconLayers />} label="Structure rules" collapsed={collapsed} />
         </nav>
 
         <SectionCaption label="Tools" collapsed={collapsed} />

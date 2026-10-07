@@ -1,5 +1,12 @@
 import { useCallback, useMemo, useState } from 'react';
-import type { ChapterKind } from '@ingest/contracts';
+import {
+  structureHierarchy,
+  structureRuleScope,
+  structureRuleScopeKey,
+  type ChapterKind,
+  type StructureHierarchyLevel,
+} from '@ingest/contracts';
+import { useResolvedStructureRule } from '../../structure-rules/index.js';
 import { emptyMetadata, type ChapterMetadataDraft } from '../types/chapter-group.js';
 import type {
   MaterializedArtifact,
@@ -22,6 +29,8 @@ export type StructureTreeController = {
   tree: StructureTree;
   /** True once the operator has built any structure — drives the empty state. */
   hasNodes: boolean;
+  /** Apply a fully materialized AI proposal without touching operator metadata. */
+  replaceNodes: (nodes: StructureNode[], hierarchy?: StructureHierarchyLevel[]) => void;
   setMetadata: (patch: Partial<ChapterMetadataDraft>) => void;
   /** Add a child node under `parentId`, or a top-level node when null. Returns the new node's id. */
   addNode: (parentId: string | null, level: NodeLevel | null, label?: string) => string;
@@ -53,6 +62,27 @@ export type StructureTreeController = {
 export function useStructureTree(): StructureTreeController {
   const [metadata, setMeta] = useState<ChapterMetadataDraft>(emptyMetadata);
   const [nodes, setNodes] = useState<StructureNode[]>([]);
+  const [importedHierarchy, setImportedHierarchy] = useState<{
+    scope: string;
+    levels: StructureHierarchyLevel[];
+  } | null>(null);
+  const rule = useResolvedStructureRule(metadata);
+  const scope = structureRuleScope(metadata);
+  const scopeKey = scope ? structureRuleScopeKey(scope) : '';
+  const hierarchy = useMemo(
+    () =>
+      importedHierarchy?.scope === scopeKey
+        ? importedHierarchy.levels
+        : structureHierarchy(rule.data),
+    [rule.data, importedHierarchy, scopeKey],
+  );
+  const replaceNodes = useCallback(
+    (nodes: StructureNode[], levels?: StructureHierarchyLevel[]): void => {
+      setNodes(nodes);
+      setImportedHierarchy(levels ? { scope: scopeKey, levels } : null);
+    },
+    [scopeKey],
+  );
 
   const setMetadata = useCallback((patch: Partial<ChapterMetadataDraft>): void => {
     setMeta((prev) => ({ ...prev, ...patch }));
@@ -107,22 +137,33 @@ export function useStructureTree(): StructureTreeController {
   }, []);
 
   const loadConfig = useCallback((config: ParsedConfig): StructureNode[] => {
-    const fresh = nodesFromConfig(config.nodes);
+    const fresh = nodesFromConfig(config.nodes, !config.hierarchy);
     setMeta(config.metadata);
     setNodes(fresh);
+    const scope = structureRuleScope(config.metadata);
+    setImportedHierarchy(
+      config.hierarchy
+        ? { scope: scope ? structureRuleScopeKey(scope) : '', levels: config.hierarchy }
+        : null,
+    );
     return fresh;
   }, []);
 
   const reset = useCallback((): void => {
     setMeta(emptyMetadata());
     setNodes([]);
+    setImportedHierarchy(null);
   }, []);
 
-  const tree = useMemo<StructureTree>(() => ({ metadata, nodes }), [metadata, nodes]);
+  const tree = useMemo<StructureTree>(
+    () => ({ metadata, nodes, hierarchy }),
+    [metadata, nodes, hierarchy],
+  );
 
   return {
     tree,
     hasNodes: nodes.length > 0,
+    replaceNodes,
     setMetadata,
     addNode,
     renameNode,

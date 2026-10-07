@@ -1,6 +1,7 @@
 import {
   type PDFDocument as PDFDocumentType,
   type PDFEmbeddedPage,
+  type PageBoundingBox,
   type PDFPage,
   PageSizes,
 } from 'pdf-lib';
@@ -23,6 +24,20 @@ export type PdfInput = ArrayBuffer | Uint8Array;
 
 const EPSILON = 1e-4; // fractions closer than this bound a zero-area cell — nothing to draw
 
+/** The shared clip geometry also lets the cutter embed pages already copied into its output. */
+export function cellBounds(
+  size: { width: number; height: number },
+  slice: Slice,
+): PageBoundingBox | null {
+  const { width, height } = size;
+  const left = width * (slice.x0 ?? 0);
+  const right = width * (slice.x1 ?? 1);
+  // PDF coordinates start at the bottom-left; the crop's fractions start at the top.
+  const bottom = height * (1 - slice.end);
+  const top = height * (1 - slice.start);
+  return right - left <= EPSILON || top - bottom <= EPSILON ? null : { left, bottom, right, top };
+}
+
 /**
  * Embed several cells from the same source document in one operation. `pdf-lib` keeps one object
  * copier for an `embedPages` call, so a page's fonts and high-resolution image XObjects are copied
@@ -39,20 +54,15 @@ export async function embedCells(
 ): Promise<Array<PDFEmbeddedPage | null>> {
   const result: Array<PDFEmbeddedPage | null> = Array.from({ length: slices.length }, () => null);
   const pages: PDFPage[] = [];
-  const boxes: Array<{ left: number; bottom: number; right: number; top: number }> = [];
+  const boxes: PageBoundingBox[] = [];
   const indexes: number[] = [];
 
   for (const [index, slice] of slices.entries()) {
     const page = source.getPage(slice.pageNumber - 1);
-    const { width, height } = page.getSize();
-    const left = width * (slice.x0 ?? 0);
-    const right = width * (slice.x1 ?? 1);
-    // PDF coordinates put the origin bottom-left, so a fraction from the top flips into height − f·height.
-    const bottom = height * (1 - slice.end);
-    const top = height * (1 - slice.start);
-    if (right - left <= EPSILON || top - bottom <= EPSILON) continue;
+    const bounds = cellBounds(page.getSize(), slice);
+    if (!bounds) continue;
     pages.push(page);
-    boxes.push({ left, bottom, right, top });
+    boxes.push(bounds);
     indexes.push(index);
   }
 

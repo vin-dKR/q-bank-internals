@@ -15,6 +15,7 @@ export { useSplitPoints, type SplitPointsController } from './hooks/use-split-po
 export { useWorkingDocument, type WorkingDocument } from './hooks/use-working-document.js';
 export { useReflowBlocks, type ReflowController } from './hooks/use-reflow-blocks.js';
 export { useUploadChapter, type UploadChapterInput } from './hooks/use-upload-chapter.js';
+export { useAiStructure } from './hooks/use-ai-structure.js';
 export { type PageKinds } from './lib/build-chapter-pdfs.js';
 export { makeId } from './lib/make-id.js';
 export { useStructureTree, type StructureTreeController } from './hooks/use-structure-tree.js';
@@ -29,6 +30,7 @@ export { leaves, resolveQuestionType } from './lib/structure-tree.js';
 export { configPageBindings, type ParsedConfig } from './lib/structure-config.js';
 export {
   type StructureTree,
+  type StructureEntryMode,
   type StructureNode,
   type NodeLevel,
   type MaterializedArtifact,

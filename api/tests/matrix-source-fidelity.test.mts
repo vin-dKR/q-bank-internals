@@ -22,14 +22,14 @@ function matrix(overrides: Partial<Question>): Question {
   } as Question;
 }
 
-test('publish keeps a table-only matrix table-only instead of generating A–D choices', () => {
+void test('publish keeps a table-only matrix table-only instead of generating A–D choices', () => {
   const projection = matrixProjectionForPublish(matrix({}));
 
   assert.deepEqual(projection?.options, []);
-  assert.equal(projection?.answer, 'a-i; b-ii');
+  assert.equal(projection.answer, 'a-i; b-ii');
 });
 
-test('publish preserves arbitrary source option labels and their selected source label', () => {
+void test('publish preserves arbitrary source option labels and their selected source label', () => {
   const options = [
     { label: '1', body: '(a) (i), (b) (ii)', isCorrect: false },
     { label: '5', body: '(a) (ii), (b) (i)', isCorrect: true },
@@ -38,5 +38,5 @@ test('publish preserves arbitrary source option labels and their selected source
   const projection = matrixProjectionForPublish(matrix({ options, answer: '5' }));
 
   assert.deepEqual(projection?.options, options);
-  assert.equal(projection?.answer, '5');
+  assert.equal(projection.answer, '5');
 });

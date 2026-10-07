@@ -48,6 +48,12 @@ export default tseslint.config(
     },
   },
 
+  {
+    files: ['tests/**/*.mts'],
+    // Test doubles implement asynchronous ports using in-memory results, without actual I/O.
+    rules: { '@typescript-eslint/require-await': 'off' },
+  },
+
   // The composition root is the ONE place allowed to `new` infrastructure (§5).
   {
     files: ['src/container.ts'],

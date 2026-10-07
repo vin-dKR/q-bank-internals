@@ -7,6 +7,7 @@ export { PageHeader } from './page-header.js';
 export { CropCanvas, ZoomControls, type CanvasBox, type CanvasSize } from './crop-canvas.js';
 export { DraggableBox, type BoxRect } from './draggable-box.js';
 export { IconButton } from './icon-button.js';
+export { InfoButton } from './info-button.js';
 export { Toolbar, ToolbarGroup, ToolbarDivider, ToolbarSpacer, ToolbarHelp } from './toolbar.js';
 export { useConfirm } from './confirm-dialog.js';
 export { Combobox, type ComboboxOption } from './combobox.js';
@@ -55,6 +56,10 @@ export {
   IconChevronRight,
   IconFileText,
   IconHelp,
+  IconInfo,
+  IconRupee,
+  IconLock,
+  IconUnlock,
   IconLayers,
   IconScan,
   IconTextSelect,

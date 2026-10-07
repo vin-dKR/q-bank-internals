@@ -1,7 +1,15 @@
-import { type ChapterKind, PAPER_METADATA_FIELDS } from '@ingest/contracts';
+import {
+  type AnswerLayout,
+  type ChapterKind,
+  type StructurePages,
+  PAPER_METADATA_FIELDS,
+  structureLabelFromHeading,
+  StructureLevelIdSchema,
+  StructureHierarchySchema,
+  type StructureHierarchyLevel,
+} from '@ingest/contracts';
 import { emptyMetadata, type ChapterMetadataDraft } from '../types/chapter-group.js';
 import {
-  NODE_LEVELS,
   isLeaf,
   type LeafBindings,
   type NodeLevel,
@@ -11,7 +19,7 @@ import {
 import { makeId } from './make-id.js';
 
 /** The page assignments a leaf's bindings were cut from — 1-based working-document page numbers. */
-export type ConfigPages = Partial<Record<ChapterKind, number[]>>;
+export type ConfigPages = StructurePages;
 
 /**
  * The portable, JSON-serializable shape of one structure node: label, level, (optional) question
@@ -36,12 +44,14 @@ export type StructureConfig = {
   version: 1;
   metadata: ChapterMetadataDraft;
   nodes: ConfigNode[];
+  hierarchy?: StructureHierarchyLevel[];
 };
 
 /** The metadata + nodes recovered from a config file, ready to rebuild a live tree from. */
 export type ParsedConfig = {
   metadata: ChapterMetadataDraft;
   nodes: ConfigNode[];
+  hierarchy?: StructureHierarchyLevel[];
 };
 
 const CONFIG_VERSION = 1;
@@ -67,18 +77,22 @@ const METADATA_KEYS: readonly Exclude<
 const PAGE_KINDS: readonly ChapterKind[] = ['question', 'answer', 'solution', 'companion'];
 
 /** The exportable page numbers of a leaf's bindings, or undefined when nothing is bound. */
-function pagesFromBindings(bindings: LeafBindings | undefined): ConfigPages | undefined {
+function pagesFromBindings(
+  bindings: LeafBindings | undefined,
+  layout: AnswerLayout,
+): ConfigPages | undefined {
   if (!bindings) return undefined;
   const pages: ConfigPages = {};
   for (const kind of PAGE_KINDS) {
     const artifact = bindings[kind];
     if (artifact && artifact.pageNumbers.length > 0) pages[kind] = [...artifact.pageNumbers];
   }
+  if (layout === 'separate' && Object.keys(pages).length > 0) pages.solution ??= null;
   return Object.keys(pages).length > 0 ? pages : undefined;
 }
 
-function toConfigNode(node: StructureNode): ConfigNode {
-  const pages = pagesFromBindings(node.bindings);
+function toConfigNode(node: StructureNode, layout: AnswerLayout): ConfigNode {
+  const pages = isLeaf(node) ? pagesFromBindings(node.bindings, layout) : undefined;
   return {
     label: node.label,
     level: node.level,
@@ -86,7 +100,7 @@ function toConfigNode(node: StructureNode): ConfigNode {
     ...(node.subject !== undefined ? { subject: node.subject } : {}),
     ...(node.pyq !== undefined ? { pyq: node.pyq } : {}),
     ...(pages !== undefined ? { pages } : {}),
-    children: node.children.map(toConfigNode),
+    children: node.children.map((child) => toConfigNode(child, layout)),
   };
 }
 
@@ -95,20 +109,21 @@ export function serializeConfig(tree: StructureTree): StructureConfig {
   return {
     version: CONFIG_VERSION,
     metadata: { ...tree.metadata },
-    nodes: tree.nodes.map(toConfigNode),
+    nodes: tree.nodes.map((node) => toConfigNode(node, tree.metadata.answerLayout)),
+    ...(tree.hierarchy ? { hierarchy: tree.hierarchy } : {}),
   };
 }
 
 /** Rebuild live structure nodes from config nodes — fresh ids throughout, no bindings. */
-export function nodesFromConfig(nodes: ConfigNode[]): StructureNode[] {
+export function nodesFromConfig(nodes: ConfigNode[], normalizeLabels = true): StructureNode[] {
   return nodes.map((node) => ({
     id: makeId(),
-    label: node.label,
+    label: normalizeLabels ? structureLabelFromHeading(node.level, node.label) : node.label,
     level: node.level,
     ...(node.questionType !== undefined ? { questionType: node.questionType } : {}),
     ...(node.subject !== undefined ? { subject: node.subject } : {}),
     ...(node.pyq !== undefined ? { pyq: node.pyq } : {}),
-    children: nodesFromConfig(node.children),
+    children: nodesFromConfig(node.children, normalizeLabels),
   }));
 }
 
@@ -117,9 +132,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function parseLevel(value: unknown): NodeLevel | null {
-  return typeof value === 'string' && (NODE_LEVELS as readonly string[]).includes(value)
-    ? (value as NodeLevel)
-    : null;
+  const parsed = StructureLevelIdSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 /**
@@ -131,6 +145,10 @@ function parsePages(value: unknown): ConfigPages | undefined {
   const pages: ConfigPages = {};
   for (const kind of PAGE_KINDS) {
     const list = value[kind];
+    if (kind === 'solution' && list === null) {
+      pages.solution = null;
+      continue;
+    }
     if (!Array.isArray(list) || list.length === 0) continue;
     if (!list.every((page) => typeof page === 'number' && Number.isInteger(page) && page >= 1))
       continue;
@@ -200,6 +218,9 @@ export function parseConfig(text: string): ParsedConfig | null {
     return null;
   }
   if (!isRecord(raw) || !Array.isArray(raw.nodes)) return null;
+  const hierarchy =
+    raw.hierarchy === undefined ? undefined : StructureHierarchySchema.safeParse(raw.hierarchy);
+  if (hierarchy && !hierarchy.success) return null;
 
   const nodes: ConfigNode[] = [];
   for (const node of raw.nodes) {
@@ -208,7 +229,11 @@ export function parseConfig(text: string): ParsedConfig | null {
     nodes.push(parsed);
   }
 
-  return { metadata: parseMetadata(raw.metadata), nodes };
+  return {
+    metadata: parseMetadata(raw.metadata),
+    nodes,
+    ...(hierarchy?.success ? { hierarchy: hierarchy.data } : {}),
+  };
 }
 
 /** One page assignment recovered from an imported config, addressed to its rebuilt live leaf. */

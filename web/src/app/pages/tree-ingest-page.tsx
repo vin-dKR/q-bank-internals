@@ -14,6 +14,7 @@ import {
   type LoadedPdf,
   type PreviewView,
   type ReadingOrder,
+  type StructureEntryMode,
   PdfModeSelector,
   PdfPagesToolbar,
   PdfPreviewer,
@@ -40,6 +41,7 @@ import {
   useStructureTree,
   useUploadChapter,
   useWorkingDocument,
+  useAiStructure,
 } from '../../features/ingestion/index.js';
 import { SessionBar } from '../../features/sessions/index.js';
 import { useCurrentSession } from '../../shared/lib/current-session.js';
@@ -119,6 +121,7 @@ export function TreeIngestPage(): JSX.Element {
   const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
   const [anchorPage, setAnchorPage] = useState<number | null>(null);
   const [view, setView] = useState<PreviewView>('list');
+  const [structureEntryMode, setStructureEntryMode] = useState<StructureEntryMode>('auto');
   const [gridColumns, setGridColumns] = useState(DEFAULT_GRID_COLUMNS);
   const [panelWidth, setPanelWidth] = useState(readPanelWidth);
   const panelWidthRef = useRef(panelWidth);
@@ -144,6 +147,27 @@ export function TreeIngestPage(): JSX.Element {
   const isReflow = cutMode === 'reflow';
   const activeBytes: ArrayBuffer | Uint8Array | null = workingDoc.current ?? pdfBytes;
   const pendingCount = isReflow ? reflow.totalCrops : splitPoints.totalSplits;
+  const aiStructure = useAiStructure({
+    bytes: activeBytes,
+    pageCount: numPages,
+    context: tree.tree.metadata,
+    ...(tree.tree.hierarchy ? { hierarchy: tree.tree.hierarchy } : {}),
+    sessionId,
+    replaceNodes: tree.replaceNodes,
+    onSelectTool: () => {
+      setCutMode('none');
+      setView('list');
+    },
+    onApplied: () => {
+      setDidUpload(false);
+      setResults([]);
+      setUploadError(null);
+      success(
+        'Structure applied',
+        'Review the headings and bind PDF pages manually before uploading.',
+      );
+    },
+  });
 
   // The lowest-numbered page carrying cut lines is the source "Apply to all pages" replicates from
   // (numeric keys iterate ascending), so a single-page setup fans out to the whole document.
@@ -436,8 +460,12 @@ export function TreeIngestPage(): JSX.Element {
 
   // The keyboard handler reads the latest state/handlers through a ref, so it never re-subscribes and
   // never sees a stale closure (applyMode / handleDeleteSelected are re-created every render).
+  const selectCutMode = (mode: CutMode): void => {
+    aiStructure.crops.setMode('none');
+    setCutMode(mode);
+  };
   const keys = useRef({
-    setCutMode,
+    setCutMode: selectCutMode,
     setView,
     selectAll,
     clearSelection,
@@ -449,7 +477,7 @@ export function TreeIngestPage(): JSX.Element {
     canApply: false,
   });
   keys.current = {
-    setCutMode,
+    setCutMode: selectCutMode,
     setView,
     selectAll,
     clearSelection,
@@ -625,7 +653,7 @@ export function TreeIngestPage(): JSX.Element {
         <div className="cutter-layout__preview">
           <PdfModeSelector
             mode={cutMode}
-            onModeChange={setCutMode}
+            onModeChange={selectCutMode}
             lineCount={pendingCount}
             onApply={() => {
               void applyMode();
@@ -680,6 +708,8 @@ export function TreeIngestPage(): JSX.Element {
           <div className="cutter-layout__scroll">
             <PdfPreviewer
               pdfBytes={activeBytes}
+              {...(structureEntryMode === 'auto' ? { structureCrops: aiStructure.crops } : {})}
+              structureBusy={aiStructure.busy}
               mode={cutMode}
               order={readingOrder}
               controller={splitPoints}
@@ -835,6 +865,23 @@ export function TreeIngestPage(): JSX.Element {
             }}
             onAiFillPaper={handleAiFillPaper}
             aiFillingPaper={aiFillingPaper}
+            aiStructure={aiStructure}
+            entryMode={structureEntryMode}
+            onEntryModeChange={(mode) => {
+              if (aiStructure.busy) return;
+              if (mode === 'manual') aiStructure.crops.setMode('none');
+              setStructureEntryMode(mode);
+            }}
+            canDetectStructure={
+              Boolean(activeBytes) &&
+              numPages > 0 &&
+              splitPoints.totalSplits === 0 &&
+              reflow.totalCrops === 0 &&
+              !applying &&
+              !uploading &&
+              !bindingSlot &&
+              !aiFillingPaper
+            }
           />
 
           {uploadError ? <p className="error">{uploadError}</p> : null}
@@ -843,7 +890,7 @@ export function TreeIngestPage(): JSX.Element {
             <button
               type="button"
               className="btn btn--primary btn--block"
-              disabled={uploading || !sessionId}
+              disabled={uploading || aiStructure.busy || !sessionId}
               onClick={() => {
                 void handleUpload();
               }}

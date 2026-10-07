@@ -1,5 +1,13 @@
-import type { ChapterKind } from '@ingest/contracts';
+import {
+  DEFAULT_STRUCTURE_HIERARCHY,
+  type ChapterKind,
+  type StructureHierarchyLevel,
+  type DetectedStructureNode,
+} from '@ingest/contracts';
 import type { ChapterMetadataDraft } from './chapter-group.js';
+
+/** Editor choice only; switching it never changes the saved hierarchy or attachments. */
+export type StructureEntryMode = 'auto' | 'manual';
 
 /**
  * The optional structural levels between a chapter and its leaves, matching the source material:
@@ -9,10 +17,12 @@ import type { ChapterMetadataDraft } from './chapter-group.js';
  * `EXERCISE (JM)`); the `Topic` leaf is the fine-grained topic (e.g. `Kinematics`); `Part` only
  * organizes — it is never published. The question type is chosen on the leaf, never on a parent.
  */
-export type NodeLevel = 'section' | 'part' | 'topic';
+export type NodeLevel = NonNullable<DetectedStructureNode['level']>;
 
-/** Display order + label for each level (top → leaf), used by the tree UI when offering "add a child". */
-export const NODE_LEVELS: readonly NodeLevel[] = ['section', 'part', 'topic'];
+/** Default levels for older configs; current provider levels come from its saved hierarchy. */
+export const NODE_LEVELS: readonly NodeLevel[] = DEFAULT_STRUCTURE_HIERARCHY.map(
+  (level) => level.id,
+);
 
 /**
  * An immutable snapshot of a finalized slice, detached from the working document. Created the moment
@@ -77,6 +87,7 @@ export type StructureNode = {
 export type StructureTree = {
   metadata: ChapterMetadataDraft;
   nodes: StructureNode[];
+  hierarchy?: StructureHierarchyLevel[];
 };
 
 /** A node with no children is a leaf — the only place bindings may attach. */

@@ -1,37 +1,8 @@
-import { type AnswerLayout, EMPTY_PAPER_METADATA, type PaperMetadata } from '@ingest/contracts';
+import { EMPTY_PAPER_METADATA, type StructureDetectionContext } from '@ingest/contracts';
 import type { SliceTags } from '../lib/build-chapter-pdfs.js';
 
 /** Editable metadata for one chapter before it is validated into a ChapterUploadMetadata. */
-export type ChapterMetadataDraft = {
-  /** Where the questions came from: pyq / module / textbook. Empty until the operator picks one. */
-  source: string;
-  exam: string;
-  /** CBSE grade; only collected when the selected exam is CBSE. */
-  className: string;
-  subject: string;
-  module: string;
-  chapter: string;
-  sectionName: string;
-  questionType: string;
-  /** Flags this chapter's questions as previous-year questions (PYQ), capturing the exam + year below. */
-  pyq: boolean;
-  /** The exam a PYQ chapter's questions were asked in (e.g. NEET); meaningful only when `pyq` is set. */
-  pyqExam: string;
-  /** The year a PYQ chapter's questions were asked (e.g. "2019"); meaningful only when `pyq` is set. */
-  pyqYear: string;
-  /**
-   * Whole-paper PYQ provenance (exam name/year/session/shift/paper code …). Shown as the "Paper
-   * details" panel when `source === 'pyq'`; optionally AI-filled from the paper header. Sent with the
-   * upload and denormalized onto every extracted question.
-   */
-  paper: PaperMetadata;
-  /**
-   * How this paper's answers are laid out: `separate` answer/solution siblings (the default), one
-   * grouped Answer + Solution `combined` companion PDF, or `inline` beside each question. Drives the
-   * active structure-tree slots and the extraction source contract.
-   */
-  answerLayout: AnswerLayout;
-};
+export type ChapterMetadataDraft = StructureDetectionContext;
 
 /**
  * One question-type block being edited inside a topic: a predefined type over a span of source pages

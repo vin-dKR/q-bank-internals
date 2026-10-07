@@ -34,12 +34,17 @@ function fixture(refine: (text: string, issues?: readonly { kind: string; detail
     findPassagesByDocument: async () => [...passages.values()],
     update: async (id: string, patch: UpdateQuestion) => {
       writes.push({ id, patch });
-      const saved = { ...rows.get(id)!, ...patch } as Question;
+      const current = rows.get(id);
+      assert.ok(current);
+      const definedPatch = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
+      const saved = { ...current, ...definedPatch };
       rows.set(id, saved);
       return saved;
     },
     updatePassage: async (id: string, patch: { text?: string }) => {
-      const saved = { ...passages.get(id)!, ...patch } as Passage;
+      const current = passages.get(id);
+      assert.ok(current);
+      const saved = { ...current, ...patch };
       passages.set(id, saved);
       return saved;
     },
@@ -53,15 +58,18 @@ function fixture(refine: (text: string, issues?: readonly { kind: string; detail
   type Deps = ConstructorParameters<typeof QuestionsService>;
   const service = new QuestionsService(
     repository as unknown as Deps[0], documents as unknown as Deps[1],
-    {} as Deps[2], {} as Deps[3], refiner as Deps[4], usage as unknown as Deps[5],
+    {} as Deps[2], {} as Deps[3], refiner, usage as unknown as Deps[5],
     {} as Deps[6], {} as Deps[7], {} as Deps[8], {} as Deps[9],
   );
   return { service, rows, passages, writes };
 }
 
-test('session scan covers every rendered text field and stores a shared passage once', () => {
+void test('session scan covers every rendered text field and stores a shared passage once', () => {
   const q = question('q1', {
-    match: { columns: [{ label: 'List I', entries: [{ label: 'P', body: rawFormula }] }] } as Question['match'],
+    match: {
+      columns: [{ title: 'List I', entries: [{ label: 'P', body: rawFormula, image: null }] }],
+      key: {},
+    },
   });
   const passage = { id: 'p1', documentId: 'doc', text: rawFormula } as Passage;
   const fields = stagedLatexFields([q, question('q2')], [passage]);
@@ -72,15 +80,15 @@ test('session scan covers every rendered text field and stores a shared passage 
   assert.equal(stagedLatexIssues(stagedLatexFields([question('clean', { stem: 'Plain text', answer: '', options: [] })], [])).length, 0);
 });
 
-test('automatic rule wraps a whole formula and leaves prose for AI', () => {
+void test('automatic rule wraps a whole formula and leaves prose for AI', () => {
   assert.equal(automaticLatexRepair(rawFormula), `\\(${rawFormula}\\)`);
   assert.equal(automaticLatexRepair(proseFormula), proseFormula);
   const patch = questionLatexPatch(question('q1'), 'options.0', 'fixed');
   assert.equal(patch?.options?.[0]?.label, 'A');
-  assert.equal(patch?.options?.[0]?.body, 'fixed');
+  assert.equal(patch.options[0].body, 'fixed');
 });
 
-test('automatic repair merges legacy dollar fragments before wrapping a formula', async () => {
+void test('automatic repair merges legacy dollar fragments before wrapping a formula', async () => {
   const expected = String.raw`\(2KI(aq) + Cl_2 \rightarrow 2KCl(aq) + I_2\)`;
   assert.equal(automaticLatexRepair(legacyEquation), expected);
   const { service, rows } = fixture();
@@ -93,7 +101,7 @@ test('automatic repair merges legacy dollar fragments before wrapping a formula'
   assert.equal((await service.scanLatex('doc')).issues.length, 0);
 });
 
-test('mixed prose and legacy dollar math is not offered as an automatic fix', () => {
+void test('mixed prose and legacy dollar math is not offered as an automatic fix', () => {
   const mixed = String.raw`Find the value of $x^2$ using \frac{1}{2}.`;
   assert.equal(automaticLatexRepair(mixed), mixed);
   const issues = stagedLatexIssues(stagedLatexFields([question('q1', { stem: mixed, answer: '', options: [] })], []));
@@ -101,7 +109,7 @@ test('mixed prose and legacy dollar math is not offered as an automatic fix', ()
   assert.ok(issues.every((issue) => !issue.automatic));
 });
 
-test('scanner flags legacy single-dollar math in chemistry and answers without flagging currency', async () => {
+void test('scanner flags legacy single-dollar math in chemistry and answers without flagging currency', async () => {
   const examples = [
     'The electrode potential of F$_2$ is higher than Cl$_2$.',
     'Br: $-1, 0, +3, +5, +7$',
@@ -117,13 +125,15 @@ test('scanner flags legacy single-dollar math in chemistry and answers without f
   assert.deepEqual(detectLatexInField('answer', String.raw`The price is \$5.`), []);
 
   const { service, rows } = fixture();
-  rows.set('q1', question('q1', { stem: 'Plain question', answer: examples[0]!, options: [] }));
+  const firstExample = examples[0];
+  assert.ok(firstExample);
+  rows.set('q1', question('q1', { stem: 'Plain question', answer: firstExample, options: [] }));
   const scan = await service.scanLatex('doc');
   assert.equal(scan.aiFields, 1);
   assert.equal(scan.automaticFields, 0);
 });
 
-test('a partial code repair stays out of automatic fixes and leaves staged text unchanged', async () => {
+void test('a partial code repair stays out of automatic fixes and leaves staged text unchanged', async () => {
   const partial = String.raw`\(` + '\t' + 'ext{m}';
   assert.notEqual(automaticLatexRepair(partial), partial);
   assert.equal(fullyAutomaticLatexRepair('stem', partial), null);
@@ -143,7 +153,7 @@ test('a partial code repair stays out of automatic fixes and leaves staged text 
   assert.equal(rows.get('q1')?.stem, partial);
 });
 
-test('automatic bulk repair fixes safe fields across questions without changing prose', async () => {
+void test('automatic bulk repair fixes safe fields across questions without changing prose', async () => {
   const { service, rows } = fixture();
   rows.set('q2', question('q2', { questionNumber: 2 }));
   const scan = await service.scanLatex('doc');
@@ -157,7 +167,7 @@ test('automatic bulk repair fixes safe fields across questions without changing 
   assert.equal((await service.scanLatex('doc')).aiFields, 2);
 });
 
-test('one AI batch repairs every selected field, preserving option metadata', async () => {
+void test('one AI batch repairs every selected field, preserving option metadata', async () => {
   const { service, rows, writes } = fixture(async (text) => text.replace(String.raw`\frac{1}{2}`, String.raw`\(\frac{1}{2}\)`));
   await service.fixLatexAutomatically('doc');
   const keys = [...new Set((await service.scanLatex('doc')).issues.map((issue) => issue.key))];
@@ -169,7 +179,7 @@ test('one AI batch repairs every selected field, preserving option metadata', as
   assert.ok(writes.every((write) => write.id === 'q1'));
 });
 
-test('one AI batch fixes flagged fields in multiple questions', async () => {
+void test('one AI batch fixes flagged fields in multiple questions', async () => {
   const { service, rows } = fixture(async (text) =>
     text.replace(String.raw`\frac{1}{2}`, String.raw`\(\frac{1}{2}\)`));
   rows.set('q2', question('q2', { questionNumber: 2 }));
@@ -181,7 +191,7 @@ test('one AI batch fixes flagged fields in multiple questions', async () => {
   assert.equal((await service.scanLatex('doc')).issues.length, 0);
 });
 
-test('AI receives remaining scanner findings and cannot save a partial repair', async () => {
+void test('AI receives remaining scanner findings and cannot save a partial repair', async () => {
   const partial = String.raw`\(` + '\t' + 'ext{m}';
   const seen: { kind: string; detail: string }[][] = [];
   const { service, rows, writes } = fixture(async (text, issues) => {
@@ -200,7 +210,7 @@ test('AI receives remaining scanner findings and cannot save a partial repair', 
   assert.equal(rows.get('q1')?.stem, partial);
 });
 
-test('AI failure and a concurrent edit never overwrite staged text', async () => {
+void test('AI failure and a concurrent edit never overwrite staged text', async () => {
   const unchanged = fixture(async (text) => text);
   const key = 'q:q1:answer';
   const failed = await unchanged.service.fixLatexWithAi('doc', [key]);
@@ -213,9 +223,10 @@ test('AI failure and a concurrent edit never overwrite staged text', async () =>
   assert.equal(blankResult.updatedFields, 0);
   assert.equal(blank.rows.get('q1')?.answer, proseFormula);
 
-  let concurrent!: ReturnType<typeof fixture>;
-  concurrent = fixture(async (text) => {
-    concurrent.rows.set('q1', { ...concurrent.rows.get('q1')!, answer: 'Editor changed this' });
+  const concurrent = fixture(async (text) => {
+    const current = concurrent.rows.get('q1');
+    assert.ok(current);
+    concurrent.rows.set('q1', { ...current, answer: 'Editor changed this' });
     return text.replace(String.raw`\frac{1}{2}`, String.raw`\(\frac{1}{2}\)`);
   });
   const result = await concurrent.service.fixLatexWithAi('doc', [key]);

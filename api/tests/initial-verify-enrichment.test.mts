@@ -9,7 +9,6 @@ import type { DriveService } from '../src/modules/drive/index.js';
 import type { ExtractionService } from '../src/modules/extraction/index.js';
 import { mergeAnswers } from '../src/modules/extraction/merge-answers.js';
 import type { AnswerSheet, ExtractedQuestion } from '../src/modules/extraction/vision-extractor.js';
-import type { UploadStagingStore } from '../src/modules/ingestion/upload-staging.store.js';
 import type { SessionsService } from '../src/modules/sessions/index.js';
 
 type LayoutCase = {
@@ -66,6 +65,7 @@ function ingestionHarness() {
       return {};
     },
   } as unknown as ExtractionService;
+  type IngestionDependencies = ConstructorParameters<typeof IngestionService>;
   const service = new IngestionService(
     {
       findOrCreateFolder: async (name: string) => ({ id: `folder:${name}`, name, parentId: null }),
@@ -87,7 +87,13 @@ function ingestionHarness() {
       createSignedUpload: async () => ({ path: 'unused', uploadUrl: 'https://example.test/upload' }),
       download: async () => Buffer.from('pdf'),
       remove: async () => undefined,
-    } as UploadStagingStore,
+    },
+    // Upload tests never invoke the OCR or structure-generation ports.
+    {} as IngestionDependencies[5],
+    {} as IngestionDependencies[6],
+    {} as IngestionDependencies[7],
+    {} as IngestionDependencies[8],
+    70,
   );
   const upload = (kind: ChapterKind, layout: LayoutCase['layout']) =>
     service.uploadChapter({ metadata: metadata(kind, layout), storagePath: `${kind}.pdf` });
@@ -95,7 +101,7 @@ function ingestionHarness() {
 }
 
 for (const { layout, support } of layouts) {
-  test(`initial Verify extraction sees all ${layout} sources before auto-run`, async () => {
+  void test(`initial Verify extraction sees all ${layout} sources before auto-run`, async () => {
     const { snapshots, upload } = ingestionHarness();
     for (const kind of support) await upload(kind, layout);
     assert.equal(snapshots.length, 0, 'support files never start question extraction by themselves');
@@ -110,7 +116,7 @@ for (const { layout, support } of layouts) {
   });
 }
 
-test('a question-first separate upload waits until both bound sources are durable', async () => {
+void test('a question-first separate upload waits until both bound sources are durable', async () => {
   const { snapshots, upload } = ingestionHarness();
   await upload('question', 'separate');
   assert.equal(snapshots.length, 0);
@@ -155,7 +161,7 @@ function promptDocument(overrides: Partial<Document>): Document {
   };
 }
 
-test('initial matrix and inline prompts preserve source choice labels', () => {
+void test('initial matrix and inline prompts preserve source choice labels', () => {
   const prompt = questionPrompt(promptDocument({}), 1, {});
 
   assert.match(prompt, /"\(1\) …", "\(5\) …", "\(E\) …", "\(F\) …", "\(I\) …", or "\(iv\) …"/);
@@ -165,7 +171,7 @@ test('initial matrix and inline prompts preserve source choice labels', () => {
   assert.doesNotMatch(prompt, /server generates verified A–D choices/i);
 });
 
-test('initial inline extraction retains non-A–D source labels, answer, and explanation', async () => {
+void test('initial inline extraction retains non-A–D source labels, answer, and explanation', async () => {
   let sentPrompt = '';
   const extractor = new OpenAiVisionExtractor(
     'test-key',
@@ -213,12 +219,12 @@ test('initial inline extraction retains non-A–D source labels, answer, and exp
     '(5) Fifth match',
     '(F) None',
   ]);
-  assert.equal(result.questions[0]?.answer, '5');
-  assert.equal(result.questions[0]?.explanation, 'The printed explanation for question 52.');
+  assert.equal(result.questions[0].answer, '5');
+  assert.equal(result.questions[0].explanation, 'The printed explanation for question 52.');
   assert.match(sentPrompt, /source label/i);
 });
 
-test('initial Verify merges the answer key and matching solution into the same question', () => {
+void test('initial Verify merges the answer key and matching solution into the same question', () => {
   const question: ExtractedQuestion = {
     questionNumber: 52,
     questionText: 'Match the lists.',
@@ -257,5 +263,5 @@ test('initial Verify merges the answer key and matching solution into the same q
   const [merged] = mergeAnswers([question], sheets, []);
 
   assert.equal(merged?.answer, '5', 'the explicit answer key remains canonical');
-  assert.equal(merged?.explanation, 'The worked explanation for question 52.');
+  assert.equal(merged.explanation, 'The worked explanation for question 52.');
 });

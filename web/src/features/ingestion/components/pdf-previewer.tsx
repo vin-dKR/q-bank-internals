@@ -32,6 +32,9 @@ import type { ReflowController } from '../hooks/use-reflow-blocks.js';
 import type { CutMode, ReadingOrder } from '../types/cut-mode.js';
 import { type ChapterGroup, chapterForPage } from '../types/chapter-group.js';
 import type { PageKinds } from '../lib/build-chapter-pdfs.js';
+import type { StructureCropsController } from '../hooks/use-structure-crops.js';
+import { StructureCropOverlay } from './structure-crop-overlay.js';
+import { PdfPreviewPage } from './pdf-preview-page.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -53,6 +56,8 @@ const THUMB_CHROME = 10;
 type SelectOptions = { range?: boolean };
 
 type PdfPreviewerProps = {
+  structureCrops?: StructureCropsController;
+  structureBusy?: boolean;
   pdfBytes: ArrayBuffer | Uint8Array;
   mode: CutMode;
   order: ReadingOrder;
@@ -79,8 +84,10 @@ type PdfPreviewerProps = {
   onToggleSelect?: (pageNumber: number, options?: SelectOptions) => void;
 };
 
-/** Renders every page of the PDF, either as the tall cut editor or a compact draggable grid. */
+/** Keeps all page controls while rendering only the PDF pages near the viewport. */
 export function PdfPreviewer({
+  structureCrops,
+  structureBusy = false,
   pdfBytes,
   mode,
   order,
@@ -101,7 +108,9 @@ export function PdfPreviewer({
   selectedPages,
   onToggleSelect,
 }: PdfPreviewerProps): JSX.Element {
-  const [numPages, setNumPages] = useState(0);
+  const [loaded, setLoaded] = useState<{ file: Blob; numPages: number } | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const isGrid = view === 'grid';
 
@@ -139,6 +148,8 @@ export function PdfPreviewer({
     () => bytesToBlob(pdfBytes instanceof Uint8Array ? pdfBytes : new Uint8Array(pdfBytes)),
     [pdfBytes],
   );
+  // Drop old page mounts immediately when cutting replaces the document, before the new worker loads.
+  const numPages = loaded?.file === file ? loaded.numPages : 0;
 
   const dragPagesFor = (pageNumber: number, selected: boolean): number[] =>
     selected && selectedPages && selectedPages.size > 0
@@ -173,7 +184,7 @@ export function PdfPreviewer({
           file={file}
           className={isGrid ? 'previewer__grid' : undefined}
           onLoadSuccess={(doc: { numPages: number }) => {
-            setNumPages(doc.numPages);
+            setLoaded({ file, numPages: doc.numPages });
             onNumPages(doc.numPages);
           }}
           onLoadError={(err: Error) => {
@@ -258,18 +269,22 @@ export function PdfPreviewer({
                 <div
                   className={`page-wrap__canvas ${selected ? 'ring-2 ring-brand rounded-lg' : ''}`}
                 >
-                  <Page
+                  <PdfPreviewPage
                     pageNumber={pageNumber}
                     width={pageWidth}
-                    renderAnnotationLayer={false}
-                    renderTextLayer={mode === 'none'}
-                    loading={
-                      <div className="page-wrap__placeholder">Loading page {pageNumber}…</div>
+                    renderTextLayer={
+                      mode === 'none' && (!structureCrops || structureCrops.mode === 'none')
                     }
                   />
                   {/* None is a passive read mode: render the selectable text layer and no overlay so
                       the operator can select and copy text from the page. */}
-                  {mode === 'none' ? null : mode === 'reflow' ? (
+                  {mode === 'none' && structureCrops ? (
+                    <StructureCropOverlay
+                      pageNumber={pageNumber}
+                      controller={structureCrops}
+                      disabled={structureBusy}
+                    />
+                  ) : mode === 'none' ? null : mode === 'reflow' ? (
                     <PdfReflowOverlay pageNumber={pageNumber} controller={reflow} />
                   ) : (
                     <PdfPageOverlay
@@ -368,13 +383,7 @@ function PageThumb({
       }
     >
       <div className="page-thumb__canvas">
-        <Page
-          pageNumber={pageNumber}
-          width={thumbWidth}
-          renderAnnotationLayer={false}
-          renderTextLayer={false}
-          loading={<div className="page-thumb__placeholder">…</div>}
-        />
+        <PdfPreviewPage pageNumber={pageNumber} width={thumbWidth} />
         {selected ? (
           <span className="page-thumb__check" aria-hidden>
             <IconCheck />

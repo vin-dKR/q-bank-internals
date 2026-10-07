@@ -26,7 +26,7 @@ const matrixColumns = [
   { title: 'Column II', entries: [{ label: 'i', body: 'One' }, { label: 'ii', body: 'Two' }] },
 ];
 
-test('re-extraction preserves every printed matrix label and does not run a chemistry audit', async () => {
+void test('re-extraction preserves every printed matrix label and does not run a chemistry audit', async () => {
   let calls = 0;
   const extractor = reExtractor(async () => {
     calls += 1;
@@ -59,7 +59,7 @@ test('re-extraction preserves every printed matrix label and does not run a chem
   assert.ok(result.options.every((option) => option.generated === undefined));
 });
 
-test('re-extraction does not invent an A–D panel when a matrix page has no printed choices', async () => {
+void test('re-extraction does not invent an A–D panel when a matrix page has no printed choices', async () => {
   const extractor = reExtractor(async () => reply({
     stem: 'Match the columns.',
     columns: matrixColumns,
@@ -79,7 +79,7 @@ test('re-extraction does not invent an A–D panel when a matrix page has no pri
   assert.equal(result.answer, 'a → i; b → ii');
 });
 
-test('a failed optional chemistry audit preserves an otherwise valid primary re-extraction', async () => {
+void test('a failed optional chemistry audit preserves an otherwise valid primary re-extraction', async () => {
   let calls = 0;
   const extractor = reExtractor(async () => {
     calls += 1;
@@ -103,7 +103,7 @@ test('a failed optional chemistry audit preserves an otherwise valid primary re-
   assert.equal(result.answer, 'A');
 });
 
-test('a blank matrix-key retry cannot discard a usable first table read', async () => {
+void test('a blank matrix-key retry cannot discard a usable first table read', async () => {
   let calls = 0;
   const extractor = reExtractor(async () => {
     calls += 1;
@@ -135,7 +135,7 @@ test('a blank matrix-key retry cannot discard a usable first table read', async 
   assert.deepEqual(result.match?.key, {});
 });
 
-test('re-extraction drops an unlabelled option instead of inventing an A–D label', async () => {
+void test('re-extraction drops an unlabelled option instead of inventing an A–D label', async () => {
   const extractor = reExtractor(async () => reply({
     stem: 'Select the correct statement.',
     options: [{ label: 'this is not a printed label', body: 'Distractor text' }],
@@ -152,7 +152,7 @@ test('re-extraction drops an unlabelled option instead of inventing an A–D lab
   assert.equal(result.stem, 'Select the correct statement.');
 });
 
-test('re-extraction isolates its target schema from batch extraction overrides', () => {
+void test('re-extraction isolates its target schema from batch extraction overrides', () => {
   const prompt = reExtractQuestionPrompt(
     { questionNumber: 127, stemHint: 'Read this question', questionType: 'single_correct' },
     { extraction: 'BATCH-ONLY-SENTINEL: return {"questions":[]}' },
@@ -163,7 +163,7 @@ test('re-extraction isolates its target schema from batch extraction overrides',
   assert.match(prompt, /"options"/);
 });
 
-test('re-extraction reads the requested item from a legacy batch-shaped model reply', async () => {
+void test('re-extraction reads the requested item from a legacy batch-shaped model reply', async () => {
   const extractor = reExtractor(async () => reply({
     questions: [
       { question_number: 122, question_text: 'Neighbouring question.', options: ['(A) wrong row'] },

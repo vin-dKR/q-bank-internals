@@ -1,7 +1,7 @@
 import { PDFDocument } from 'pdf-lib';
 import type { ReadingOrder } from '../types/cut-mode.js';
 import type { SplitPoint, SplitPointsByPage } from '../types/split-point.js';
-import { type PdfInput, type Slice, drawCellOnA4, embedCells } from './cut-pdf.js';
+import { type PdfInput, type Slice, cellBounds, drawCellOnA4 } from './cut-pdf.js';
 
 /** Interior cut fractions of one axis, wrapped in the page edges, sorted, de-duplicated to bounds. */
 function boundaries(positions: number[]): number[] {
@@ -74,20 +74,19 @@ export async function applyGridSplit(
 ): Promise<Uint8Array> {
   const origPdf = await PDFDocument.load(pdfBytes.slice(0));
   const out = await PDFDocument.create();
-  const pageCount = origPdf.getPageCount();
+  // One copier shares fonts/images across pages and cells. Per-page copies duplicate those resources.
+  const pages = await out.copyPages(origPdf, origPdf.getPageIndices());
 
-  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+  for (const [index, page] of pages.entries()) {
+    const pageNumber = index + 1;
     const splits = splitPoints[pageNumber] ?? [];
     if (!hasCuts(splits)) {
-      const [copied] = await out.copyPages(origPdf, [pageNumber - 1]);
-      if (copied) out.addPage(copied);
+      out.addPage(page);
       continue;
     }
-    // Batch every cell from this source page. It shares original fonts/images between the output
-    // pages instead of copying a high-resolution scan once per cell.
-    const embeddedCells = await embedCells(out, origPdf, cellsForPage(pageNumber, splits, order));
-    for (const embedded of embeddedCells) {
-      if (embedded) drawCellOnA4(out, embedded, 0);
+    for (const cell of cellsForPage(pageNumber, splits, order)) {
+      const bounds = cellBounds(page.getSize(), cell);
+      if (bounds) drawCellOnA4(out, await out.embedPage(page, bounds), 0);
     }
   }
 

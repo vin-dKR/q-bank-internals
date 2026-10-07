@@ -36,7 +36,11 @@ import { ExamAccessService } from './modules/exam-access/index.js';
 import { MastersService, TaxonomyResolver, type DictionaryRow } from './modules/masters/index.js';
 import { DriveService } from './modules/drive/index.js';
 import { IngestionService, type UploadStagingStore } from './modules/ingestion/index.js';
-import { PromptService, type PromptOverrideStore, type PromptOverrides } from './modules/prompts/index.js';
+import {
+  PromptService,
+  type PromptOverrideStore,
+  type PromptOverrides,
+} from './modules/prompts/index.js';
 import { QualityService, type QuestionAiFixer } from './modules/quality/index.js';
 import { InMemoryDocumentRepository } from './infrastructure/database/repositories/document.in-memory-repository.js';
 import { InMemorySessionRepository } from './infrastructure/database/repositories/session.in-memory-repository.js';
@@ -60,6 +64,7 @@ import { InProcessJobQueue } from './infrastructure/queue/in-process.job-queue.j
 import { BullMqJobQueue } from './infrastructure/queue/bullmq.job-queue.js';
 import { VercelJobQueue } from './infrastructure/queue/vercel.job-queue.js';
 import { PdfToImgRasterizer } from './infrastructure/pdf/pdf-to-img.rasterizer.js';
+import { TesseractPageOcr } from './infrastructure/pdf/tesseract.page-ocr.js';
 import { OpenAiVisionExtractor } from './infrastructure/ai/openai.vision-extractor.js';
 import { UnconfiguredVisionExtractor } from './infrastructure/ai/unconfigured.vision-extractor.js';
 import { SupabaseImageStore } from './infrastructure/storage/supabase.image-store.js';
@@ -78,6 +83,8 @@ import { OpenAiQuestionReExtractor } from './infrastructure/ai/openai.question-r
 import { UnconfiguredQuestionReExtractor } from './infrastructure/ai/unconfigured.question-reextractor.js';
 import { OpenAiPaperMetadataExtractor } from './infrastructure/ai/openai.paper-metadata-extractor.js';
 import { UnconfiguredPaperMetadataExtractor } from './infrastructure/ai/unconfigured.paper-metadata-extractor.js';
+import { OpenAiStructureExtractor } from './infrastructure/ai/openai.structure-extractor.js';
+import { UnconfiguredStructureExtractor } from './infrastructure/ai/unconfigured.structure-extractor.js';
 import { MongoBankPublisher } from './infrastructure/bank/mongo.bank-publisher.js';
 import { UnconfiguredBankPublisher } from './infrastructure/bank/unconfigured.bank-publisher.js';
 import { MongoBankQuestionStore } from './infrastructure/bank/mongo.bank-question-store.js';
@@ -99,6 +106,9 @@ import { InMemoryQualityScanStore } from './infrastructure/database/repositories
 import { MongoExamAccessStore } from './infrastructure/exam-access/mongo.exam-access-store.js';
 import { UnconfiguredExamAccessStore } from './infrastructure/exam-access/unconfigured.exam-access-store.js';
 import { MongoTaxonomyStore } from './infrastructure/taxonomy/mongo.taxonomy-store.js';
+import { StructureRulesService, type StructureRuleStore } from './modules/structure-rules/index.js';
+import { MongoStructureRuleStore } from './infrastructure/database/repositories/structure-rule.mongo-store.js';
+import { InMemoryStructureRuleStore } from './infrastructure/database/repositories/structure-rule.in-memory-store.js';
 import { UnconfiguredTaxonomyStore } from './infrastructure/taxonomy/unconfigured.taxonomy-store.js';
 
 /**
@@ -122,6 +132,7 @@ export type Container = {
   driveService: DriveService;
   ingestionService: IngestionService;
   promptsService: PromptService;
+  structureRulesService: StructureRulesService;
   qualityService: QualityService;
 };
 
@@ -151,7 +162,9 @@ function buildDrive(): DriveService {
     );
   }
 
-  logger.info('Drive: unconfigured. Set GOOGLE_OAUTH_* (recommended) or GOOGLE_SERVICE_ACCOUNT_JSON.');
+  logger.info(
+    'Drive: unconfigured. Set GOOGLE_OAUTH_* (recommended) or GOOGLE_SERVICE_ACCOUNT_JSON.',
+  );
   return new DriveService(new UnconfiguredDriveStorage(), '');
 }
 
@@ -164,6 +177,7 @@ function buildPersistence(): {
   usage: UsageRepository;
   limits: TokenLimitStore;
   prompts: PromptOverrideStore;
+  structureRules: StructureRuleStore;
 } {
   if (env.DB_DRIVER === 'mongo') {
     if (!env.DATABASE_URL) {
@@ -180,6 +194,7 @@ function buildPersistence(): {
       usage: new PrismaUsageRepository(prisma),
       limits: new PrismaTokenLimitStore(prisma),
       prompts: new PrismaPromptOverrideStore(prisma),
+      structureRules: new MongoStructureRuleStore(prisma),
     };
   }
 
@@ -193,6 +208,7 @@ function buildPersistence(): {
     usage: new InMemoryUsageRepository(),
     limits: new InMemoryTokenLimitStore(),
     prompts: new InMemoryPromptOverrideStore(),
+    structureRules: new InMemoryStructureRuleStore(),
   };
 }
 
@@ -221,7 +237,12 @@ function buildExtractor(
 ): VisionExtractor {
   if (env.OPENAI_API_KEY) {
     logger.info(`Extractor: OpenAI ${env.EXTRACTION_MODEL}`);
-    return new OpenAiVisionExtractor(env.OPENAI_API_KEY, env.EXTRACTION_MODEL, loadPromptOverrides, loadMasters);
+    return new OpenAiVisionExtractor(
+      env.OPENAI_API_KEY,
+      env.EXTRACTION_MODEL,
+      loadPromptOverrides,
+      loadMasters,
+    );
   }
   logger.info('Extractor: unconfigured. Set OPENAI_API_KEY to run extraction.');
   return new UnconfiguredVisionExtractor();
@@ -240,7 +261,11 @@ function buildImageStore(): ImageStore {
 /** Supabase-backed staging for direct-to-storage PDF uploads; a null-object that fails loudly otherwise. */
 function buildUploadStaging(): UploadStagingStore {
   if (env.SUPABASE_SERVICE_KEY) {
-    return new SupabaseUploadStagingStore(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY, env.SUPABASE_BUCKET);
+    return new SupabaseUploadStagingStore(
+      env.SUPABASE_URL,
+      env.SUPABASE_SERVICE_KEY,
+      env.SUPABASE_BUCKET,
+    );
   }
   logger.info('Uploads: unconfigured. Set SUPABASE_SERVICE_KEY to accept chapter PDF uploads.');
   return new UnconfiguredUploadStagingStore();
@@ -264,7 +289,9 @@ function buildLatexRefiner(loadPromptOverrides: () => Promise<PromptOverrides>):
 }
 
 /** OpenAI vision detector for the Verify auto-crop when a key is present; otherwise a null-object. */
-function buildDiagramDetector(loadPromptOverrides: () => Promise<PromptOverrides>): DiagramDetector {
+function buildDiagramDetector(
+  loadPromptOverrides: () => Promise<PromptOverrides>,
+): DiagramDetector {
   if (env.OPENAI_API_KEY) {
     logger.info(`Detector: OpenAI ${env.DETECTION_MODEL}`);
     return new OpenAiDiagramDetector(
@@ -279,17 +306,25 @@ function buildDiagramDetector(loadPromptOverrides: () => Promise<PromptOverrides
 }
 
 /** OpenAI vision re-extractor for the Verify "read the page again" button; otherwise a null-object. */
-function buildQuestionReExtractor(loadPromptOverrides: () => Promise<PromptOverrides>): QuestionReExtractor {
+function buildQuestionReExtractor(
+  loadPromptOverrides: () => Promise<PromptOverrides>,
+): QuestionReExtractor {
   if (env.OPENAI_API_KEY) {
     logger.info(`Re-extractor: OpenAI ${env.EXTRACTION_MODEL}`);
-    return new OpenAiQuestionReExtractor(env.OPENAI_API_KEY, env.EXTRACTION_MODEL, loadPromptOverrides);
+    return new OpenAiQuestionReExtractor(
+      env.OPENAI_API_KEY,
+      env.EXTRACTION_MODEL,
+      loadPromptOverrides,
+    );
   }
   logger.info('Re-extractor: unconfigured. Set OPENAI_API_KEY to re-extract questions.');
   return new UnconfiguredQuestionReExtractor();
 }
 
 /** OpenAI reader for the data-quality "fix with AI" button; otherwise a null-object that fails loudly. */
-function buildQuestionAiFixer(loadPromptOverrides: () => Promise<PromptOverrides>): QuestionAiFixer {
+function buildQuestionAiFixer(
+  loadPromptOverrides: () => Promise<PromptOverrides>,
+): QuestionAiFixer {
   if (env.OPENAI_API_KEY) {
     logger.info(`Quality AI fixer: OpenAI ${env.EXTRACTION_MODEL}`);
     return new OpenAiQuestionAiFixer(env.OPENAI_API_KEY, env.EXTRACTION_MODEL, loadPromptOverrides);
@@ -309,7 +344,9 @@ function buildPaperMetadataExtractor(): PaperMetadataExtractor {
 }
 
 export function createContainer(): Container {
-  const { documents, sessions, jobs, drafts, questions, usage, limits, prompts } = buildPersistence();
+  const { documents, sessions, jobs, drafts, questions, usage, limits, prompts, structureRules } =
+    buildPersistence();
+  const structureRulesService = new StructureRulesService(structureRules);
   const promptsService = new PromptService(prompts);
   // The prompt builders read edits through this; the service caches it briefly so a multi-page run
   // isn't a DB read per page.
@@ -369,9 +406,7 @@ export function createContainer(): Container {
   const publishService = new PublishService(documents, questions, bankPublisher, taxonomyResolver);
   const bankService = new BankService(bankQuestionStore);
   const catalogStore =
-    env.DB_DRIVER === 'mongo'
-      ? new MongoCatalogStore(getPrisma())
-      : new UnconfiguredCatalogStore();
+    env.DB_DRIVER === 'mongo' ? new MongoCatalogStore(getPrisma()) : new UnconfiguredCatalogStore();
   const catalogService = new CatalogService(catalogStore);
   // Auditing reads the main bank, so it needs Mongo like the catalog; the tracked anomalies and scan log
   // follow the persistence driver so the dashboard still boots on the in-memory dev driver.
@@ -435,6 +470,16 @@ export function createContainer(): Container {
     sessionsService,
     extractionService,
     buildUploadStaging(),
+    env.OPENAI_API_KEY
+      ? new OpenAiStructureExtractor(
+          env.OPENAI_API_KEY,
+          env.EXTRACTION_MODEL,
+        )
+      : new UnconfiguredStructureExtractor(),
+    usageService,
+    structureRulesService,
+    new TesseractPageOcr(env.STRUCTURE_OCR_TIMEOUT_MS),
+    env.STRUCTURE_OCR_MIN_CONFIDENCE,
   );
 
   // In-process queues consume here. Vercel Queue and BullMQ use their own process/private trigger.
@@ -467,6 +512,7 @@ export function createContainer(): Container {
     driveService,
     ingestionService,
     promptsService,
+    structureRulesService,
     qualityService,
   };
 }
