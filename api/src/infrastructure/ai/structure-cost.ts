@@ -18,7 +18,8 @@ import {
   STRUCTURE_TYPED_CROP_CONCURRENCY,
 } from '../../modules/ingestion/index.js';
 
-export const STRUCTURE_OUTPUT_TOKEN_LIMIT = 10000;
+/** Default cap for the small, text-only heading-normalization response (including reasoning). */
+export const STRUCTURE_OUTPUT_TOKEN_LIMIT = 2000;
 
 /** Standard OpenAI rates, verified 2026-09-30. Unknown models never inherit another model's price. */
 export function structurePricing(model: string, promptTokens: number): StructurePricing | null {
@@ -56,6 +57,7 @@ export function structureCostUsd(
 export function estimateStructure(
   model: string,
   input: StructureEstimateRequest & { rule?: StructureRule | null },
+  outputTokenLimit = STRUCTURE_OUTPUT_TOKEN_LIMIT,
 ): StructureEstimate {
   const contextKey = structureCropContextKey(input.context, input.rule);
   const batches = structureTextBatches(
@@ -95,7 +97,8 @@ export function estimateStructure(
   };
   const outputTokens = {
     min: batches.reduce((sum, batch) => sum + batch.length * 110, 0),
-    max: batches.length * STRUCTURE_OUTPUT_TOKEN_LIMIT,
+    // One bounded retry protects against a truncated/invalid structured response.
+    max: batches.length * outputTokenLimit * 2,
   };
   const pricing = structurePricing(model, Math.ceil(inputTokens.min / Math.max(1, batches.length)));
   const min = structureCostUsd(pricing, inputTokens.min, outputTokens.min);
@@ -117,7 +120,7 @@ export function estimateStructure(
       'Text-based planning range using reviewed crop text, heading/type evidence, saved examples and schema. This is not a spending cap; actual usage can fall outside it.',
       `One nonempty crop per AI call. Up to ${String(STRUCTURE_TYPED_CROP_CONCURRENCY)} typed crops run together; Combined crops run sequentially with preceding heading context. Blank reviewed crops use no AI tokens. Code assigns question pages; supporting attachments remain manual.`,
       'Tesseract OCR uses no OpenAI tokens. Server compute and storage costs are outside this estimate. Images and PDFs are never sent to this AI step.',
-      `Input uses roughly 3–5 characters per token and allows for preceding heading context. Output allows up to ${String(STRUCTURE_OUTPUT_TOKEN_LIMIT)} tokens per crop call including reasoning. No automatic retries.`,
+      `Input uses roughly 3–5 characters per token and allows for preceding heading context. Output allows up to ${String(outputTokenLimit)} tokens per crop call including reasoning. One retry is reserved for a malformed or interrupted AI response.`,
       'Uses standard USD API rates without cache discounts, taxes or other extraction steps. Unchanged per-crop AI results are reused when building JSON; changed crop roles, text, metadata or source rules requires a new call.',
     ],
   };

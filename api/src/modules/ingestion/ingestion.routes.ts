@@ -11,6 +11,7 @@ export function createIngestionRouter(service: IngestionService): Router {
   // serverless request-body limit (~4.5 MB) that a multipart upload here would hit.
   router.post('/signed-upload', controller.signedUpload);
   router.post('/structure-crop-ocr', controller.readStructureCrop);
+  router.post('/structure-crops-ocr', controller.readStructureCrops);
   router.post('/detect-structure', controller.detectStructure);
   router.post('/estimate-structure', controller.estimateStructure);
   router.post('/', controller.uploadChapter);

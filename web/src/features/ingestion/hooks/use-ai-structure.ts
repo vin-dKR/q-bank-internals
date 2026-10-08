@@ -8,6 +8,7 @@ import {
   StructureDetectionErrorDetailsSchema,
   StructureEstimateRequestSchema,
   structureHierarchy,
+  structureRuleScope,
 } from '@ingest/contracts';
 import { ApiError } from '../../../shared/api/http-client.js';
 import type { PdfInput } from '../lib/cut-pdf.js';
@@ -37,6 +38,9 @@ export type AiStructureController = {
   cost: StructureCostController;
   crops: StructureCropsController;
   contextKey: string;
+  /** AI requests wait for a scoped rule lookup, so their reuse key cannot change mid-request. */
+  rulesReady: boolean;
+  rulesError: string | null;
   extractCrop: (id: string) => void;
   detect: () => void;
   apply: () => void;
@@ -55,17 +59,25 @@ export function useAiStructure(input: {
   hierarchy?: StructureHierarchyLevel[];
 }): AiStructureController {
   const rule = useResolvedStructureRule(input.context);
+  const ruleScope = structureRuleScope(input.context);
+  // A missing saved rule is an explicit, stable default. `undefined` only means the scoped lookup
+  // has not settled yet, so it must never be used to start an AI request or construct a reuse key.
+  const resolvedRule = rule.data ?? null;
+  const rulesReady = ruleScope === null || rule.data !== undefined;
+  const rulesError = rule.isError
+    ? 'Heading rules could not be loaded. Resolve that error before using AI extraction.'
+    : null;
   const crops = useStructureCrops({
     ...input,
     hierarchy:
       rule.data === undefined
         ? (input.hierarchy ?? structureHierarchy())
-        : structureHierarchy(rule.data),
+        : structureHierarchy(resolvedRule),
   });
   const contextKey = JSON.stringify({
     context: input.context,
     // Applying the tree snapshot does not change the source rules used by the server.
-    rule: rule.data,
+    rule: resolvedRule,
   });
   const savedCrops = reviewedStructureCropResults(crops.crops, contextKey);
   // Saving an AI receipt must not invalidate the proposal generated from the same reviewed text.
@@ -94,6 +106,12 @@ export function useAiStructure(input: {
     }
   };
   const extractCrop = (id: string): void => {
+    if (!rulesReady) {
+      setError(
+        rulesError ?? 'Heading rules are still loading. Wait before extracting headings with AI.',
+      );
+      return;
+    }
     const bytes = input.bytes;
     const crop = crops.crops.find((item) => item.id === id);
     if (!bytes || !crop?.ocrDone || !crop.text.trim() || running.current || crops.busy) return;
@@ -146,6 +164,12 @@ export function useAiStructure(input: {
   };
 
   const detect = (): void => {
+    if (!rulesReady) {
+      setError(
+        rulesError ?? 'Heading rules are still loading. Wait before generating the structure JSON.',
+      );
+      return;
+    }
     const bytes = input.bytes;
     if (!bytes || input.pageCount < 1 || running.current || crops.busy) return;
     const checked = StructureEstimateRequestSchema.safeParse({
@@ -216,6 +240,14 @@ export function useAiStructure(input: {
 
   const apply = (): void => {
     if (!visibleProposal || running.current) return;
+    if (
+      (visibleProposal.result as DetectStructureResult & { complete?: boolean }).complete === false
+    ) {
+      setError(
+        'This result is incomplete. Resolve the reported crop issues and generate JSON again.',
+      );
+      return;
+    }
     const selected = visibleProposal;
     running.current = true;
     setError(null);
@@ -258,6 +290,8 @@ export function useAiStructure(input: {
     cost,
     crops,
     contextKey,
+    rulesReady,
+    rulesError,
     extractCrop,
     detect,
     apply,

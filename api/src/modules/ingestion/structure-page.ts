@@ -105,6 +105,7 @@ export class StructurePageAccumulator {
   private readonly levels: string[];
   private readonly pageTargets = new Map<number, DetectedStructureNode | null>();
   private readonly failedQuestionPages = new Set<number>();
+  private manualReviewRequired = false;
 
   constructor(
     private readonly context: StructureDetectionContext,
@@ -134,6 +135,10 @@ export class StructurePageAccumulator {
 
   failedPage(page: number, reason: string): void {
     this.warnings.push(`Page ${String(page)}: ${reason}`);
+    this.manualReviewRequired = true;
+    // A later sibling crop may fail after an earlier crop already established this page's
+    // hierarchy. Do not erase that proven context or detach following pages from it.
+    if (this.pageTargets.get(page)) return;
     this.clearContext(page);
   }
 
@@ -221,6 +226,7 @@ export class StructurePageAccumulator {
         if (source === undefined) {
           this.pageTargets.set(page, null);
           this.failedQuestionPages.add(page);
+          this.manualReviewRequired = true;
           this.warning(
             `Page ${String(page)}: rejected ${level} heading "${printed}" because it was not a verified heading on this page.`,
           );
@@ -237,6 +243,7 @@ export class StructurePageAccumulator {
         }
       }
       if (unsupportedParent) {
+        this.manualReviewRequired = true;
         this.clearContext(page);
         continue;
       }
@@ -343,8 +350,25 @@ export class StructurePageAccumulator {
         this.questionTypes[level] = this.scopeQuestionTypes.get(node) ?? '';
         siblings = node.children;
       }
-      // Later crops on the same page refine a Section/Part target to that page's final child.
-      this.pageTargets.set(page, deepestNode);
+      // Later crops may refine an outer Section/Part to its final child. Different sibling
+      // headings on one PDF page cannot be assigned reliably at page granularity, so leave that
+      // page for manual binding instead of silently attaching it to the last crop.
+      const previousTarget = this.pageTargets.get(page);
+      if (
+        previousTarget &&
+        deepestNode &&
+        previousTarget !== deepestNode &&
+        !this.containsNode(previousTarget, deepestNode)
+      ) {
+        this.pageTargets.set(page, null);
+        this.failedQuestionPages.add(page);
+        this.manualReviewRequired = true;
+        this.warning(
+          `Page ${String(page)}: multiple final headings were found on one page. Attach its question pages manually.`,
+        );
+      } else {
+        this.pageTargets.set(page, deepestNode);
+      }
       if (detectedType) {
         const node = scopeNodes.get(detectedType.level);
         const existing = node ? this.scopeQuestionTypes.get(node) : undefined;
@@ -439,6 +463,7 @@ export class StructurePageAccumulator {
   private questionPageAssignments(pageCount: number): {
     pages: WeakMap<DetectedStructureNode, number[]>;
     warnings: string[];
+    complete: boolean;
   } {
     const pages = new WeakMap<DetectedStructureNode, number[]>();
     const unassigned: number[] = [];
@@ -456,6 +481,7 @@ export class StructurePageAccumulator {
     }
     return {
       pages,
+      complete: unassigned.length === 0,
       warnings: unassigned.length
         ? [
             `Question pages left unassigned: ${unassigned.slice(0, 20).join(', ')}${unassigned.length > 20 ? `… (${String(unassigned.length)} pages)` : ''}. Review missing or rejected headings; pages attach only to final children.`,
@@ -464,7 +490,11 @@ export class StructurePageAccumulator {
     };
   }
 
-  result(questionPageCount?: number): { nodes: DetectedStructureNode[]; warnings: string[] } {
+  result(questionPageCount?: number): {
+    nodes: DetectedStructureNode[];
+    warnings: string[];
+    complete: boolean;
+  } {
     const assignment =
       questionPageCount === undefined ? null : this.questionPageAssignments(questionPageCount);
     const copy = (
@@ -487,8 +517,15 @@ export class StructurePageAccumulator {
     };
     return {
       nodes: this.nodes.map((node) => copy(node)),
+      complete: !this.manualReviewRequired && (assignment?.complete ?? true),
       warnings: [...this.warnings, ...(assignment?.warnings ?? [])],
     };
+  }
+
+  private containsNode(parent: DetectedStructureNode, child: DetectedStructureNode): boolean {
+    return (
+      parent === child || parent.children.some((candidate) => this.containsNode(candidate, child))
+    );
   }
 
   private newNode(level: DetectedStructureNode['level'], label: string): DetectedStructureNode {

@@ -10,6 +10,8 @@ import {
   type StructureDetectionUsage,
   type StructureEstimate,
   type StructureEstimateRequest,
+  type StructureCropOcrBatchRequest,
+  type StructureCropOcrBatchResult,
   type StructureCropOcrRequest,
   type StructureCropOcrResult,
   type StructureRule,
@@ -113,69 +115,119 @@ export class IngestionService {
 
   /** OCR runs separately so its text can be corrected and saved before any paid AI call. */
   async readStructureCrop(input: StructureCropOcrRequest): Promise<StructureCropOcrResult> {
+    const batch = await this.readStructureCrops({ crops: [input] });
+    const item = batch.crops[0];
+    if (!item?.result)
+      throw errors.structureDetectionFailed(
+        item?.error ?? 'The crop could not be read by Tesseract. Adjust it and run OCR again.',
+      );
+    return item.result;
+  }
+
+  /**
+   * OCR a small, ordered group with one worker. Individual failures stay attached to their crop so
+   * a bad image never discards already-read text from its neighbours.
+   */
+  async readStructureCrops(
+    input: StructureCropOcrBatchRequest,
+  ): Promise<StructureCropOcrBatchResult> {
     let session: PageOcrSession | null = null;
     try {
-      const png = await this.staging.download(input.storagePath);
-      if (
-        png.length < 24 ||
-        png.length > 10 * 1024 * 1024 ||
-        png.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a' ||
-        png.subarray(12, 16).toString() !== 'IHDR'
-      )
-        throw errors.structureDetectionFailed('Upload a PNG crop smaller than 10 MB.');
-      if (png.readUInt32BE(16) * png.readUInt32BE(20) > 20_000_000)
-        throw errors.structureDetectionFailed(
-          'The crop image is too large. Select a smaller heading region.',
-        );
       session = await this.cropOcr.open();
-      const lines = (await session.recognize(png)).sort(
-        (a, b) => a.box.top - b.box.top || a.box.left - b.box.left,
-      );
-      const text = lines
-        .map((line) => line.text.trim())
-        .filter(Boolean)
-        .join('\n');
-      if (text.length > 12000)
-        throw errors.structureDetectionFailed(
-          'This crop contains too much text. Select only the heading region.',
-        );
-      const confidence = lines
-        .filter((line) => line.text.trim() && Number.isFinite(line.confidence))
-        .map((line) => line.confidence);
-      const warnings = [...new Set(lines.flatMap((line) => line.warnings ?? []))];
-      if (!text)
-        warnings.push(
-          'No text was recognized. Adjust the crop or enter the printed text manually.',
-        );
-      if (confidence.some((value) => value < this.minimumOcrConfidence))
-        warnings.push(
-          'Some OCR lines have low confidence. Check the crop and correct the text before saving.',
-        );
-      return {
-        cropId: input.cropId,
-        text,
-        confidence: confidence.length
-          ? confidence.reduce((sum, value) => sum + value, 0) / confidence.length
-          : null,
-        warnings,
-      };
     } catch (error) {
-      if (AppError.is(error)) throw error;
-      throw errors.structureDetectionFailed(
-        'The crop could not be read by Tesseract. Adjust it and run OCR again.',
-      );
+      await Promise.all(input.crops.map((crop) => this.removeStructureCrop(crop.storagePath)));
+      const message = this.ocrFailureMessage(error);
+      return {
+        crops: input.crops.map((crop) => ({ cropId: crop.cropId, result: null, error: message })),
+      };
+    }
+    try {
+      const crops: StructureCropOcrBatchResult['crops'] = [];
+      for (const crop of input.crops) {
+        try {
+          crops.push({
+            cropId: crop.cropId,
+            result: await this.readStructureCropWithSession(crop, session),
+            error: null,
+          });
+        } catch (error) {
+          crops.push({ cropId: crop.cropId, result: null, error: this.ocrFailureMessage(error) });
+        } finally {
+          await this.removeStructureCrop(crop.storagePath);
+        }
+      }
+      return { crops };
     } finally {
       try {
-        await session?.close();
-      } finally {
-        await this.staging.remove(input.storagePath).catch((error: unknown) => {
-          logger.warn(
-            { err: error instanceof Error ? error.message : String(error) },
-            'Failed to clean up OCR crop',
-          );
-        });
+        await session.close();
+      } catch (error) {
+        logger.warn(
+          { err: error instanceof Error ? error.message : String(error) },
+          'Failed to close OCR worker',
+        );
       }
     }
+  }
+
+  private async readStructureCropWithSession(
+    input: StructureCropOcrRequest,
+    session: PageOcrSession,
+  ): Promise<StructureCropOcrResult> {
+    const png = await this.staging.download(input.storagePath);
+    if (
+      png.length < 24 ||
+      png.length > 10 * 1024 * 1024 ||
+      png.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a' ||
+      png.subarray(12, 16).toString() !== 'IHDR'
+    )
+      throw errors.structureDetectionFailed('Upload a PNG crop smaller than 10 MB.');
+    if (png.readUInt32BE(16) * png.readUInt32BE(20) > 20_000_000)
+      throw errors.structureDetectionFailed(
+        'The crop image is too large. Select a smaller heading region.',
+      );
+    const lines = (await session.recognize(png)).sort(
+      (a, b) => a.box.top - b.box.top || a.box.left - b.box.left,
+    );
+    const text = lines
+      .map((line) => line.text.trim())
+      .filter(Boolean)
+      .join('\n');
+    if (text.length > 12000)
+      throw errors.structureDetectionFailed(
+        'This crop contains too much text. Select only the heading region.',
+      );
+    const confidence = lines
+      .filter((line) => line.text.trim() && Number.isFinite(line.confidence))
+      .map((line) => line.confidence);
+    const warnings = [...new Set(lines.flatMap((line) => line.warnings ?? []))];
+    if (!text)
+      warnings.push('No text was recognized. Adjust the crop or enter the printed text manually.');
+    if (confidence.some((value) => value < this.minimumOcrConfidence))
+      warnings.push(
+        'Some OCR lines have low confidence. Check the crop and correct the text before saving.',
+      );
+    return {
+      cropId: input.cropId,
+      text,
+      confidence: confidence.length
+        ? confidence.reduce((sum, value) => sum + value, 0) / confidence.length
+        : null,
+      warnings,
+    };
+  }
+
+  private ocrFailureMessage(error: unknown): string {
+    if (AppError.is(error)) return error.message;
+    return 'The crop could not be read by Tesseract. Adjust it and run OCR again.';
+  }
+
+  private async removeStructureCrop(storagePath: string): Promise<void> {
+    await this.staging.remove(storagePath).catch((error: unknown) => {
+      logger.warn(
+        { err: error instanceof Error ? error.message : String(error) },
+        'Failed to clean up OCR crop',
+      );
+    });
   }
 
   /** Text-only detection is pre-upload; no PDF images are sent to the model. */
@@ -261,7 +313,11 @@ export class IngestionService {
         answerLayout: input.context.answerLayout,
         rule,
         ...(input.cropOnly && parsed.data.nodes.length === 0
-          ? { nodes: [], warnings: parsed.data.warnings ?? [] }
+          ? {
+              nodes: [],
+              warnings: parsed.data.warnings ?? [],
+              ...(parsed.data.complete === undefined ? {} : { complete: parsed.data.complete }),
+            }
           : validateStructure(raw, input.pageCount, input.context.answerLayout, rule, {
               allowQuestionPages: !input.cropOnly,
             })),

@@ -8,12 +8,17 @@ import { StructureTaskLoader } from './structure-task-loader.js';
 export function StructureCropReview({
   controller,
   disabled,
+  aiReady,
+  aiError,
   contextKey,
   onExtract,
   rules,
 }: {
   controller: StructureCropsController;
   disabled: boolean;
+  /** OCR and manual review remain available while source-specific rules are resolving. */
+  aiReady: boolean;
+  aiError: string | null;
   contextKey: string;
   onExtract: (id: string) => void;
   rules?: ReactNode;
@@ -22,7 +27,7 @@ export function StructureCropReview({
   const roles = ['combined', ...controller.hierarchy.map((level) => level.id)];
   const unsupported = crops.some((crop) => !roles.includes(crop.role ?? 'combined'));
   const reviewRef = useRef<HTMLDivElement>(null);
-  const unread = crops.filter((crop) => !crop.ocrDone).length;
+  const unresolved = crops.filter((crop) => !crop.ocrDone || crop.error !== null).length;
   const hasSavedText = crops.some((crop) => crop.reviewedText !== null);
   const textSaved = crops.length > 0 && controller.textCrops.length === crops.length;
   return (
@@ -145,23 +150,27 @@ export function StructureCropReview({
             Rerunning OCR replaces crop text when it succeeds. Review and save the text again before
             generating JSON.
           </p>
+          <p className="mt-2">
+            If OCR finds no readable text, resize or rerun the crop, or type the visible heading in
+            the text box. Manually corrected text can then be reviewed and saved.
+          </p>
         </InfoButton>
         <button
           type="button"
           className="btn btn--primary btn--xs"
           disabled={disabled || !controller.ordered || !crops.length}
           onClick={() => {
-            if (unread > 0) controller.runOcr();
+            if (unresolved > 0) controller.runOcr();
             else controller.rerunOcr();
           }}
         >
-          {unread === 0
+          {unresolved === 0
             ? 'Rerun OCR'
             : crops.some((crop) => crop.error)
               ? 'Retry unfinished OCR'
               : 'Run OCR'}
         </button>
-        {unread > 0 && crops.some((crop) => crop.ocrDone) ? (
+        {unresolved > 0 && crops.some((crop) => crop.ocrDone) ? (
           <button
             type="button"
             className="btn btn--ghost btn--xs"
@@ -198,11 +207,13 @@ export function StructureCropReview({
                     }
                   </span>{' '}
                   ·{' '}
-                  {crop.reviewedText !== null && crop.reviewedText === crop.text
-                    ? 'text saved'
-                    : crop.ocrDone
-                      ? 'review text'
-                      : 'awaiting OCR'}
+                  {crop.error
+                    ? 'OCR needs attention'
+                    : crop.reviewedText !== null && crop.reviewedText === crop.text
+                      ? 'text saved'
+                      : crop.ocrDone
+                        ? 'review text'
+                        : 'awaiting OCR'}
                 </summary>
                 <div className="my-2 flex flex-wrap gap-1">
                   <select
@@ -264,10 +275,16 @@ export function StructureCropReview({
                   <button
                     type="button"
                     className="btn btn--ghost btn--xs text-brand"
-                    disabled={disabled || !crop.ocrDone || !crop.text.trim() || !controller.ordered}
+                    disabled={
+                      disabled ||
+                      !aiReady ||
+                      !crop.ocrDone ||
+                      !crop.text.trim() ||
+                      !controller.ordered
+                    }
                     aria-label={`Extract headings with AI for crop ${String(index + 1)}`}
                     onClick={() => {
-                      onExtract(crop.id);
+                      if (aiReady) onExtract(crop.id);
                     }}
                   >
                     <IconSparkle /> Extract with AI
@@ -412,7 +429,7 @@ export function StructureCropReview({
         <button
           type="button"
           className="btn btn--primary btn--xs"
-          disabled={disabled || !controller.ordered || !crops.length || unread > 0 || textSaved}
+          disabled={disabled || !controller.ordered || !crops.length || unresolved > 0 || textSaved}
           onClick={controller.saveText}
         >
           {textSaved ? 'Text saved' : 'Save reviewed text'}
@@ -445,11 +462,22 @@ export function StructureCropReview({
         </button>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        {textSaved ? (
+        {!aiReady ? (
+          <p role="status" className="text-ink-3">
+            {aiError ??
+              'Loading heading rules before AI extraction. You can continue OCR and review text.'}
+          </p>
+        ) : null}
+        {unresolved > 0 && controller.ordered ? (
+          <p role="status" className="text-amber-700">
+            {unresolved} {unresolved === 1 ? 'crop needs' : 'crops need'} usable OCR text. Retry OCR
+            or type the visible heading manually before saving text for JSON.
+          </p>
+        ) : textSaved ? (
           <p role="status" className="font-medium text-brand">
             {crops.length} crops ready for JSON
           </p>
-        ) : crops.length > 0 && unread === 0 && controller.ordered ? (
+        ) : crops.length > 0 && unresolved === 0 && controller.ordered ? (
           <p role="status" className="text-amber-700">
             Review and save text before generating JSON.
           </p>

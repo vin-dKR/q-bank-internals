@@ -37,6 +37,12 @@ const EnvSchema = z.object({
   // Local-only override when an OS-level OPENAI_API_KEY would otherwise take precedence over .env.
   OPENAI_API_KEY_2: z.string().optional(),
   EXTRACTION_MODEL: z.string().default('gpt-5.4'),
+  // Heading crops are short, strictly-grounded text normalization requests. Keep their latency and
+  // spend independent from full-page extraction, which needs a larger reasoning budget.
+  STRUCTURE_MODEL: z.string().default('gpt-5.4-mini'),
+  STRUCTURE_REASONING_EFFORT: z.enum(['low', 'medium', 'high']).default('low'),
+  STRUCTURE_MAX_COMPLETION_TOKENS: z.coerce.number().int().min(500).max(10000).default(2000),
+  STRUCTURE_AI_TIMEOUT_MS: z.coerce.number().int().positive().max(180000).default(60000),
   STRUCTURE_OCR_MIN_CONFIDENCE: z.coerce.number().min(0).max(100).default(70),
   STRUCTURE_OCR_TIMEOUT_MS: z.coerce.number().int().positive().default(45000),
   // Age after which a document still `queued`/`extracting` is treated as orphaned and auto-reset to

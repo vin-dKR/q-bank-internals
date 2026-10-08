@@ -8,6 +8,7 @@ import type {
   DetectStructureResult,
   StructureEstimate,
   StructureEstimateRequest,
+  StructureCropOcrBatchResult,
   StructureCropOcrResult,
   StructureDetectionProgress,
 } from '@ingest/contracts';
@@ -17,6 +18,7 @@ import {
   UploadChapterResponseSchema,
   DetectStructureResultSchema,
   StructureEstimateSchema,
+  StructureCropOcrBatchResultSchema,
   StructureCropOcrResultSchema,
   StructureDetectionStreamEventSchema,
 } from '@ingest/contracts';
@@ -45,6 +47,66 @@ export const ingestionApi = {
       body: { storagePath: target.path, cropId },
       schema: StructureCropOcrResultSchema,
     });
+  },
+  /** Upload a small group in parallel, then let one warm worker read them in their saved order. */
+  readStructureCrops: async (
+    crops: readonly { cropId: string; png: Blob }[],
+  ): Promise<StructureCropOcrBatchResult> => {
+    const uploadAttempts = await Promise.all(
+      crops.map(async ({ cropId, png }) => {
+        try {
+          const target = await request('/ingestion/signed-upload', {
+            method: 'POST',
+            body: { fileName: `structure-crop-${cropId}.png` } satisfies SignedUploadRequest,
+            schema: SignedUploadTargetSchema,
+          });
+          await uploadToSignedUrl(target.uploadUrl, png);
+          return { cropId, storagePath: target.path, error: null };
+        } catch (error) {
+          return {
+            cropId,
+            storagePath: null,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      }),
+    );
+    const uploaded = uploadAttempts.flatMap((item) =>
+      item.storagePath ? [{ cropId: item.cropId, storagePath: item.storagePath }] : [],
+    );
+    const failed = new Map(
+      uploadAttempts.flatMap((item) =>
+        item.error ? [[item.cropId, { cropId: item.cropId, result: null, error: item.error }]] : [],
+      ),
+    );
+    if (!uploaded.length)
+      return {
+        crops: crops.map(
+          (crop) =>
+            failed.get(crop.cropId) ?? {
+              cropId: crop.cropId,
+              result: null,
+              error: 'The OCR upload did not complete. Run OCR again.',
+            },
+        ),
+      };
+    const response = await request('/ingestion/structure-crops-ocr', {
+      method: 'POST',
+      body: { crops: uploaded },
+      schema: StructureCropOcrBatchResultSchema,
+    });
+    const byId = new Map(response.crops.map((item) => [item.cropId, item]));
+    return {
+      crops: crops.map(
+        (crop) =>
+          byId.get(crop.cropId) ??
+          failed.get(crop.cropId) ?? {
+            cropId: crop.cropId,
+            result: null,
+            error: 'The OCR upload did not complete. Run OCR again.',
+          },
+      ),
+    };
   },
   detectStructure: async (
     input: DetectStructureRequest,

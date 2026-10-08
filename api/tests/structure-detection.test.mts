@@ -772,8 +772,8 @@ void test(
     };
     fakeModel(adapter, async (request) => {
       const crop = cropFor(request);
-      assert.equal(request.reasoning_effort, 'high');
-      assert.equal(request.max_completion_tokens, 10000);
+      assert.equal(request.reasoning_effort, 'low');
+      assert.equal(request.max_completion_tokens, 2000);
       if (crop.role === 'combined') {
         assert.equal(active, 0);
         assert.equal(usage, 6);
@@ -886,7 +886,7 @@ void test('typed groups record all usage before the next budget check and stop f
       pageCount: 5,
       context,
       beforeBatch: async () => {
-        if (++checks === 4) {
+        if (++checks === 2) {
           assert.equal(usage, 3);
           throw new Error('Budget exceeded');
         }
@@ -897,7 +897,7 @@ void test('typed groups record all usage before the next budget check and stop f
     }),
   );
   assert.equal(calls, 3);
-  assert.equal(checks, 4);
+  assert.equal(checks, 2);
   assert.equal(result.aiCallCount, 3);
   assert.equal(result.nodes.length, 3);
   assert.match((result.warnings ?? []).join(' '), /Budget exceeded/);
@@ -929,14 +929,14 @@ void test('a failed typed request drains and bills its completed siblings withou
       },
     }),
   );
-  assert.equal(calls, 3);
-  assert.equal(usage, 2);
-  assert.equal(result.aiCallCount, 3);
+  assert.equal(calls, 4);
+  assert.equal(usage, 3);
+  assert.equal(result.aiCallCount, 4);
   assert.deepEqual(
     result.cropResults?.map((crop) => crop.cropId),
     ['0', '2'],
   );
-  assert.match((result.warnings ?? []).join(' '), /failed or timed out/);
+  assert.match((result.warnings ?? []).join(' '), /missing or duplicated/);
 });
 
 void test('a typed crop rejects wrong-level and fabricated fields without losing its existing parents', () => {
@@ -1514,8 +1514,8 @@ void test('one-crop AI calls carry type scopes and ground evidence in the curren
       jsonAt(schema, 'properties', 'crops', 'items', 'properties', 'cropId', 'enum'),
       [batch[0]?.id],
     );
-    assert.equal(request.reasoning_effort, 'high');
-    assert.equal(request.max_completion_tokens, 10000);
+    assert.equal(request.reasoning_effort, 'low');
+    assert.equal(request.max_completion_tokens, 2000);
     const prompt = request.messages[1]?.content ?? '';
     assert.match(prompt, /questionTypeEvidence/);
     if (calls > 1) assert.match(prompt, /"part":"subjective"/);
@@ -1762,6 +1762,24 @@ void test('failed headings and pages before the first final child stay unassigne
     [3, 4, 5],
   );
   assert.match(startsLate.result(5).warnings.join(' '), /left unassigned: 1, 2/);
+});
+
+void test('a failed sibling crop preserves an already-established same-page hierarchy for later pages', () => {
+  const acc = new StructurePageAccumulator(context);
+  read(acc, 1, observation({ section: 'Exercise-1', part: 'PART I', topic: null }));
+  // The first crop on page 1 is valid; a later Topic crop timing out must not erase its parents.
+  acc.failedPage(1, 'Topic crop request failed');
+  read(acc, 2, observation({ section: null, part: null, topic: 'Section (A): Phenol' }));
+  const result = acc.result(2);
+  assert.equal(result.complete, false);
+  const exercise = result.nodes[0];
+  assert.ok(exercise);
+  const part = exercise.children[0];
+  assert.ok(part);
+  const topic = part.children[0];
+  assert.ok(topic);
+  assert.equal(topic.label, 'Phenol');
+  assert.deepEqual(topic.pages.question, [2]);
 });
 
 void test('validation permits only unique in-range question pages on final children; supporting pages stay manual', () => {
@@ -3040,11 +3058,11 @@ void test('missing/duplicate crop results do not apply children under an uncerta
     'separate',
   );
   assert.equal(result.nodes[0]?.label, 'Exercise-1');
-  assert.equal(result.nodes[1]?.label, 'Polymers');
+  assert.equal(result.nodes[1], undefined);
   assert.ok(result.warnings.some((warning) => warning.includes('missing or duplicated')));
 });
 
-void test('truncated JSON is billed once without retrying; blank text makes no request', async () => {
+void test('truncated JSON is retried once; blank text makes no request', async () => {
   const adapter = adapterFor('gpt-5.4-mini');
   let calls = 0;
   let usage = 0;
@@ -3064,8 +3082,8 @@ void test('truncated JSON is billed once without retrying; blank text makes no r
       usage += 1;
     },
   })) as { nodes: unknown[]; warnings: string[] };
-  assert.equal(usage, 1);
-  assert.equal(calls, 1);
+  assert.equal(usage, 2);
+  assert.equal(calls, 2);
   assert.equal(result.nodes.length, 0);
   assert.match(result.warnings[0] ?? '', /incomplete or invalid/);
   await adapter.extract({
@@ -3076,7 +3094,7 @@ void test('truncated JSON is billed once without retrying; blank text makes no r
       usage += 1;
     },
   });
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
 });
 
 void test('cost and batching use actual reviewed text rather than the full PDF page count', () => {
@@ -3084,7 +3102,7 @@ void test('cost and batching use actual reviewed text rather than the full PDF p
   const small = adapter.estimate({ context, pageCount: 2, crops: textCrops });
   const same = adapter.estimate({ context, pageCount: 100, crops: textCrops });
   assert.equal(small.callCount, 1);
-  assert.equal(small.outputTokens.max, 10000);
+  assert.equal(small.outputTokens.max, 4000);
   assert.equal(same.inputTokens.max, small.inputTokens.max);
   const many = Array.from({ length: 25 }, (_, index) => ({
     id: String(index),
@@ -3093,7 +3111,7 @@ void test('cost and batching use actual reviewed text rather than the full PDF p
   }));
   assert.equal(structureTextBatches(many).length, 25);
   assert.equal(adapter.estimate({ context, pageCount: 1, crops: many }).callCount, 25);
-  assert.equal(adapter.estimate({ context, pageCount: 1, crops: many }).outputTokens.max, 250000);
+  assert.equal(adapter.estimate({ context, pageCount: 1, crops: many }).outputTokens.max, 100000);
   assert.equal(
     structureTextBatches(many.slice(0, 2).map((crop) => ({ ...crop, text: 'A'.repeat(12000) })))
       .length,
@@ -3180,6 +3198,16 @@ void test('OCR merge recovers missing lines, deduplicates overlap, preserves con
   assert.equal(automatic[0].warnings, undefined);
 });
 
+void test('OCR prefers a materially more confident Sparse Text reading but keeps the conflict visible', () => {
+  const merged = mergeOcrLines([ocrLine('Exercie-1', 0, 44)], [ocrLine('Exercise-1', 0, 91)]);
+  const line = merged[0];
+  assert.ok(line);
+  assert.equal(line.text, 'Exercise-1');
+  assert.equal(line.confidence, 91);
+  assert.match(line.warnings.join(' '), /higher-confidence Sparse Text/);
+  assert.match(line.warnings.join(' '), /readings disagree/);
+});
+
 void test('OCR retains low-confidence lines in source order for review and always cleans temporary images', async () => {
   const png = await sharp({ create: { width: 100, height: 100, channels: 3, background: 'white' } })
     .png()
@@ -3218,6 +3246,57 @@ void test('OCR retains low-confidence lines in source order for review and alway
   await assert.rejects(service.readStructureCrop({ storagePath: 'tmp', cropId: 'a' }), /Tesseract/);
   assert.equal(closed, 2);
   assert.equal(removed, 2);
+});
+
+void test('OCR batches reuse one worker and retain successful sibling crops when one crop fails', async () => {
+  const png = await sharp({ create: { width: 100, height: 100, channels: 3, background: 'white' } })
+    .png()
+    .toBuffer();
+  let opened = 0;
+  let closed = 0;
+  let recognized = 0;
+  let removed = 0;
+  const service = ocrService(
+    {
+      open: async () => {
+        opened += 1;
+        return {
+          recognize: async () => {
+            recognized += 1;
+            if (recognized === 2) throw new Error('Synthetic OCR failure');
+            return [ocrLine(`Exercise-${String(recognized)}`, 0)];
+          },
+          close: async () => {
+            closed += 1;
+          },
+        };
+      },
+    },
+    png,
+    () => {
+      removed += 1;
+    },
+  );
+  const result = await service.readStructureCrops({
+    crops: [
+      { storagePath: 'one', cropId: 'one' },
+      { storagePath: 'two', cropId: 'two' },
+      { storagePath: 'three', cropId: 'three' },
+    ],
+  });
+  assert.equal(opened, 1);
+  assert.equal(closed, 1);
+  assert.equal(removed, 3);
+  const first = result.crops[0];
+  const second = result.crops[1];
+  const third = result.crops[2];
+  assert.ok(first?.result);
+  assert.ok(second);
+  assert.ok(third?.result);
+  assert.equal(first.result.text, 'Exercise-1');
+  assert.equal(second.result, null);
+  assert.match(second.error ?? '', /Tesseract/);
+  assert.equal(third.result.text, 'Exercise-3');
 });
 
 void test(

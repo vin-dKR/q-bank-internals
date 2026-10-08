@@ -49,8 +49,21 @@ type CropOutcome =
       kind: 'requested';
       crop: ReviewedCrop;
       response: OpenAI.Chat.Completions.ChatCompletion | null;
+      error: string | null;
     }
   | { kind: 'blocked'; crop: ReviewedCrop; message: string };
+type StructureExtractorOptions = {
+  reasoningEffort?: 'low' | 'medium' | 'high';
+  maxCompletionTokens?: number;
+  timeoutMs?: number;
+};
+type ParsedCropResponse = { items: StructurePageObservation['items'] } | { error: string };
+
+const DEFAULT_OPTIONS: Required<StructureExtractorOptions> = {
+  reasoningEffort: 'low',
+  maxCompletionTokens: STRUCTURE_OUTPUT_TOKEN_LIMIT,
+  timeoutMs: 60000,
+};
 
 /** Reviewed text only. Code carries hierarchy and grounds each result in its own crop. */
 export class OpenAiStructureExtractor implements StructureExtractor {
@@ -58,11 +71,14 @@ export class OpenAiStructureExtractor implements StructureExtractor {
   constructor(
     apiKey: string,
     private readonly model: string,
+    options: StructureExtractorOptions = {},
   ) {
-    this.client = new OpenAI({ apiKey, maxRetries: 0, timeout: 180000 });
+    this.options = { ...DEFAULT_OPTIONS, ...options };
+    this.client = new OpenAI({ apiKey, maxRetries: 0, timeout: this.options.timeoutMs });
   }
+  private readonly options: Required<StructureExtractorOptions>;
   estimate(input: Parameters<StructureExtractor['estimate']>[0]): StructureEstimate {
-    return estimateStructure(this.model, input);
+    return estimateStructure(this.model, input, this.options.maxCompletionTokens);
   }
   async extract(input: ExtractionInput): Promise<unknown> {
     const accumulator = new StructurePageAccumulator(input.context, input.rule);
@@ -80,6 +96,7 @@ export class OpenAiStructureExtractor implements StructureExtractor {
       : input.crops;
     for (const group of structureRequestGroups(orderedCrops)) {
       const pending: Promise<CropOutcome>[] = [];
+      let groupAdmitted = false;
       for (const source of group) {
         const crop = this.reviewedCrop(source, input);
         const saved = reusableStructureCrop(source, input.savedCrops, contextKey);
@@ -88,9 +105,13 @@ export class OpenAiStructureExtractor implements StructureExtractor {
           pending.push(Promise.resolve({ kind: 'saved', crop, items: saved?.items ?? [] }));
           continue;
         }
-        // Check each dispatch serially; record all in-flight usage before admitting another group.
+        // A typed group is dispatched together. The prior per-crop checks all observed the same
+        // unrecorded usage, so one admission preserves that protection without serial DB waits.
         try {
-          await input.beforeBatch?.();
+          if (!groupAdmitted) {
+            await input.beforeBatch?.();
+            groupAdmitted = true;
+          }
         } catch (error) {
           pending.push(
             Promise.resolve({
@@ -104,9 +125,9 @@ export class OpenAiStructureExtractor implements StructureExtractor {
         }
         aiCallCount += 1;
         pending.push(
-          this.request(crop, input, accumulator.pageContext()).then((response): CropOutcome => {
+          this.request(crop, input, accumulator.pageContext()).then((outcome): CropOutcome => {
             processed();
-            return { kind: 'requested', crop, response };
+            return { kind: 'requested', crop, ...outcome };
           }),
         );
       }
@@ -121,18 +142,39 @@ export class OpenAiStructureExtractor implements StructureExtractor {
         let observations: StructurePageObservation['items'];
         if (outcome.kind === 'saved') observations = outcome.items;
         else {
-          if (!outcome.response) {
+          let response = outcome.response;
+          let parsed: ParsedCropResponse = response
+            ? this.responseItems(response, crop, accumulator)
+            : { error: outcome.error ?? 'The AI request failed or timed out.' };
+          if (response) await this.recordUsage(response, crop, input, accumulator);
+
+          if ('error' in parsed) {
+            // A malformed/truncated response can consume tokens but is often recoverable on one
+            // fresh request. Never retry indefinitely or silently discard the unresolved crop.
+            try {
+              await input.beforeBatch?.();
+              aiCallCount += 1;
+              const retry = await this.request(crop, input, accumulator.pageContext());
+              response = retry.response;
+              parsed = response
+                ? this.responseItems(response, crop, accumulator)
+                : { error: retry.error ?? 'The retry failed or timed out.' };
+              if (response) await this.recordUsage(response, crop, input, accumulator);
+            } catch (error) {
+              parsed = {
+                error: error instanceof Error ? error.message : 'The retry could not be requested.',
+              };
+            }
+          }
+          if ('error' in parsed) {
             accumulator.failedPage(
               crop.pageNumber,
-              'The AI request failed or timed out. No further groups will be requested; other in-flight results and saved OCR text can be reused.',
+              `Crop ${crop.id}: ${parsed.error} Review manually; no further groups will be requested.`,
             );
             stopped = true;
             continue;
           }
-          await this.recordUsage(outcome.response, crop, input, accumulator);
-          const parsed = this.responseItems(outcome.response, crop, accumulator);
-          if (!parsed) continue;
-          observations = parsed;
+          observations = parsed.items;
         }
         const items = accumulator.accept(
           crop.pageNumber,
@@ -182,14 +224,14 @@ export class OpenAiStructureExtractor implements StructureExtractor {
     crop: ReviewedCrop,
     input: ExtractionInput,
     state: ReturnType<StructurePageAccumulator['pageContext']>,
-  ): Promise<OpenAI.Chat.Completions.ChatCompletion | null> {
+  ): Promise<{ response: OpenAI.Chat.Completions.ChatCompletion | null; error: string | null }> {
     try {
-      return await this.client.chat.completions.create({
+      const response = await this.client.chat.completions.create({
         model: this.model,
         ...(/^gpt-5\.4(?:-mini)?(?:-\d{4}-\d{2}-\d{2})?$/.test(this.model)
-          ? { reasoning_effort: 'high' as const }
+          ? { reasoning_effort: this.options.reasoningEffort }
           : {}),
-        max_completion_tokens: STRUCTURE_OUTPUT_TOKEN_LIMIT,
+        max_completion_tokens: this.options.maxCompletionTokens,
         response_format: {
           type: 'json_schema',
           json_schema: {
@@ -212,10 +254,21 @@ export class OpenAiStructureExtractor implements StructureExtractor {
           },
         ],
       });
-    } catch {
+      return { response, error: null };
+    } catch (error) {
       // The caller drains the group before stopping, so completed siblings are still billed.
-      return null;
+      return {
+        response: null,
+        error: this.requestFailureMessage(error),
+      };
     }
+  }
+
+  private requestFailureMessage(error: unknown): string {
+    const detail = error instanceof Error ? `${error.name} ${error.message}` : '';
+    return /timeout|timed out|abort/iu.test(detail)
+      ? 'The AI request timed out.'
+      : 'The AI request failed.';
   }
 
   private async recordUsage(
@@ -251,7 +304,7 @@ export class OpenAiStructureExtractor implements StructureExtractor {
     response: OpenAI.Chat.Completions.ChatCompletion,
     crop: ReviewedCrop,
     accumulator: StructurePageAccumulator,
-  ): StructurePageObservation['items'] | undefined {
+  ): ParsedCropResponse {
     const choice = response.choices[0];
     let parsed: z.SafeParseReturnType<unknown, z.infer<typeof BatchResponseSchema>>;
     try {
@@ -259,23 +312,14 @@ export class OpenAiStructureExtractor implements StructureExtractor {
     } catch {
       parsed = BatchResponseSchema.safeParse(null);
     }
-    if (choice?.message.refusal || choice?.finish_reason !== 'stop' || !parsed.success) {
-      accumulator.failedPage(
-        crop.pageNumber,
-        `Crop ${crop.id}: incomplete or invalid AI response. Review manually; no automatic retry.`,
-      );
-      return undefined;
-    }
+    if (choice?.message.refusal || choice?.finish_reason !== 'stop' || !parsed.success)
+      return { error: 'incomplete or invalid AI response.' };
     if (parsed.data.crops.some((value) => value.cropId !== crop.id))
       accumulator.warning('The AI returned unknown crop IDs; those results were ignored.');
     const matches = parsed.data.crops.filter((value) => value.cropId === crop.id);
     const match = matches[0];
     if (matches.length !== 1 || !match) {
-      accumulator.failedPage(
-        crop.pageNumber,
-        `Crop ${crop.id}: missing or duplicated result. Review manually.`,
-      );
-      return undefined;
+      return { error: 'missing or duplicated result.' };
     }
     if (
       Object.values(crop.candidates).every((values) => !values.length) &&
@@ -284,6 +328,6 @@ export class OpenAiStructureExtractor implements StructureExtractor {
       accumulator.warning(
         `Crop ${crop.id} (page ${String(crop.pageNumber)}): no recognizable heading markers. Review the text and saved source rules.`,
       );
-    return match.items;
+    return { items: match.items };
   }
 }

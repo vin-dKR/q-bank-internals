@@ -4,6 +4,7 @@ import {
   StructureEstimateRequestSchema,
   SignedUploadRequestSchema,
   UploadChapterRequestSchema,
+  StructureCropOcrBatchRequestSchema,
   StructureCropOcrRequestSchema,
   JSON_STREAM_CONTENT_TYPE,
   type StructureDetectionProgress,
@@ -21,11 +22,16 @@ export function createIngestionController(service: IngestionService): {
   detectStructure: RequestHandler;
   estimateStructure: RequestHandler;
   readStructureCrop: RequestHandler;
+  readStructureCrops: RequestHandler;
 } {
   return {
     readStructureCrop: asyncHandler(async (req, res) => {
       const input = parseOrThrow(StructureCropOcrRequestSchema, req.body);
       ok(res, await service.readStructureCrop(input));
+    }),
+    readStructureCrops: asyncHandler(async (req, res) => {
+      const input = parseOrThrow(StructureCropOcrBatchRequestSchema, req.body);
+      ok(res, await service.readStructureCrops(input));
     }),
     estimateStructure: asyncHandler(async (req, res) => {
       const input = parseOrThrow(StructureEstimateRequestSchema, req.body);
