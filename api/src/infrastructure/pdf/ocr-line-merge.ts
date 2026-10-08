@@ -36,9 +36,19 @@ export function mergeOcrLines(
     } else if (textKey(match.text) === textKey(line.text)) {
       match.confidence = Math.max(match.confidence, line.confidence);
     } else {
-      match.warnings.push(
-        `OCR readings disagree: "${match.text}" / "${line.text}". Verify this line before saving.`,
-      );
+      const warning = `OCR readings disagree: "${match.text}" / "${line.text}". Verify this line before saving.`;
+      // Automatic layout analysis can misread a compact heading while Sparse Text gets the same
+      // region cleanly. Prefer a materially more confident fallback, but retain an explicit review
+      // warning instead of pretending the disagreement is settled.
+      if (line.confidence >= match.confidence + 10) {
+        const automatic = match.text;
+        match.text = line.text;
+        match.confidence = line.confidence;
+        match.warnings.push(
+          `OCR used the higher-confidence Sparse Text reading "${line.text}" instead of Automatic "${automatic}".`,
+          warning,
+        );
+      } else match.warnings.push(warning);
     }
   }
   return lines.sort((a, b) => a.box.top - b.box.top || a.box.left - b.box.left);

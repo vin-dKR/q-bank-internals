@@ -58,3 +58,37 @@ export const StructureCropOcrResultSchema = z
   })
   .strict();
 export type StructureCropOcrResult = z.infer<typeof StructureCropOcrResultSchema>;
+
+/**
+ * A bounded group shares one OCR worker. Keeping failures beside their crop lets the browser
+ * preserve successful readings instead of throwing away a whole batch after one bad image.
+ */
+export const StructureCropOcrBatchRequestSchema = z
+  .object({
+    crops: z.array(StructureCropOcrRequestSchema).min(1).max(12),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (new Set(value.crops.map((crop) => crop.cropId)).size !== value.crops.length)
+      ctx.addIssue({ code: 'custom', message: 'Crop IDs must be unique.', path: ['crops'] });
+    if (new Set(value.crops.map((crop) => crop.storagePath)).size !== value.crops.length)
+      ctx.addIssue({ code: 'custom', message: 'Crop uploads must be unique.', path: ['crops'] });
+  });
+export type StructureCropOcrBatchRequest = z.infer<typeof StructureCropOcrBatchRequestSchema>;
+
+export const StructureCropOcrBatchItemSchema = z
+  .object({
+    cropId: z.string().min(1).max(80),
+    result: StructureCropOcrResultSchema.nullable(),
+    error: z.string().min(1).nullable(),
+  })
+  .strict()
+  .refine((item) => (item.result === null) !== (item.error === null), {
+    message: 'An OCR batch item must contain exactly one result or error.',
+  });
+export type StructureCropOcrBatchItem = z.infer<typeof StructureCropOcrBatchItemSchema>;
+
+export const StructureCropOcrBatchResultSchema = z
+  .object({ crops: z.array(StructureCropOcrBatchItemSchema).min(1).max(12) })
+  .strict();
+export type StructureCropOcrBatchResult = z.infer<typeof StructureCropOcrBatchResultSchema>;

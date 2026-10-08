@@ -22,6 +22,10 @@ export function AiStructureReview({
   pageCount: number;
 }): JSX.Element {
   const { proposal, busy } = controller;
+  // Older saved proposals do not have this field. Only an explicit incomplete result blocks apply;
+  // ordinary extraction warnings remain reviewable and applicable.
+  const proposalIncomplete =
+    proposal !== null && (proposal as { complete?: boolean }).complete === false;
   const hasPreviousRun = proposal !== null || controller.cost.receipts.length > 0 || hasNodes;
   const generateLabel = hasPreviousRun
     ? 'Regenerate JSON with AI'
@@ -37,6 +41,8 @@ export function AiStructureReview({
       <StructureCropReview
         controller={controller.crops}
         disabled={busy || !canDetect}
+        aiReady={controller.rulesReady}
+        aiError={controller.rulesError}
         contextKey={controller.contextKey}
         onExtract={controller.extractCrop}
         rules={<StructureRulesNotice context={metadata} />}
@@ -67,6 +73,7 @@ export function AiStructureReview({
           disabled={
             !canDetect ||
             busy ||
+            !controller.rulesReady ||
             !controller.crops.textCrops.some((crop) => crop.text.trim()) ||
             !StructureEstimateRequestSchema.safeParse({
               pageCount,
@@ -88,6 +95,12 @@ export function AiStructureReview({
       {!canDetect && !busy ? (
         <p className="text-[12px] text-ink-3">
           Load a PDF and apply pending page cuts before selecting heading crops.
+        </p>
+      ) : null}
+      {!controller.rulesReady && canDetect && !busy ? (
+        <p role="status" className="text-[12px] text-ink-3">
+          {controller.rulesError ??
+            'Loading heading rules before AI extraction. You can continue OCR and review text.'}
         </p>
       ) : null}
       {controller.error ? (
@@ -117,6 +130,12 @@ export function AiStructureReview({
               ))}
             </ul>
           ) : null}
+          {proposalIncomplete ? (
+            <p role="alert" className="error text-[13px]">
+              This result is incomplete. Resolve the reported crop issues and generate JSON again
+              before applying the structure.
+            </p>
+          ) : null}
           <details className="text-[12px] text-ink-2">
             <summary className="cursor-pointer">Review generated JSON</summary>
             <pre className="mt-2 max-h-72 overflow-auto rounded bg-surface-1 p-2 text-[11px]">
@@ -142,7 +161,7 @@ export function AiStructureReview({
             <button
               type="button"
               className="btn btn--primary btn--xs"
-              disabled={busy || !canDetect}
+              disabled={busy || !canDetect || proposalIncomplete}
               onClick={controller.apply}
             >
               {hasNodes ? 'Replace structure' : 'Apply structure'}

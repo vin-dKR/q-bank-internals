@@ -311,6 +311,31 @@ void test('unfinished or failed OCR cannot be sent to AI even when an older revi
   }
   assert.equal(reviewedStructureText(draft).length, 1);
 });
+void test('a blank OCR response stays unresolved until the operator enters and saves text', () => {
+  const original = crop('a', 1, 0, 0);
+  const blank = {
+    ...original,
+    text: '',
+    reviewedText: null,
+    ocrDone: false,
+    confidence: null,
+    error:
+      'OCR found no readable text for this crop. Adjust or retry the crop, or type the visible heading text manually.',
+  };
+  const draft = { version: 1 as const, fingerprint: 'pdf-hash', ordered: true, crops: [blank] };
+  assert.deepEqual(reviewedStructureText(draft), []);
+
+  const manuallyCorrected = {
+    ...blank,
+    text: 'PART II',
+    reviewedText: 'PART II',
+    ocrDone: true,
+    error: null,
+  };
+  assert.deepEqual(reviewedStructureText({ ...draft, crops: [manuallyCorrected] }), [
+    { id: 'a', pageNumber: 1, text: 'PART II' },
+  ]);
+});
 void test('draft roundtrip stores coordinates and OCR without binary PDF/image data', () => {
   const draft = {
     version: 1 as const,

@@ -20,6 +20,7 @@ export function validateStructure(
 ): {
   nodes: DetectedStructureNode[];
   warnings: string[];
+  complete?: boolean;
 } {
   const parsed = DetectedStructureSchema.safeParse(raw);
   if (!parsed.success)
@@ -74,5 +75,9 @@ export function validateStructure(
     for (const child of node.children) visit(child, nodeRank);
   };
   for (const node of nodes) visit(node, -1);
-  return { nodes, warnings: parsed.data.warnings ?? [] };
+  return {
+    nodes,
+    warnings: parsed.data.warnings ?? [],
+    ...(parsed.data.complete === undefined ? {} : { complete: parsed.data.complete }),
+  };
 }

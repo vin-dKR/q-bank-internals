@@ -5,6 +5,7 @@ import type {
   StructureExtractedCrop,
   StructureCropRole,
   StructureHierarchyLevel,
+  StructureCropOcrResult,
 } from '@ingest/contracts';
 import { DEFAULT_STRUCTURE_HIERARCHY } from '@ingest/contracts';
 import type { PdfInput } from '../lib/cut-pdf.js';
@@ -25,6 +26,10 @@ import {
   type StructureCropMode,
   type StructureCropSize,
 } from '../lib/structure-crops.js';
+
+// Six rendered heading images are small enough to hold briefly in the browser while one warm
+// server worker reads them. Rendering remains sequential because each PDF.js render opens a PDF.
+const STRUCTURE_OCR_BATCH_SIZE = 6;
 
 export type StructureCropsController = {
   mode: StructureCropMode;
@@ -167,56 +172,107 @@ export function useStructureCrops(input: {
       ...draft,
       crops: draft.crops.map((crop) =>
         selected.has(crop.id)
-          ? { ...crop, reviewedText: null, ocrDone: false, error: null, ai: null }
+          ? {
+              ...crop,
+              reviewedText: null,
+              ocrDone: false,
+              confidence: null,
+              warnings: [],
+              error: null,
+              ai: null,
+            }
           : crop,
       ),
     }));
     void (async () => {
+      let completed = 0;
+      const markComplete = (): void => {
+        completed += 1;
+        if (isCurrent()) setProgress({ completed, total: pending.length });
+      };
+      const failureMessage = (error: unknown): string =>
+        error instanceof Error ? error.message : String(error);
+      const saveFailure = (crop: StructureCropDraftItem, message: string): void => {
+        update((draft) => ({
+          ...draft,
+          crops: draft.crops.map((item) =>
+            item.id === crop.id
+              ? { ...item, ocrDone: false, confidence: null, warnings: [], error: message }
+              : item,
+          ),
+        }));
+      };
+      const saveResult = (crop: StructureCropDraftItem, result: StructureCropOcrResult): void => {
+        update((draft) => ({
+          ...draft,
+          crops: draft.crops.map((item) =>
+            item.id === crop.id
+              ? {
+                  ...item,
+                  text: result.text,
+                  reviewedText: null,
+                  ocrDone: true,
+                  confidence: result.confidence,
+                  warnings: result.warnings,
+                  error: null,
+                }
+              : item,
+          ),
+        }));
+      };
       try {
-        for (const [index, crop] of pending.entries()) {
+        for (let start = 0; start < pending.length; start += STRUCTURE_OCR_BATCH_SIZE) {
           if (!isCurrent()) break;
+          const batch = pending.slice(start, start + STRUCTURE_OCR_BATCH_SIZE);
+          const rendered: { crop: StructureCropDraftItem; png: Blob }[] = [];
+          for (const [index, crop] of batch.entries()) {
+            if (!isCurrent()) break;
+            setStatus(
+              `Preparing OCR crop ${String(start + index + 1)} / ${String(pending.length)} · page ${String(crop.pageNumber)}`,
+            );
+            try {
+              const png = await renderPageToPng(bytes, crop.pageNumber, 3, crop.bounds);
+              if (!isCurrent()) break;
+              rendered.push({ crop, png });
+            } catch (error) {
+              if (isCurrent()) {
+                saveFailure(crop, failureMessage(error));
+                markComplete();
+              }
+            }
+          }
+          if (!isCurrent() || !rendered.length) continue;
           setStatus(
-            `OCR crop ${String(index + 1)} / ${String(pending.length)} · page ${String(crop.pageNumber)}`,
+            `Reading OCR batch ${String(Math.floor(start / STRUCTURE_OCR_BATCH_SIZE) + 1)} · ${String(rendered.length)} crops`,
           );
           try {
-            const png = await renderPageToPng(bytes, crop.pageNumber, 3, crop.bounds);
+            const response = await ingestionApi.readStructureCrops(
+              rendered.map(({ crop, png }) => ({ cropId: crop.id, png })),
+            );
             if (!isCurrent()) break;
-            const result = await ingestionApi.readStructureCrop(png, crop.id);
-            if (!isCurrent()) break;
-            if (result.cropId !== crop.id)
-              throw new Error('The OCR response did not match this crop. Run OCR again.');
-            update((draft) => ({
-              ...draft,
-              crops: draft.crops.map((item) =>
-                item.id === crop.id
-                  ? {
-                      ...item,
-                      text: result.text,
-                      reviewedText: null,
-                      ocrDone: true,
-                      confidence: result.confidence,
-                      warnings: result.warnings,
-                      error: null,
-                    }
-                  : item,
-              ),
-            }));
-          } catch (err) {
+            const responseByCropId = new Map(response.crops.map((item) => [item.cropId, item]));
+            for (const { crop } of rendered) {
+              const item = responseByCropId.get(crop.id);
+              const result = item?.result;
+              if (!item)
+                saveFailure(crop, 'The OCR response did not include this crop. Run OCR again.');
+              else if (item.error) saveFailure(crop, item.error);
+              else if (!result || result.cropId !== crop.id)
+                saveFailure(crop, 'The OCR response did not match this crop. Run OCR again.');
+              else if (!result.text.trim())
+                saveFailure(
+                  crop,
+                  'OCR found no readable text for this crop. Adjust or retry the crop, or type the visible heading text manually.',
+                );
+              else saveResult(crop, result);
+              markComplete();
+            }
+          } catch (error) {
             if (isCurrent())
-              update((draft) => ({
-                ...draft,
-                crops: draft.crops.map((item) =>
-                  item.id === crop.id
-                    ? {
-                        ...item,
-                        ocrDone: false,
-                        error: err instanceof Error ? err.message : String(err),
-                      }
-                    : item,
-                ),
-              }));
-          } finally {
-            if (isCurrent()) setProgress({ completed: index + 1, total: pending.length });
+              for (const { crop } of rendered) {
+                saveFailure(crop, failureMessage(error));
+                markComplete();
+              }
           }
         }
       } finally {
@@ -354,7 +410,7 @@ export function useStructureCrops(input: {
       }
     },
     runOcr: () => {
-      extractText(current?.crops.filter((crop) => !crop.ocrDone) ?? []);
+      extractText(current?.crops.filter((crop) => !crop.ocrDone || crop.error !== null) ?? []);
     },
     rerunOcr: (id) => {
       extractText(current?.crops.filter((crop) => id === undefined || crop.id === id) ?? []);

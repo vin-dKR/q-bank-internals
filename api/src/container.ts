@@ -471,10 +471,11 @@ export function createContainer(): Container {
     extractionService,
     buildUploadStaging(),
     env.OPENAI_API_KEY
-      ? new OpenAiStructureExtractor(
-          env.OPENAI_API_KEY,
-          env.EXTRACTION_MODEL,
-        )
+      ? new OpenAiStructureExtractor(env.OPENAI_API_KEY, env.STRUCTURE_MODEL, {
+          reasoningEffort: env.STRUCTURE_REASONING_EFFORT,
+          maxCompletionTokens: env.STRUCTURE_MAX_COMPLETION_TOKENS,
+          timeoutMs: env.STRUCTURE_AI_TIMEOUT_MS,
+        })
       : new UnconfiguredStructureExtractor(),
     usageService,
     structureRulesService,

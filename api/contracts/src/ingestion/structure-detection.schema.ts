@@ -120,6 +120,8 @@ export const DetectedStructureSchema = z
   .object({
     nodes: z.array(DetectedStructureNodeSchema),
     warnings: z.array(z.string()).optional(),
+    // False means one or more crops/pages need manual resolution; partial proposals must not apply.
+    complete: z.boolean().optional(),
     cropResults: z.array(StructureExtractedCropSchema).max(1000).optional(),
     aiCallCount: z.number().int().min(0).optional(),
   })
