@@ -51,12 +51,28 @@ void test('ordinary extraction does not audit a response that emitted no SMILES 
 
 void test('ordinary extraction audits a response that emitted a SMILES tag', async () => {
   const first = '{"questions":[{"question_text":"<smiles>c1ccccc1</smiles>"}]}';
-  const audited = '{"questions":[{"question_text":"<smiles>c1ccccc1</smiles>"}]}';
+  const audited = '{"patches":[{"id":"/questions/0/question_text/smiles/0","smiles":"c1ccccc1"}]}';
   const instance = extractor([reply(first), reply(audited)]);
   const usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, callCount: 0 };
 
   const result = await instance.call('read the page', Buffer.from('page'), usage);
 
-  assert.equal(result.content, audited);
+  assert.equal(result.content, first);
   assert.equal(usage.callCount, 2);
+});
+
+void test('chemistry audit cannot replace a question with an empty object or erase its options', async () => {
+  const first = '{"questions":[{"question_number":3,"question_text":"Identify <smiles>c1ccccc1</smiles>","options":["(A) Benzene"]}]}';
+  for (const audited of ['{}', '{"questions":[]}', '{"patches":[]}']) {
+    const instance = extractor([reply(first), reply(audited)]);
+    const usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, callCount: 0 };
+    assert.equal((await instance.call('read', Buffer.from('page'), usage)).content, first);
+  }
+});
+
+void test('optional chemistry audit outage retains a successful primary read', async () => {
+  const first = '{"questions":[{"question_text":"<smiles>c1ccccc1</smiles>"}]}';
+  const instance = extractor([reply(first)]);
+  const usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, callCount: 0 };
+  assert.equal((await instance.call('read', Buffer.from('page'), usage)).content, first);
 });

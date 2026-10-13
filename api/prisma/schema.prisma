@@ -191,6 +191,9 @@ model Question {
   document        Document         @relation(fields: [documentId], references: [id])
   documentId      String           @db.ObjectId
   questionNumber  Int?
+  printedLabel    String?
+  // Source crops and recognition candidates; validation remains reviewable in staging.
+  chemistry       Json?
   path            SourcePath
   stem            String
   options         QuestionOption[]

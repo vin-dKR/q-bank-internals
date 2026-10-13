@@ -41,9 +41,11 @@ import { detectLatexInField } from '../quality/latex-rules.js';
 import { automaticLatexRepair, fullyAutomaticLatexRepair, preservesExtractedContent, questionLatexPatch, stagedLatexFields, stagedLatexIssues, type StagedLatexField } from './staged-latex.js';
 import type { AiTokenUsage, UsageService } from '../usage/index.js';
 import type { DocumentRepository } from '../documents/index.js';
+import { normalizePrintedQuestionLabel } from '../extraction/index.js';
 import type { BankQuestionStore } from '../bank/index.js';
 import type { DiagramDetector } from './diagram-detector.js';
 import { matchFiguresToQuestions } from './figure-matcher.js';
+import { chemistryReviewPatch } from './chemistry-source-review.js';
 import type { ImageStore } from './image-store.js';
 import type { LatexRefiner } from './latex-refiner.js';
 import type { PageRenderer } from './page-renderer.js';
@@ -674,7 +676,12 @@ export class QuestionsService {
     // Normalize before the one repository write, so batch and ordinary PATCH share exactly the same
     // table/choice invariant and a concurrent edit cannot be overwritten by a second repair write.
     const normalized = matrixNormalizationPatch(matrixStateAfterPatch(current, patch));
-    return this.questions.update(id, { ...patch, ...normalized });
+    const normalizedPatch = { ...patch, ...normalized };
+    const passages = current.chemistry && current.passageId !== null
+      ? await this.questions.findPassagesByDocument(current.documentId) : [];
+    const passage = passages.find((candidate) => candidate.id === current.passageId);
+    const chemistry = chemistryReviewPatch(current, normalizedPatch, passage);
+    return this.questions.update(id, { ...normalizedPatch, ...chemistry });
   }
 
   /**
@@ -1096,6 +1103,7 @@ export class QuestionsService {
     return this.reExtractor.reExtract({
       png,
       questionNumber: question.questionNumber,
+      printedLabel: question.printedLabel,
       stemHint: question.stem,
       questionType,
       sourceKind: source.sourceKind,
@@ -1272,6 +1280,7 @@ export class QuestionsService {
       mode,
       members: group.map((question) => ({
         questionNumber: question.questionNumber,
+        printedLabel: question.printedLabel,
         stemHint: question.stem,
         // A legacy group request sent one `questionType`; only use it when an old row has no type.
         // Never let a first-child type incorrectly force every mixed child into that shape.
@@ -1386,14 +1395,28 @@ function matchGroupSubQuestions(
   const result: ReExtractedSubQuestion[] = [];
   group.forEach((row, index) => {
     let draftIndex = drafts.findIndex((draft, i) => !used.has(i) && draft.memberIndex === index);
-    if (row.questionNumber !== null) {
+    const printedLabel = normalizePrintedQuestionLabel(row.printedLabel);
+    if (draftIndex === -1 && printedLabel !== null) {
+      const matches = drafts.flatMap((draft, i) =>
+        !used.has(i) && normalizePrintedQuestionLabel(draft.printedLabel) === printedLabel ? [i] : [],
+      );
+      if (matches.length === 1) draftIndex = matches[0] ?? -1;
+    }
+    if (row.questionNumber !== null && group.filter((member) => member.questionNumber === row.questionNumber).length === 1) {
       if (draftIndex === -1) {
-        draftIndex = drafts.findIndex(
-          (draft, i) => !used.has(i) && draft.questionNumber === row.questionNumber,
-        );
+        const matches = drafts.flatMap((draft, i) => {
+          const draftLabel = normalizePrintedQuestionLabel(draft.printedLabel);
+          const agrees = printedLabel === null || draftLabel === null || printedLabel === draftLabel;
+          return !used.has(i) && agrees && draft.questionNumber === row.questionNumber ? [i] : [];
+        });
+        if (matches.length === 1) draftIndex = matches[0] ?? -1;
       }
     }
-    if (draftIndex === -1 && index < drafts.length && !used.has(index)) draftIndex = index;
+    const positional = drafts[index];
+    if (draftIndex === -1 && row.questionNumber === null && printedLabel === null &&
+      positional?.questionNumber === null && normalizePrintedQuestionLabel(positional.printedLabel) === null && !used.has(index)) {
+      draftIndex = index;
+    }
     const draft = draftIndex === -1 ? undefined : drafts[draftIndex];
     if (!draft) return;
     used.add(draftIndex);

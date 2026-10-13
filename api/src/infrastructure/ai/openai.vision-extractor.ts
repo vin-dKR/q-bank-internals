@@ -1,5 +1,5 @@
 import { OpenAI } from 'openai';
-import type { Document, MatchData } from '@ingest/contracts';
+import type { ChemistryExtraction, Document, MatchData } from '@ingest/contracts';
 import { KNOWN_LEVELS } from '@ingest/contracts';
 import type {
   AnswerExtraction,
@@ -12,7 +12,7 @@ import type {
   QuestionExtraction,
   VisionExtractor,
 } from '../../modules/extraction/index.js';
-import { topicBindingForPage } from '../../modules/extraction/index.js';
+import { isChemistryDocument, nativeChoiceSheet, normalizePrintedQuestionLabel, questionNumberFromPrintedLabel, topicBindingForPage } from '../../modules/extraction/index.js';
 import { mergeAnswerEntries, type AnswerSource } from '../../modules/extraction/vision-extractor.js';
 import type { AiTokenUsage } from '../../modules/usage/index.js';
 import { errors } from '../../shared/errors/error-catalog.js';
@@ -20,18 +20,29 @@ import { logger } from '../../shared/logger/logger.js';
 import { answerPrompt, companionPrompt, questionPrompt, solutionPrompt } from './prompts/extraction-prompts.js';
 import { sanitizeExtractedLatex } from './latex-sanitizer.js';
 import type { PromptOverrides } from '../../modules/prompts/index.js';
+import { mapWithConcurrency } from '../../shared/async/map-with-concurrency.js';
+import { createChemistryInventoryPreview } from './chemistry-inventory-preview.js';
+import {
+  applySmilesPatches, CHEMISTRY_AUDIT_RESPONSE_FORMAT, CHEMISTRY_STRUCTURE_AUDIT_PROMPT, enumerateSmilesCandidates, validateSmilesGraph,
+} from './chemistry-audit.js';
+import {
+  CHEMISTRY_INVENTORY_JSON_SCHEMA, CHEMISTRY_INVENTORY_PROMPT, chemistryCropBox, chemistrySourceBox,
+  chemistryQuestionRegions, chemistryStemRegions, cropChemistryImage, cropChemistryRegions, parseChemistryInventory, type ChemistryQuestionRegion,
+} from './chemistry-page-inventory.js';
 
 /**
  * Output-token budget for the first attempt at one page. Covers a reasoning model's hidden reasoning
  * AND the page's question JSON; the retry doubles it once if the model still truncates.
  */
 const MAX_TOKENS = 16000;
-const SMILES_TAG = /<smiles\b/i;
-const SMILES_AUDIT_PROMPT = 'CHEMISTRY STRUCTURE AUDIT: The candidate JSON below was extracted from the supplied exam-page image. Inspect only every <smiles>…</smiles> value against the drawn structures in the image. Confirm each tag contains one complete connected molecule and that every bond, charge, and aromatic substituent position matches the drawing. For rings, explicitly count ring edges between substituents; do not accept a plausible but wrong ortho/meta/para isomer. Return the complete candidate JSON unchanged when all structures match. Otherwise, change only the incorrect SMILES values and return the complete valid JSON. Do not alter prose, question boundaries, options, answers, or any non-SMILES field.\n\nCANDIDATE JSON:\n';
+type AuditImages = { stem: Buffer; options: Buffer[] };
+type RegionQuestion = { raw: RawQuestion; region?: ChemistryQuestionRegion };
+export type ExtractionModelReceipt = { phase: 'inventory' | 'transcription' | 'audit'; content: string; usage: AiTokenUsage };
 
 /** Shape the question prompt asks the model to return, before we enrich with section/page. */
 type RawQuestion = {
   question_number?: unknown;
+  printed_label?: unknown;
   question_text?: unknown;
   options?: unknown;
   /** Only present for comprehension questions — the shared passage, repeated on each sub-question. */
@@ -131,10 +142,7 @@ function toQuestionNumber(value: unknown): number | null {
   }
   // Answer papers and question pages commonly write `Q1`, `Question 1`, or `1.`. Treat the
   // printed ordinal as the identity, rather than requiring the model to strip that decoration.
-  const match = /\d+/.exec(asString(value));
-  if (!match) return null;
-  const number = Number(match[0]);
-  return Number.isSafeInteger(number) && number > 0 ? number : null;
+  return questionNumberFromPrintedLabel(asString(value));
 }
 
 function parseQuestions(content: string): RawQuestion[] {
@@ -196,10 +204,7 @@ function answerFromMarkedOptions(raw: unknown, questionType: unknown): string | 
 
 /** Normalise a printed answer-map key (`Q1`, `Question 1`, `1.`) to the question ledger key. */
 function normaliseAnswerMapKey(value: string): string | null {
-  const match = /\d+/.exec(value);
-  if (!match) return null;
-  const number = Number(match[0]);
-  return Number.isSafeInteger(number) && number > 0 ? String(number) : null;
+  return normalizePrintedQuestionLabel(value);
 }
 
 function toAnswerEntry(value: unknown, answerSource: AnswerSource): AnswerSheet['entries'][string] {
@@ -319,6 +324,7 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     // A live snapshot of the closed masters dimensions (questionType / level) so the classification
     // prompt lists the OPERATOR-managed vocabulary, not a hardcoded constant. Cached upstream.
     private readonly loadMasters: () => Promise<MastersSnapshot>,
+    private readonly onModelReceipt?: (receipt: ExtractionModelReceipt) => Promise<void>,
   ) {
     this.client = new OpenAI({ apiKey });
   }
@@ -330,6 +336,7 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     onProgress?: (progress: ExtractionProgress) => Promise<void>;
   }): Promise<QuestionExtraction> {
     const results: ExtractedQuestion[] = [];
+    const sourceSheets: AnswerSheet[] = [];
     const usage = this.emptyUsage();
     const pagesTotal = input.pages.length;
     let pagesDone = 0;
@@ -340,10 +347,13 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     for (const page of input.pages) {
       // Per page: the topic config can bind different pages to different fixed question types.
       const prompt = questionPrompt(input.document, page.pageNumber, overrides, masters);
-      const raws = await this.readPageQuestions(prompt, page, input.document, usage, input.signal);
+      const read = isChemistryDocument(input.document)
+        ? await this.readChemistryPage(prompt, page, input.document, overrides, usage, input.signal)
+        : { questions: (await this.readPageQuestions(prompt, page, input.document, usage, input.signal)).map((raw): RegionQuestion => ({ raw })), sheets: [] };
+      sourceSheets.push(...read.sheets);
       const boundType = topicBindingForPage(input.document.topics, page.pageNumber)?.questionType
         ?? input.document.questionType;
-      for (const raw of raws) {
+      for (const { raw, region } of read.questions) {
         const questionType = asStringOrNull(raw.question_type);
         // A model occasionally preserves the documented `is_correct` flags but omits question_type.
         // On an operator-locked multi-correct page, that used to discard every marked answer because
@@ -351,15 +361,20 @@ export class OpenAiVisionExtractor implements VisionExtractor {
         // type is safe as a fallback; a comprehension container deliberately remains unbound because
         // each child has its own type.
         const answerType = questionType ?? (boundType === 'comprehension' ? null : boundType);
+        const printedLabel = normalizePrintedQuestionLabel(region?.printed_label ?? (asString(raw.printed_label) || asString(raw.question_number)));
+        const chemistry = region ? await this.chemistryMetadata(raw, region) : null;
         results.push({
           questionNumber: toQuestionNumber(raw.question_number),
+          printedLabel,
+          ...(region ? { sourceBbox: chemistrySourceBox(region.bbox) } : {}),
+          chemistry,
           questionText: cleanString(raw.question_text),
           options: Array.isArray(raw.options)
             ? raw.options.map(normaliseOption).filter((option): option is string => option !== null)
             : [],
           answer: cleanStringOrNull(raw.answer) ?? answerFromMarkedOptions(raw.options, answerType),
           explanation: cleanStringOrNull(raw.explanation),
-          sectionName: input.document.sectionName,
+          sectionName: region?.source_section ?? input.document.sectionName,
           // The model now classifies each question's own type (and difficulty). Null when it returned
           // nothing usable — toNewQuestion falls back to the operator's binding for the type.
           questionType,
@@ -384,7 +399,105 @@ export class OpenAiVisionExtractor implements VisionExtractor {
       { documentId: input.document.id, model: this.model, pages: input.pages.length, questions: results.length },
       'question extraction done',
     );
-    return { questions: results, usage };
+    return { questions: results, usage, sheets: sourceSheets };
+  }
+
+  /** Inventory independently of model-generated tags, then read one owned question at a time. */
+  private async readChemistryPage(
+    prompt: string,
+    page: PageImage,
+    document: Document,
+    overrides: PromptOverrides,
+    usage: AiTokenUsage,
+    signal?: AbortSignal,
+  ): Promise<{ questions: RegionQuestion[]; sheets: AnswerSheet[] }> {
+    const preview = await createChemistryInventoryPreview(page.png);
+    const inventoryReply = await this.client.chat.completions.create({
+      model: this.model,
+      max_completion_tokens: MAX_TOKENS,
+      response_format: { type: 'json_schema', json_schema: CHEMISTRY_INVENTORY_JSON_SCHEMA },
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: `${CHEMISTRY_INVENTORY_PROMPT}\n\n${preview.coordinateInstructions}${page.layout ? `\nVISIBLE SOURCE ANCHORS (from source coordinates): ${JSON.stringify(page.layout.questions.map((question) => ({ printed_label: question.printedLabel, source_section: question.sourceSection, bbox: question.bbox.map((coordinate) => Math.round(coordinate * 1000)), option_labels: question.options.map((option) => option.label) })))}` : ''}` },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${preview.png.toString('base64')}`, detail: 'high' } },
+      ] }],
+    }, signal ? { signal } : undefined);
+    this.accumulateUsage(usage, inventoryReply.usage);
+    await this.onModelReceipt?.({ phase: 'inventory', content: inventoryReply.choices[0]?.message.content ?? '', usage: { ...usage } });
+    if (inventoryReply.choices[0]?.finish_reason === 'length') throw errors.extractionFailed('Chemistry source inventory was truncated; no page was accepted.');
+    const inventory = parseChemistryInventory(inventoryReply.choices[0]?.message.content ?? '', page.layout);
+    if (inventory.page_role === 'empty') return { questions: [], sheets: [] };
+    if (inventory.page_role === 'answers' || inventory.page_role === 'solutions') {
+      // Separate answer/solution pages inside a question PDF enrich existing identities, never create rows.
+      const sourcePrompt = companionPrompt(document, page.pageNumber, overrides);
+      const { content } = await this.call(sourcePrompt, page.png, usage, signal);
+      return { questions: [], sheets: inventory.page_role === 'answers' ? parseAnswerSheets(content, document.sectionName) : parseSolutionSheets(content, document.sectionName) };
+    }
+    const questions = await mapWithConcurrency(inventory.question_regions, 3, async (region): Promise<RegionQuestion> => {
+      const png = await cropChemistryRegions(page.png, chemistryQuestionRegions(region));
+      const stemRegions = chemistryStemRegions(region);
+      const stem = stemRegions.length > 0 ? await cropChemistryRegions(page.png, stemRegions) : png;
+      const options = await Promise.all(region.options.map((option) => cropChemistryImage(page.png, option.bbox)));
+      const ownership = [
+        'LOCALIZED SOURCE OWNERSHIP: this image contains exactly ONE source question. Return exactly one questions entry.',
+        `Preserve its printed_label as ${JSON.stringify(region.printed_label)}. Keep its numeric ordinal in question_number; never remove the printed prefix.`,
+        'Confirm that this exact printed label is visible. Never relabel a different question as the requested target. If the crop is missing its target or contains part of a neighboring question, return questions: [] rather than guessing its ownership.',
+        `The independently inventoried source options, in order, are ${JSON.stringify(region.options.map((option) => option.label))}. Preserve this exact panel even if a classification rule says the question type normally has no options. Do not invent absent choices.`,
+        'Every arrow/step, reagent, above/below condition and intermediate label is part of the question. Represent all printed relationships; never infer products. Read drawn bonds from this enlarged crop, counting ring vertices and tracing carbonyl/heteroatom attachment.',
+        ...(region.source_regions.length > 1 ? ['This one question continues across columns. The original source parts are stacked in reading order with a white gap. Preserve every continued statement and the choices from the final part; the gap does not create another question.'] : []),
+      ].join('\n');
+      const { content } = await this.call(`${prompt}\n\n${ownership}`, png, usage, signal, { stem, options });
+      const raws = parseQuestions(content);
+      if (raws.length !== 1 || !raws[0]) throw errors.extractionFailed('A localized chemistry question returned a missing or merged question; the page requires review.');
+      const raw = raws[0];
+      const returnedLabel = normalizePrintedQuestionLabel(asString(raw.printed_label) || asString(raw.question_number));
+      const inventoriedLabel = normalizePrintedQuestionLabel(region.printed_label);
+      const hasExplicitPrefix = typeof raw.printed_label === 'string' || (returnedLabel !== null && /[A-Z]/.test(returnedLabel));
+      const identityMismatch = hasExplicitPrefix ? returnedLabel !== inventoriedLabel : (toQuestionNumber(raw.question_number) !== questionNumberFromPrintedLabel(inventoriedLabel));
+      if (inventoriedLabel !== null && (returnedLabel === null || identityMismatch)) throw errors.extractionFailed('Localized recognition returned a missing or different printed question identity.');
+      const rawOptions = Array.isArray(raw.options) ? raw.options.map(normaliseOption).filter((option): option is string => option !== null) : [];
+      const actualLabels = rawOptions.map((option) => /^\s*(?:\(([^)]+)\)|([A-Za-z0-9]+)[.)])/.exec(option)?.slice(1).find(Boolean)?.trim().toUpperCase() ?? '');
+      const expectedLabels = region.options.map((option) => option.label.trim().toUpperCase());
+      if (JSON.stringify(actualLabels) !== JSON.stringify(expectedLabels)) throw errors.extractionFailed('Chemistry extraction changed the inventoried option labels, order or count.');
+      raw.printed_label = region.printed_label;
+      raw.question_number = questionNumberFromPrintedLabel(region.printed_label) ?? raw.question_number;
+      return { raw, region };
+    });
+    if (inventory.page_role === 'mixed') {
+      const { content } = await this.call(companionPrompt(document, page.pageNumber, overrides), page.png, usage, signal);
+      return { questions, sheets: parseCompanionSheets(content, document.sectionName) };
+    }
+    return { questions, sheets: [] };
+  }
+
+  private async chemistryMetadata(raw: RawQuestion, region: ChemistryQuestionRegion): Promise<ChemistryExtraction> {
+    const stem = cleanString(raw.question_text);
+    const options = Array.isArray(raw.options) ? raw.options.map(normaliseOption).filter((option): option is string => option !== null) : [];
+    const issues: string[] = [];
+    if (enumerateSmilesCandidates({ columns: raw.columns, passage: raw.passage }).length > 0) issues.push('Molecular drawings in a matrix or shared passage require source-image review before publication.');
+    const visuals: ChemistryExtraction['visuals'] = [];
+    const addVisual = async (field: 'stem' | 'option', optionLabel: string | null, text: string, kind: 'molecule' | 'reaction' | 'figure', bbox: ChemistryQuestionRegion['bbox'], regions?: ChemistryQuestionRegion['bbox'][]): Promise<void> => {
+      const smiles = enumerateSmilesCandidates({ stem: text }).map((candidate) => candidate.smiles);
+      const validation = await Promise.all(smiles.map(validateSmilesGraph));
+      if (validation.some((result) => !result.ok)) issues.push(`Invalid or unsupported candidate structure in ${optionLabel ? `option ${optionLabel}` : 'stem'}; source image is authoritative.`);
+      visuals.push({ id: `${field}:${optionLabel ?? 'source'}`, field, optionLabel, kind, bbox: chemistryCropBox(bbox), ...(regions && regions.length > 1 ? { regions: regions.map(chemistryCropBox) } : {}), candidateSmiles: smiles, graphValid: smiles.length ? validation.every((result) => result.ok) : null, cropUrl: null });
+    };
+    if (region.stem_bbox && (region.visual_kind !== 'none' || region.stem_regions.length > 1 || enumerateSmilesCandidates({ stem }).length > 0)) {
+      await addVisual('stem', null, stem, region.visual_kind === 'none' ? 'figure' : region.visual_kind, region.stem_bbox, chemistryStemRegions(region));
+    }
+    for (const [index, option] of region.options.entries()) {
+      const text = options[index] ?? '';
+      if (option.visual_kind !== 'none' || enumerateSmilesCandidates({ stem: text }).length > 0) {
+        await addVisual('option', option.label, text, option.visual_kind === 'none' ? 'molecule' : option.visual_kind, option.bbox);
+      }
+    }
+    return { version: 1, status: visuals.length || issues.length ? 'needs_review' : 'source_preserved', issues, candidateStem: stem, candidateOptions: options, visuals };
+  }
+
+  private accumulateUsage(usage: AiTokenUsage, reported: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined): void {
+    usage.promptTokens += reported?.prompt_tokens ?? 0;
+    usage.completionTokens += reported?.completion_tokens ?? 0;
+    usage.totalTokens += reported?.total_tokens ?? 0;
+    usage.callCount += 1;
   }
 
   async extractAnswers(input: {
@@ -397,6 +510,11 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     const usage = this.emptyUsage();
     const overrides = await this.loadPromptOverrides();
     for (const page of input.pages) {
+      const localKey = input.scope?.questionType === 'single_correct' ? nativeChoiceSheet(page.nativeChoiceKeys, input.scope.expectedPrintedLabels, input.scope.sectionName) : null;
+      if (localKey) {
+        sheets.push(localKey);
+        continue;
+      }
       // A sibling answer PDF's page numbers and document-level fallback type are unrelated to the
       // question PDF once a chapter contains several leaves. A bound scope therefore wins over the
       // sibling document when selecting the answer grammar and fallback section name.
@@ -493,6 +611,7 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     png: Buffer,
     usage: AiTokenUsage,
     signal?: AbortSignal,
+    auditImages?: AuditImages,
   ): Promise<{ content: string }> {
     const imageUrl = `data:image/png;base64,${png.toString('base64')}`;
     let content = '';
@@ -523,6 +642,7 @@ export class OpenAiVisionExtractor implements VisionExtractor {
       usage.completionTokens += response.usage?.completion_tokens ?? 0;
       usage.totalTokens += response.usage?.total_tokens ?? 0;
       usage.callCount += 1;
+      await this.onModelReceipt?.({ phase: 'transcription', content: response.choices[0]?.message.content ?? '', usage: { ...usage } });
 
       const choice = response.choices[0];
       content = choice?.message.content?.trim() ?? '';
@@ -547,36 +667,43 @@ export class OpenAiVisionExtractor implements VisionExtractor {
       maxCompletionTokens *= 2;
     }
 
-    if (!SMILES_TAG.test(content)) return { content };
-
-    const audit = await this.client.chat.completions.create(
-      {
+    let candidate: unknown;
+    try { candidate = JSON.parse(content); } catch { return { content }; }
+    const candidates = enumerateSmilesCandidates(candidate);
+    if (candidates.length === 0) return { content };
+    const images: Buffer[] = [];
+    const ledger = candidates.map((entry) => {
+      const option = /\/options\/(\d+)(?:\/|$)/.exec(entry.fieldPath);
+      const sourceImage = option ? (auditImages?.options[Number(option[1])] ?? png) : (auditImages?.stem ?? png);
+      let imageIndex = images.indexOf(sourceImage);
+      if (imageIndex === -1) { imageIndex = images.length; images.push(sourceImage); }
+      return { ...entry, sourceImage: `source-${String(imageIndex)}` };
+    });
+    try {
+      const audit = await this.client.chat.completions.create({
         model: this.model,
         max_completion_tokens: MAX_TOKENS,
-        response_format: { type: 'json_object' },
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'text', text: SMILES_AUDIT_PROMPT + content },
-            { type: 'image_url', image_url: { url: imageUrl, detail: 'high' } },
-          ],
-        }],
-      },
-      signal ? { signal } : undefined,
-    );
-    usage.promptTokens += audit.usage?.prompt_tokens ?? 0;
-    usage.completionTokens += audit.usage?.completion_tokens ?? 0;
-    usage.totalTokens += audit.usage?.total_tokens ?? 0;
-    usage.callCount += 1;
-    const audited = audit.choices[0]?.message.content?.trim() ?? '';
-    try {
-      if (audit.choices[0]?.finish_reason !== 'length' && audited && typeof JSON.parse(audited) === 'object') {
-        return { content: audited };
+        response_format: CHEMISTRY_AUDIT_RESPONSE_FORMAT,
+        messages: [{ role: 'user', content: [
+          { type: 'text', text: CHEMISTRY_STRUCTURE_AUDIT_PROMPT + JSON.stringify(ledger) },
+          ...images.flatMap((source, index): OpenAI.ChatCompletionContentPart[] => [
+            { type: 'text', text: `Source image source-${String(index)}:` },
+            { type: 'image_url', image_url: { url: `data:image/png;base64,${source.toString('base64')}`, detail: 'high' } },
+          ]),
+        ] }],
+      }, signal ? { signal } : undefined);
+      this.accumulateUsage(usage, audit.usage);
+      await this.onModelReceipt?.({ phase: 'audit', content: audit.choices[0]?.message.content ?? '', usage: { ...usage } });
+      if (audit.choices[0]?.finish_reason !== 'length') {
+        const audited: unknown = JSON.parse(audit.choices[0]?.message.content ?? '');
+        const patches = await applySmilesPatches(candidate, audited);
+        if (patches.ok) return { content: JSON.stringify(patches.value) };
+        logger.warn({ diagnostics: patches.diagnostics.map((entry) => entry.code) }, 'Chemistry audit rejected; preserving original extraction');
       }
     } catch (error) {
-      logger.warn({ err: error }, 'SMILES audit returned malformed JSON; preserving first extraction');
+      if (signal?.aborted) throw error;
+      logger.warn({ err: error }, 'Chemistry audit failed; preserving original extraction');
     }
-    logger.warn({ model: this.model }, 'SMILES audit returned no usable JSON; preserving first extraction');
     return { content };
   }
 }

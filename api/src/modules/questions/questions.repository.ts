@@ -1,5 +1,6 @@
 import type {
   AiFilled,
+  ChemistryExtraction,
   ImageCrop,
   MatchData,
   PaperMetadata,
@@ -16,6 +17,14 @@ import type {
 export type NewQuestion = {
   documentId: string;
   questionNumber: number | null;
+  /** Full printed identity; optional for callers restoring pre-identity extraction drafts. */
+  printedLabel?: string | null;
+  chemistry?: ChemistryExtraction | null;
+  isQuestionImage?: boolean;
+  questionImage?: string | null;
+  isOptionImage?: boolean;
+  optionImages?: string[];
+  imageCrops?: ImageCrop[];
   path: SourcePath;
   stem: string;
   options: QuestionOption[];

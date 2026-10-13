@@ -1,48 +1,80 @@
 import type { ChapterTopic } from '@ingest/contracts';
 import { mergeAnswerEntries, type AnswerEntry, type AnswerSheet, type ExtractedQuestion } from './vision-extractor.js';
+import { normalizePrintedQuestionLabel, questionNumberFromPrintedLabel } from './question-identity.js';
 import { topicBindingForPage } from './topic-lookup.js';
 
-/** Normalize a section name so "Exercise O-1" and "exercise o-1" match (ported from json_merger). */
 function normalizeSection(name: string | null): string {
   return (name ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-/**
- * Fold one sheet's entries into a section's accumulated key. An explicit answer-key value wins over a
- * conflicting solution restatement regardless of page order, while solution working is always retained.
- * Two answer sheets for the same section likewise union their question numbers instead of the second
- * replacing the first.
- */
-function foldSheet(
-  into: Record<string, AnswerEntry>,
-  entries: Record<string, AnswerEntry>,
-): void {
-  for (const [questionNumber, entry] of Object.entries(entries)) {
-    into[questionNumber] = mergeAnswerEntries(into[questionNumber], entry);
+type SheetIndex = {
+  byLabel: Map<string, AnswerEntry>;
+  labelsByNumber: Map<number, Set<string>>;
+};
+
+type QuestionIdentity = {
+  label: string | null;
+  number: number | null;
+  scope: string;
+  topic: string | null;
+};
+
+type ScopeCounts = {
+  labels: Map<string, number>;
+  numbers: Map<number, number>;
+};
+
+function indexSheet(index: SheetIndex, sheet: AnswerSheet): void {
+  for (const [printedLabel, entry] of Object.entries(sheet.entries)) {
+    const label = normalizePrintedQuestionLabel(printedLabel);
+    if (!label) continue;
+    index.byLabel.set(label, mergeAnswerEntries(index.byLabel.get(label), entry));
+    const number = questionNumberFromPrintedLabel(label);
+    if (number === null) continue;
+    const labels = index.labelsByNumber.get(number) ?? new Set<string>();
+    labels.add(label);
+    index.labelsByNumber.set(number, labels);
   }
 }
 
+function identityForQuestion(question: ExtractedQuestion, topics: ChapterTopic[]): QuestionIdentity {
+  const label = normalizePrintedQuestionLabel(question.printedLabel) ?? (
+    question.questionNumber === null ? null : String(question.questionNumber)
+  );
+  const topic = topicBindingForPage(topics, question.sourcePage)?.matchKey ?? null;
+  return {
+    label,
+    number: questionNumberFromPrintedLabel(label) ?? question.questionNumber,
+    scope: normalizeSection(topic ?? question.sectionName),
+    topic: topic === null ? null : normalizeSection(topic),
+  };
+}
+
+function matchingEntry(
+  index: SheetIndex,
+  identity: QuestionIdentity,
+  counts: ScopeCounts,
+  allowNumericFallback: boolean,
+): AnswerEntry | undefined {
+  if (!identity.label || counts.labels.get(identity.label) !== 1) return undefined;
+  const exact = index.byLabel.get(identity.label);
+  // A real printed prefix is sufficient evidence for an exact match. Bare numbers also need
+  // uniqueness, because a legacy OCR pass may have discarded the exercise prefix.
+  if (exact && !/^\d+$/u.test(identity.label)) return exact;
+  if (!allowNumericFallback) return undefined;
+  if (identity.number === null || counts.numbers.get(identity.number) !== 1) return undefined;
+  const labels = index.labelsByNumber.get(identity.number);
+  if (labels?.size !== 1) return undefined;
+  const label = labels.values().next().value;
+  if (label !== undefined && !/^\d+$/u.test(identity.label) && !/^\d+$/u.test(label)) return undefined;
+  return label === undefined ? undefined : index.byLabel.get(label);
+}
+
 /**
- * Fill each question's `answer` and `explanation` from the matching section's key — the TypeScript
- * port (and extension) of the Python `JSONMerger`. Answer sheets contribute the answer letter/value;
- * solution sheets contribute the worked explanation (and back-fill an answer the sheet was missing).
- * Questions are matched by (normalized section name, question number). Sheets that share a section
- * are merged, not replaced, so an answer PDF + a solution PDF for the same chapter combine cleanly.
- * When every sheet belongs to one section it is used as a fallback for questions whose section name
- * does not line up — the common single-section case. Existing question values are never blanked.
- *
- * Topic-aware matching: every extracted question carries the document-level section name, so on a
- * document cut into topics the topic binding of the question's source page is the real key. A
- * topic-bound question first looks for the sheet section named after its topic (answer sheets print
- * per-topic headings), then falls back to the plain (section, number) matching. When per-topic
- * numbering restarts — the same question number appears under more than one topic — those fallbacks
- * are ambiguous (a flat sheet's "Q1" cannot say which topic it keys), so such a question merges ONLY
- * from its topic-named section; guessing would bind another topic's answer. Without topics this
- * function behaves exactly as before.
- *
- * Correct multi-chapter mapping relies on the caller ({@link applyAnswers}) having already narrowed
- * `sheets` to the question document's own chapter unit (module + chapter + section); this function
- * then keys strictly within that unit, so a Q1 in one chapter never borrows another chapter's Q1.
+ * Join source keys by their full printed identity within the operator's topic scope. Numeric
+ * compatibility matching is permitted only when both question and key have a unique numeric
+ * identity; exercise-prefix collisions and numbering restarts never borrow a flat chapter key.
+ * Duplicate keys with equal authority stay unresolved instead of choosing an OCR value by page order.
  */
 export function mergeAnswers(
   questions: ExtractedQuestion[],
@@ -50,43 +82,49 @@ export function mergeAnswers(
   topics: ChapterTopic[],
 ): ExtractedQuestion[] {
   if (sheets.length === 0) return questions;
-
-  const bySection = new Map<string, Record<string, AnswerEntry>>();
+  const bySection = new Map<string, SheetIndex>();
   for (const sheet of sheets) {
     const section = normalizeSection(sheet.sectionName);
-    const merged = bySection.get(section) ?? {};
-    foldSheet(merged, sheet.entries);
-    bySection.set(section, merged);
+    const index: SheetIndex = bySection.get(section) ?? { byLabel: new Map(), labelsByNumber: new Map() };
+    indexSheet(index, sheet);
+    bySection.set(section, index);
   }
-  // Single-section fallback: any question can borrow the one key when its own section name differs.
-  const soleSheet = bySection.size === 1 ? ([...bySection.values()][0] ?? null) : null;
-
-  // Bind each question to its topic's matching key and find the numbers shared across topics
-  // (numbering restarts). The key is `topic.name` — the sheet section headings are named after it.
-  const keyByQuestion = new Map<ExtractedQuestion, string | null>();
-  const keysByNumber = new Map<number, Set<string | null>>();
-  for (const question of questions) {
-    if (question.questionNumber === null) continue;
-    const matchKey = topicBindingForPage(topics, question.sourcePage)?.matchKey ?? null;
-    keyByQuestion.set(question, matchKey);
-    const seen = keysByNumber.get(question.questionNumber) ?? new Set<string | null>();
-    seen.add(matchKey);
-    keysByNumber.set(question.questionNumber, seen);
+  const soleSheet = bySection.size === 1 ? [...bySection.values()][0] : undefined;
+  const identities = questions.map((question) => identityForQuestion(question, topics));
+  const countsByScope = new Map<string, ScopeCounts>();
+  const scopesByNumber = new Map<number, Set<string>>();
+  const countsByLabel = new Map<string, number>();
+  for (const identity of identities) {
+    const counts: ScopeCounts = countsByScope.get(identity.scope) ?? { labels: new Map(), numbers: new Map() };
+    if (identity.label) {
+      counts.labels.set(identity.label, (counts.labels.get(identity.label) ?? 0) + 1);
+      countsByLabel.set(identity.label, (countsByLabel.get(identity.label) ?? 0) + 1);
+    }
+    if (identity.number !== null) {
+      counts.numbers.set(identity.number, (counts.numbers.get(identity.number) ?? 0) + 1);
+      const scopes = scopesByNumber.get(identity.number) ?? new Set<string>();
+      scopes.add(identity.scope);
+      scopesByNumber.set(identity.number, scopes);
+    }
+    countsByScope.set(identity.scope, counts);
   }
 
-  return questions.map((question) => {
-    if (question.questionNumber === null) return question;
-    const matchKey = keyByQuestion.get(question) ?? null;
-    const topicEntries = matchKey === null ? null : bySection.get(normalizeSection(matchKey));
-    const restartsAcrossTopics = (keysByNumber.get(question.questionNumber)?.size ?? 0) > 1;
-    const sectionEntries = restartsAcrossTopics
-      ? topicEntries
-      : (topicEntries ?? bySection.get(normalizeSection(question.sectionName)) ?? soleSheet);
-    const entry = sectionEntries?.[String(question.questionNumber)];
+  return questions.map((question, position) => {
+    const identity = identities[position];
+    if (!identity) return question;
+    const counts = countsByScope.get(identity.scope);
+    if (!counts) return question;
+    const topicEntries = identity.topic === null ? undefined : bySection.get(identity.topic);
+    const restarted = identity.number !== null && (scopesByNumber.get(identity.number)?.size ?? 0) > 1;
+    const sectionEntries = bySection.get(normalizeSection(question.sectionName));
+    const scopedSection = identity.topic === null ? sectionEntries : undefined;
+    const globallyUniquePrefix = identity.label !== null && !/^\d+$/u.test(identity.label) && countsByLabel.get(identity.label) === 1;
+    const index = topicEntries ?? scopedSection ?? (!restarted || globallyUniquePrefix ? sectionEntries ?? soleSheet : undefined);
+    const entry = index ? matchingEntry(index, identity, counts, Boolean(topicEntries ?? scopedSection) || !restarted) : undefined;
     if (!entry) return question;
     return {
       ...question,
-      answer: entry.answer ?? question.answer,
+      answer: entry.answerConflict ? null : entry.answer ?? question.answer,
       explanation: entry.explanation ?? question.explanation,
     };
   });

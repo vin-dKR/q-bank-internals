@@ -14,6 +14,8 @@ export type ReExtractInput = {
   png: Buffer;
   /** The printed number of the target question — picks it out of a multi-question page. */
   questionNumber: number | null;
+  /** Full identity (including an exercise prefix) when available from initial extraction. */
+  printedLabel?: string | null;
   /** The current stem, used as a fallback hint when the page has no readable number. */
   stemHint: string;
   /** The fixed question type, so the model extracts the right option shape. */
@@ -53,6 +55,7 @@ export type SourceAreaTranscription = { text: string; usage: AiTokenUsage };
 export type GroupReExtractMember = {
   /** Printed number when readable; not unique enough to be the sole matching key. */
   questionNumber: number | null;
+  printedLabel?: string | null;
   /** Current stem gives the model a second, stable anchor when printed numbers repeat or are absent. */
   stemHint: string;
   /** The row's persisted type: a group may mix single, integer, matrix, etc. */
@@ -85,6 +88,7 @@ export type ReExtractedSubDraft = {
   /** Model-returned stable member position; null on legacy/fallback replies. */
   memberIndex: number | null;
   questionNumber: number | null;
+  printedLabel?: string | null;
   stem: string;
   options: QuestionOption[];
   answer: string;

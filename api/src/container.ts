@@ -6,6 +6,7 @@ import {
   ExtractionRunRegistry,
   ExtractionService,
   ExtractionWorker,
+  ExtractionVisualsService,
   type ExtractionJobStore,
   type ExtractionDraftStore,
   type JobQueue,
@@ -64,6 +65,7 @@ import { InProcessJobQueue } from './infrastructure/queue/in-process.job-queue.j
 import { BullMqJobQueue } from './infrastructure/queue/bullmq.job-queue.js';
 import { VercelJobQueue } from './infrastructure/queue/vercel.job-queue.js';
 import { PdfToImgRasterizer } from './infrastructure/pdf/pdf-to-img.rasterizer.js';
+import { SharpImageCropper } from './infrastructure/pdf/sharp-image-cropper.js';
 import { TesseractPageOcr } from './infrastructure/pdf/tesseract.page-ocr.js';
 import { OpenAiVisionExtractor } from './infrastructure/ai/openai.vision-extractor.js';
 import { UnconfiguredVisionExtractor } from './infrastructure/ai/unconfigured.vision-extractor.js';
@@ -387,11 +389,12 @@ export function createContainer(): Container {
     env.DB_DRIVER === 'mongo'
       ? new MongoBankQuestionStore(getPrisma())
       : new UnconfiguredBankQuestionStore();
+  const imageStore = buildImageStore();
   const questionsService = new QuestionsService(
     questions,
     documents,
     bankQuestionStore,
-    buildImageStore(),
+    imageStore,
     buildLatexRefiner(loadPromptOverrides),
     usageService,
     buildDiagramDetector(loadPromptOverrides),
@@ -463,6 +466,7 @@ export function createContainer(): Container {
     usageService,
     env.EXTRACTION_PAGES_PER_TASK,
     pagesService,
+    new ExtractionVisualsService(imageStore, new SharpImageCropper()),
   );
   const ingestionService = new IngestionService(
     driveService,

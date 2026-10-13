@@ -38,6 +38,8 @@ import { questionsApi } from '../api/questions.api.js';
 import { useSetQuestionImageMode, useUpdateQuestion } from '../hooks/use-questions.js';
 import { nextOptionLabel, optionLabelKey } from '../lib/option-labels.js';
 import type { QuestionDraft } from '../hooks/use-question-drafts.js';
+import { ChemistrySourceReview } from './chemistry-source-review.js';
+import { chemistrySourceReviewBlockers } from '../lib/chemistry-source-review.js';
 
 /** A not-yet-saved crop region of this question: uploading (`saving`) or awaiting a manual retry. */
 export type CardBox = {
@@ -1112,6 +1114,19 @@ export function EditableQuestionCard({
     void update.mutateAsync({ id: question.id, patch: { flagged: !question.flagged } });
   };
 
+  const markChemistrySourceReviewed = (): void => {
+    const current = latestQuestion.current;
+    if (!current.chemistry || chemistrySourceReviewBlockers(current).length > 0) return;
+    void update.mutateAsync({
+      id: current.id,
+      patch: { chemistry: { ...current.chemistry, status: 'source_preserved' } },
+    }).then(() => {
+      toast.toast({ tone: 'success', title: 'Source images reviewed', description: 'The source crops remain the displayed chemistry content.' });
+    }).catch((error: unknown) => {
+      toast.error('Could not save source review', error instanceof Error ? error.message : 'Please try again.');
+    });
+  };
+
   const removeQuestionImage = (url: string): void => {
     const current = latestQuestion.current;
     const urls = splitUrls(current.questionImage).filter((u) => u !== url);
@@ -1587,7 +1602,7 @@ export function EditableQuestionCard({
           />
         ) : null}
         <span className="rounded-full bg-brand-soft px-2.5 py-0.5 text-[13px] font-bold text-brand">
-          Q{number}
+          {question.printedLabel?.trim() || `Q${String(number)}`}
         </span>
         {dirty ? <Badge tone="progress">Unsaved</Badge> : null}
         <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
@@ -1650,6 +1665,13 @@ export function EditableQuestionCard({
           ))}
         </div>
       ) : null}
+
+      <ChemistrySourceReview
+        question={question}
+        disabled={dirty || saving || cropDisabled || imageModeSaving}
+        pending={update.isPending}
+        onReview={markChemistrySourceReviewed}
+      />
 
       <section
         aria-labelledby={`question-${question.id}`}

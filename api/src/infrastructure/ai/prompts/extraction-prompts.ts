@@ -72,6 +72,8 @@ function chemistryExtractionRules(
  */
 const DRAWN_CHEMISTRY_STRUCTURE_GUARD = `DRAWN CHEMISTRY STRUCTURE (required whenever one appears): When the source visibly draws bonds, double bonds, rings, or atom positions, emit each complete molecule in place as exactly one <smiles>RAW_SMILES</smiles>. The tag contains only one raw SMILES string: never LaTeX, \\ce, a reagent, or a fragment of a connected molecule. An expanded structural formula with every atom written beside drawn bonds is still a diagram, not a \\ce formula. Preserve connectivity, charge, ring positions, and I/II/III/IV order; never simplify it to a formula, chemical name, or prose. For a substituted aromatic ring, trace the ring edges between every pair of substituents before writing SMILES: adjacent is ortho (1,2), one ring atom between is meta (1,3), and opposite is para (1,4). Never choose an isomer from chemical plausibility or a default. Before returning JSON, privately compare each emitted SMILES with the drawing: every visible atom and bond must be represented, and no atom connected in the source may sit outside the tag. For example, a drawn CF3-S(=O)2-O− is <smiles>[O-]S(=O)(=O)C(F)(F)F</smiles>, a drawn phenoxide is <smiles>[O-]c1ccccc1</smiles>, and a meta-methoxyphenol is <smiles>Oc1cccc(OC)c1</smiles>. Use an image fallback only when connectivity or stereochemistry is genuinely unreadable or ambiguous; never guess a SMILES.`;
 
+const PRINTED_IDENTITY_GUARD = 'PRINTED IDENTITY: preserve the full printed question label including its subsection prefix. Return printed_label (for example "B-3") separately from the numeric question_number. Answer/solution maps use that full label as their key: A-1, B-1 and C-1 are different entries. Separate repeated labels from different exercises/parts into separate section_name scopes. Never flatten an answer table or a worked solution into new question objects.';
+
 const TYPE_RULES: Record<string, string> = {
   single_correct:
     'This is a SINGLE CORRECT type: preserve every printed option and its actual label/count; exactly one option is correct when an answer is shown.',
@@ -290,6 +292,7 @@ export function questionPrompt(
     document.answerLayout === 'inline' ? resolvePrompt(overrides, 'inlineAnswer') : '',
     resolvePyq(document, binding) ? resolvePrompt(overrides, 'pyq') : '',
     SOURCE_OPTION_LABEL_GUARD,
+    PRINTED_IDENTITY_GUARD,
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -363,6 +366,7 @@ export function transcribeSourceAreaPrompt(target: 'matrix_column_title' | 'matr
 export function reExtractQuestionPrompt(
   target: {
     questionNumber: number | null;
+    printedLabel?: string | null | undefined;
     stemHint: string;
     questionType: string | null;
     sourceKind?: 'question' | 'answer' | 'solution' | 'companion';
@@ -407,6 +411,7 @@ export function reExtractQuestionPrompt(
             : '';
   return [
     sourceIntro,
+    target.printedLabel ? `EXACT TARGET LABEL: ${target.printedLabel}. Read only this printed identity; another subsection with the same numeric ordinal is a different question.` : '',
     targetReadInstruction,
     reExtractOverrideRules(overrides, {
       sourceKind,
@@ -449,6 +454,7 @@ export function reExtractQuestionPrompt(
 
 type GroupReExtractPromptMember = {
   questionNumber: number | null;
+  printedLabel?: string | null;
   stemHint: string;
   questionType: string | null;
 };
@@ -515,7 +521,7 @@ export function reExtractGroupPrompt(
       const number =
         member.questionNumber === null ? 'unnumbered' : `question ${String(member.questionNumber)}`;
       const stem = member.stemHint.replace(/\s+/g, ' ').trim().slice(0, 72);
-      return `${String(index)} | ${number} | fixed type: ${member.questionType ?? 'unknown'}${stem ? ` | begins: "${stem}"` : ''}`;
+      return `${String(index)} | ${member.printedLabel ?? number} | fixed type: ${member.questionType ?? 'unknown'}${stem ? ` | begins: "${stem}"` : ''}`;
     })
     .join('\n');
 
@@ -570,7 +576,7 @@ export function reExtractGroupPrompt(
     sourceRule,
     DRAWN_CHEMISTRY_STRUCTURE_GUARD,
     `RE-EXTRACT RULES:
-1. Return one object for EVERY target member and use its exact member_index. Keep question_number as printed (or null); never use a matrix row label or option label as a question number.
+1. Return one object for EVERY target member and use its exact member_index and full printed_label. Keep question_number as its numeric ordinal (or null); never use a matrix row label or option label as a question number.
 2. passage is the FULL shared passage exactly once, VERBATIM. NEVER repeat it inside stem. stem contains ONLY the member's own question.
 3. options contains only that member's printed answer choices. Labels follow printed order; normalize bare (1)(2)(3)(4) to A/B/C/D only when they are actual choices. Never turn matrix column labels into options.
 4. columns is [] and match is omitted for every non-matrix child. For a matrix child, preserve the full table AND the separate selectable answer options; do not flatten columns into stem/options.
@@ -605,6 +611,7 @@ export function answerPrompt(
     typeRule ? `ANSWER TYPE-SPECIFIC RULE:\n${typeRule}` : '',
     answerChemistryRule,
     DRAWN_CHEMISTRY_STRUCTURE_GUARD,
+    PRINTED_IDENTITY_GUARD,
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -631,6 +638,7 @@ export function solutionPrompt(
     typeRule ? `ANSWER TYPE-SPECIFIC RULE:\n${typeRule}` : '',
     ...chemistryExtractionRules(document, overrides, scope?.subject),
     DRAWN_CHEMISTRY_STRUCTURE_GUARD,
+    PRINTED_IDENTITY_GUARD,
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -677,6 +685,7 @@ export function companionPrompt(
       : '',
     ...chemistryExtractionRules(document, overrides, scope?.subject),
     DRAWN_CHEMISTRY_STRUCTURE_GUARD,
+    PRINTED_IDENTITY_GUARD,
   ]
     .filter(Boolean)
     .join('\n\n');

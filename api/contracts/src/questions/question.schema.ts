@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { SourcePathSchema } from '../common/source-path.js';
 import { PaperMetadataSchema } from '../common/paper-metadata.js';
 import { AiFilledSchema } from '../common/ai-filled.js';
+import { ChemistryExtractionSchema } from './chemistry-extraction.schema.js';
 
 /** A figure extracted from the page, stored in Drive and referenced by the question. */
 export const QuestionImageSchema = z.object({
@@ -213,6 +214,9 @@ export const QuestionSchema = z.object({
   // The printed question number (1, 2, 3 …) as read from the page. Null when the model could not
   // read one. Used later to map an auto-detected figure back to the question it belongs to.
   questionNumber: z.number().int().nullable(),
+  /** Full printed identifier (for example `B-3`); the numeric part alone may repeat within a paper. */
+  printedLabel: z.string().nullable().default(null),
+  chemistry: ChemistryExtractionSchema.nullable().default(null),
   path: SourcePathSchema,
   stem: z.string(), // LaTeX-bearing
   options: z.array(QuestionOptionSchema),
@@ -346,6 +350,7 @@ export type QuestionListQuery = z.infer<typeof QuestionListQuerySchema>;
 
 /** Editable fields — what the verify screen is allowed to change before publishing. */
 export const UpdateQuestionSchema = QuestionSchema.pick({
+  chemistry: true,
   stem: true,
   options: true,
   answer: true,

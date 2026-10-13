@@ -167,6 +167,16 @@ export const errors = {
       `Matrix question "${questionId}" cannot be published: ${reason}. Complete the matching table or correct its selected option in Verify.`,
     ),
 
+  chemistryNotPublishable: (questionId: string, reason: string): AppError =>
+    new AppError(
+      'CHEMISTRY_NOT_PUBLISHABLE',
+      422,
+      `Chemistry question "${questionId}" cannot be published: ${reason} Review its complete source crops in Verify.`,
+    ),
+
+  chemistryReviewInvalid: (reason: string): AppError =>
+    new AppError('CHEMISTRY_REVIEW_INVALID', 422, `Chemistry source review cannot be accepted: ${reason}`),
+
   documentNotPublishable: (id: string, status: string): AppError =>
     new AppError(
       'DOCUMENT_NOT_PUBLISHABLE',

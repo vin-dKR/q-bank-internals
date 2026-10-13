@@ -26,6 +26,23 @@ const matrixColumns = [
   { title: 'Column II', entries: [{ label: 'i', body: 'One' }, { label: 'ii', body: 'Two' }] },
 ];
 
+void test('a full printed label selects B-3 rather than neighboring A-3 in a legacy batch reply', async () => {
+  const extractor = reExtractor(async () => reply({ questions: [
+    { question_number: 'A-3', question_text: 'Different source.', options: [] },
+    { question_number: 'B-3', question_text: 'Target source.', options: [] },
+  ] }));
+  const result = await extractor.reExtract({ png: Buffer.from('page'), questionNumber: 3, printedLabel: 'B-3', stemHint: 'Target', questionType: 'subjective' });
+  assert.equal(result.stem, 'Target source.');
+});
+
+void test('numeric-only targeting cannot choose between two restarted source identities', async () => {
+  const extractor = reExtractor(async () => reply({ questions: [
+    { question_number: 'A-3', question_text: 'First source.', options: [] },
+    { question_number: 'B-3', question_text: 'Second source.', options: [] },
+  ] }));
+  await assert.rejects(extractor.reExtract({ png: Buffer.from('page'), questionNumber: 3, stemHint: '', questionType: 'subjective' }), /could not read/);
+});
+
 void test('re-extraction preserves every printed matrix label and does not run a chemistry audit', async () => {
   let calls = 0;
   const extractor = reExtractor(async () => {

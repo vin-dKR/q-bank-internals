@@ -2,6 +2,8 @@ import type { PrismaClient } from '@prisma/client';
 import {
   type AiFilled,
   AiFilledSchema,
+  type ChemistryExtraction,
+  ChemistryExtractionSchema,
   type ImageCrop,
   ImageCropSchema,
   type MatchData,
@@ -27,6 +29,8 @@ type QuestionRow = {
   id: string;
   documentId: string;
   questionNumber: number | null;
+  printedLabel: string | null;
+  chemistry: unknown;
   path: { module: string; chapter: string; section: string };
   stem: string;
   options: { label: string; body: string; isCorrect: boolean; generated?: boolean | null }[];
@@ -97,6 +101,11 @@ function toImageCrops(value: unknown): ImageCrop[] {
   return parsed.success ? parsed.data : [];
 }
 
+function toChemistry(value: unknown): ChemistryExtraction | null {
+  const parsed = ChemistryExtractionSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 /** Prisma optional composite scalars use `null`; the contract uses an omitted optional boolean. */
 function toPrismaOptions(options: QuestionOption[]): Array<{
   label: string;
@@ -118,6 +127,8 @@ function toQuestion(row: QuestionRow): Question {
     id: row.id,
     documentId: row.documentId,
     questionNumber: row.questionNumber,
+    printedLabel: row.printedLabel ?? null,
+    chemistry: toChemistry(row.chemistry),
     path: row.path,
     stem: row.stem,
     options: row.options.map((option) => ({
@@ -204,6 +215,8 @@ export class PrismaQuestionRepository implements QuestionRepository {
       data: questions.map((question) => ({
         documentId: question.documentId,
         questionNumber: question.questionNumber,
+        printedLabel: question.printedLabel ?? null,
+        chemistry: question.chemistry ?? null,
         path: question.path,
         stem: question.stem,
         options: toPrismaOptions(question.options),
@@ -213,6 +226,11 @@ export class PrismaQuestionRepository implements QuestionRepository {
         groupOrder: question.groupOrder,
         explanation: question.explanation,
         images: question.images,
+        isQuestionImage: question.isQuestionImage ?? false,
+        questionImage: question.questionImage ?? null,
+        isOptionImage: question.isOptionImage ?? false,
+        optionImages: question.optionImages ?? [],
+        imageCrops: question.imageCrops ?? [],
         questionType: question.questionType,
         level: question.level,
         sectionName: question.sectionName,
@@ -286,6 +304,7 @@ export class PrismaQuestionRepository implements QuestionRepository {
       where: { id },
       data: {
         ...(aiFilled !== undefined ? { aiFilled } : {}),
+        ...(patch.chemistry !== undefined ? { chemistry: patch.chemistry } : {}),
         ...(patch.stem !== undefined ? { stem: patch.stem } : {}),
         ...(patch.options !== undefined ? { options: toPrismaOptions(patch.options) } : {}),
         ...(patch.answer !== undefined ? { answer: patch.answer } : {}),

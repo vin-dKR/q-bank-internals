@@ -23,26 +23,37 @@ const VERIFY_STRUCTURE_THEME = 'oldschool';
 export function SmilesStructure({ smiles }: { smiles: string }): JSX.Element {
   const ref = useRef<SVGSVGElement | null>(null);
   const [failed, setFailed] = useState(false);
+  const normalizedSmiles = smiles.trim();
 
   useEffect(() => {
     const svg = ref.current;
     if (!svg) return;
     svg.replaceChildren(); // clear any previous draw before redrawing this SMILES
     setFailed(false);
+    if (!normalizedSmiles) {
+      setFailed(true);
+      return;
+    }
     try {
-      drawer.draw(smiles, svg, VERIFY_STRUCTURE_THEME, undefined, () => { setFailed(true); });
+      drawer.draw(normalizedSmiles, svg, VERIFY_STRUCTURE_THEME, undefined, () => {
+        throw new Error('The molecular structure could not be drawn.');
+      });
+      setFailed(svg.childNodes.length === 0);
     } catch {
       setFailed(true);
     }
-  }, [smiles]);
+  }, [normalizedSmiles]);
 
-  if (failed) return <span className="font-mono text-xs text-ink-3">{smiles}</span>;
   return (
-    <svg
-      ref={ref}
-      role="img"
-      aria-label={`Chemical structure ${smiles}`}
-      className="inline-block max-w-full align-middle [height:auto] [max-height:6.5rem] [width:auto]"
-    />
+    <span className="inline-block max-w-full align-middle">
+      {/* Keep the drawing target mounted: editing invalid SMILES must be able to recover. */}
+      <svg
+        ref={ref}
+        role="img"
+        aria-label={`Chemical structure ${normalizedSmiles}`}
+        className={failed ? 'hidden' : 'inline-block max-w-full align-middle [height:auto] [max-height:6.5rem] [width:auto]'}
+      />
+      {failed ? <span className="font-mono text-xs text-ink-3">{normalizedSmiles}</span> : null}
+    </span>
   );
 }

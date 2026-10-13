@@ -25,6 +25,8 @@ import {
 } from './prompts/extraction-prompts.js';
 import { sanitizeExtractedLatex } from './latex-sanitizer.js';
 import type { PromptOverrides } from '../../modules/prompts/index.js';
+import { normalizePrintedQuestionLabel, questionNumberFromPrintedLabel } from '../../modules/extraction/index.js';
+import { applySmilesPatches, CHEMISTRY_AUDIT_RESPONSE_FORMAT, CHEMISTRY_STRUCTURE_AUDIT_PROMPT, enumerateSmilesCandidates } from './chemistry-audit.js';
 
 /**
  * Output-token budget for the first re-extract attempt. Covers a reasoning model's hidden reasoning
@@ -33,8 +35,6 @@ import type { PromptOverrides } from '../../modules/prompts/index.js';
  */
 const MAX_TOKENS = 16000;
 const GROUP_MAX_TOKENS = 32000;
-const SMILES_TAG = /<smiles\b/i;
-const SMILES_AUDIT_PROMPT = 'CHEMISTRY STRUCTURE AUDIT: The candidate JSON below was extracted from the supplied exam image. Inspect only every <smiles>…</smiles> value against the drawn structures in the image. Confirm each tag contains one complete connected molecule and that every bond, charge, and aromatic substituent position matches the drawing. For rings, explicitly count ring edges between substituents; do not accept a plausible but wrong ortho/meta/para isomer. Return the complete candidate JSON unchanged when all structures match. Otherwise, change only the incorrect SMILES values and return the complete valid JSON. Do not alter prose, question boundaries, options, answers, or any non-SMILES field.\n\nCANDIDATE JSON:\n';
 /** A tight selected field does not need the full-page re-extractor's large reasoning budget. */
 const AREA_TRANSCRIBE_MAX_TOKENS = 4096;
 
@@ -42,6 +42,7 @@ const AREA_TRANSCRIBE_MAX_TOKENS = 4096;
 type RawOption = { label?: unknown; body?: unknown; is_correct?: unknown };
 type RawReExtract = {
   question_number?: unknown;
+  printed_label?: unknown;
   question_text?: unknown;
   stem?: unknown;
   options?: unknown;
@@ -54,6 +55,7 @@ type RawReExtract = {
 type RawGroupQuestion = {
   member_index?: unknown;
   question_number?: unknown;
+  printed_label?: unknown;
   stem?: unknown;
   options?: unknown;
   columns?: unknown;
@@ -77,10 +79,7 @@ function toQuestionNumber(value: unknown): number | null {
     const number = Math.trunc(value);
     return number > 0 ? number : null;
   }
-  const match = /\d+/.exec(asString(value));
-  if (!match) return null;
-  const number = Number(match[0]);
-  return Number.isSafeInteger(number) && number > 0 ? number : null;
+  return questionNumberFromPrintedLabel(asString(value));
 }
 
 /** Parse a zero-based comprehension-member index, or null when the model omitted/garbled it. */
@@ -131,18 +130,26 @@ function parseReply(content: string): unknown {
  * to answer using the batch `{ questions: [...] }` shape. Select the requested printed number from
  * that shape instead of treating an otherwise readable response as empty.
  */
-function targetReply(content: string, questionNumber: number | null): RawReExtract {
+function targetReply(content: string, questionNumber: number | null, printedLabel?: string | null): RawReExtract {
   const parsed = parseReply(content);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
   const record = parsed as RawReExtract & { questions?: unknown };
-  if (!Array.isArray(record.questions)) return record;
+  const targetLabel = normalizePrintedQuestionLabel(printedLabel);
+  const labelOf = (candidate: RawReExtract): string | null => normalizePrintedQuestionLabel(asString(candidate.printed_label) || asString(candidate.question_number));
+  if (!Array.isArray(record.questions)) {
+    const returnedLabel = labelOf(record);
+    if (targetLabel && returnedLabel && returnedLabel !== targetLabel) return {};
+    return record;
+  }
   const candidates = record.questions.filter(
     (candidate): candidate is RawReExtract => Boolean(candidate) && typeof candidate === 'object' && !Array.isArray(candidate),
   );
-  const selected = questionNumber === null
-    ? candidates[0]
-    : candidates.find((candidate) => toQuestionNumber(candidate.question_number) === questionNumber) ??
-      (candidates.length === 1 ? candidates[0] : undefined);
+  const exact = targetLabel ? candidates.filter((candidate) => labelOf(candidate) === targetLabel) : [];
+  const numeric = candidates.filter((candidate) => toQuestionNumber(candidate.question_number) === questionNumber);
+  const selected = exact.length === 1 ? exact[0]
+    : targetLabel ? undefined
+      : questionNumber === null ? (candidates.length === 1 ? candidates[0] : undefined)
+        : numeric.length === 1 ? numeric[0] : (candidates.length === 1 && !labelOf(candidates[0] ?? {}) ? candidates[0] : undefined);
   if (!selected) return {};
   return {
     ...selected,
@@ -370,16 +377,18 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     // on every question adds a second, unrelated vision read; for non-chemistry questions it can
     // return an empty JSON object and overwrite an otherwise valid extraction (as happened to Q283).
     // Do not ask it to discover new structures here — the primary prompt owns extraction.
-    if (!SMILES_TAG.test(content)) return { content, usage };
+    const candidate = parseReply(content);
+    const ledger = enumerateSmilesCandidates(candidate);
+    if (ledger.length === 0) return { content, usage };
     try {
       const audit = await this.client.chat.completions.create({
         model: this.model,
         max_completion_tokens: startTokens,
-        response_format: { type: 'json_object' },
+        response_format: CHEMISTRY_AUDIT_RESPONSE_FORMAT,
         messages: [{
           role: 'user',
           content: [
-            { type: 'text', text: SMILES_AUDIT_PROMPT + content },
+            { type: 'text', text: CHEMISTRY_STRUCTURE_AUDIT_PROMPT + JSON.stringify(ledger) },
             ...imageUrls.map((url) => ({
               type: 'image_url' as const,
               image_url: { url, detail: 'high' as const },
@@ -392,8 +401,11 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
       usage.totalTokens += audit.usage?.total_tokens ?? 0;
       usage.callCount += 1;
       const audited = audit.choices[0]?.message.content?.trim() ?? '';
-      if (audit.choices[0]?.finish_reason !== 'length' && audited && typeof JSON.parse(audited) === 'object') {
-        return { content: audited, usage };
+      if (audit.choices[0]?.finish_reason !== 'length' && audited) {
+        const parsedAudit: unknown = JSON.parse(audited);
+        const patches = await applySmilesPatches(candidate, parsedAudit);
+        if (patches.ok) return { content: JSON.stringify(patches.value), usage };
+        logger.warn({ diagnostics: patches.diagnostics.map((entry) => entry.code) }, 'Re-extraction chemistry patches rejected');
       }
     } catch (error) {
       // This is a best-effort chemistry correction. A network/model failure here must never throw
@@ -409,6 +421,7 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     const prompt = reExtractQuestionPrompt(
       {
         questionNumber: input.questionNumber,
+        printedLabel: input.printedLabel,
         stemHint: input.stemHint,
         questionType: input.questionType,
         ...(input.sourceKind ? { sourceKind: input.sourceKind } : {}),
@@ -419,7 +432,7 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     );
     type Fields = Omit<QuestionReExtraction, 'usage'>;
     const readFields = (content: string): Fields => {
-      const parsed = targetReply(content, input.questionNumber);
+      const parsed = targetReply(content, input.questionNumber, input.printedLabel);
       // A MATRIX MATCH question stores structured columns instead of options — parse them first, and when
       // present clear options so the flat option array is never cluttered with leaked column entries
       // (the "1 4 1 2 3 4 / same value four times" garbage). Non-matrix replies leave match null.
@@ -643,6 +656,7 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
             return {
               memberIndex,
               questionNumber,
+              printedLabel: normalizePrintedQuestionLabel(asString(raw.printed_label) || asString(raw.question_number)),
               stem: cleanString(raw.stem),
               options: extractedOptions,
               answer: rawAnswer,

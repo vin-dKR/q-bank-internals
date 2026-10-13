@@ -14,7 +14,7 @@ import {
 } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
-import type { QuestionRepository } from '../questions/index.js';
+import { chemistrySourceReviewIssues, type QuestionRepository } from '../questions/index.js';
 import type { QuestionTaxonomyInput, ResolvedTaxonomy, TaxonomyResolver } from '../masters/index.js';
 import type { BankPublisher, BankQuestion } from './bank-publisher.js';
 
@@ -54,6 +54,7 @@ export class PublishService {
     // eduents renderer/counter needs no change. group_id == the passage's stable id.
     const passages = await this.questions.findPassagesByDocument(documentId);
     const passageById = new Map(passages.map((passage) => [passage.id, passage] as const));
+    for (const question of questions) assertChemistryPublishable(question, question.passageId === null ? null : passageById.get(question.passageId));
 
     // Resolve each question's taxonomy strings to dictionary FKs before mapping. The resolver caches
     // per dimension and dedupes concurrent creates, so this stays a handful of reads even across a
@@ -103,8 +104,18 @@ export class PublishService {
         });
       }
 
+      let projectedOptions = question.options;
       try {
-        matrixProjectionForPublish(question);
+        projectedOptions = matrixProjectionForPublish(question)?.options ?? question.options;
+      } catch (caught) {
+        issues.push({
+          questionId: question.id,
+          questionNumber: question.questionNumber,
+          message: caught instanceof Error ? caught.message : String(caught),
+        });
+      }
+      try {
+        assertChemistryPublishable({ ...question, options: projectedOptions }, passage);
       } catch (caught) {
         issues.push({
           questionId: question.id,
@@ -154,6 +165,15 @@ const PUBLISHABLE_STATUSES: ReadonlySet<Document['status']> = new Set([
   'approved',
   'completed',
 ]);
+
+function assertChemistryPublishable(question: Question, passage?: Passage | null): void {
+  if (!question.chemistry) return;
+  if (question.chemistry.status !== 'source_preserved') {
+    throw errors.chemistryNotPublishable(question.id, 'its source images still require reviewer acceptance.');
+  }
+  const issues = chemistrySourceReviewIssues(question, passage);
+  if (issues.length > 0) throw errors.chemistryNotPublishable(question.id, issues.join(' '));
+}
 
 /** camelCase → snake_case, so `pyqExamName` becomes the bank's `pyq_exam_name` column style. */
 function snakeCase(key: string): string {
@@ -322,6 +342,7 @@ function toBankQuestion(
   }
   const matrix = matrixProjectionForPublish(question);
   const options = matrix?.options ?? question.options;
+  assertChemistryPublishable({ ...question, options }, passage);
   const answer = matrix?.answer ?? answerForBank(question);
   return {
     // The shared admin bank: ingest publishes for every org to read. eduents' tenancy read filter
