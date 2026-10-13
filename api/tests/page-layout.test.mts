@@ -118,3 +118,14 @@ void test('inline reaction condition numbers do not split a chemistry page into 
   assert.deepEqual(layout.questions[0]?.options.map((option) => option.label), ['A', 'B', 'C', 'D']);
   assert.deepEqual(layout.questions[2]?.options.map((option) => option.label), ['A', 'B', 'C', 'D']);
 });
+
+void test('numbered product illustrations do not become a second source question', async () => {
+  const lines = [
+    line('7.', 80, 500, 105, 520), line('How many of the following products (1 - 9) can be formed.', 140, 500, 600, 520),
+    line('9)', 620, 510, 650, 530),
+  ];
+  const png = await painted(lines.map((value) => ({ left: value.box.left, top: value.box.top, width: value.box.right - value.box.left, height: value.box.bottom - value.box.top })));
+  const layout = await pageLayoutFromOcr(png, lines);
+  assert.ok(layout);
+  assert.deepEqual(layout.questions.map((question) => question.printedLabel), ['7']);
+});

@@ -154,20 +154,41 @@ function optionPanel(image: Raster, items: TextBox[], question: SourceQuestionAn
  * surrounding question-number margin between two consecutive outer questions.
  * This preserves normal two-column question sequences and section restarts.
  */
-function withoutInlineNumericSteps<T extends { printedLabel: string; anchorBox: SourceBox; baseline: number }>(candidates: T[]): T[] {
+function mentionsNumberedRange(text: string, value: number): boolean {
+  for (const match of text.matchAll(/(?:\(|\b)(\d+)\s*(?:-|–|−|to)\s*(\d+)(?:\)|\b)/giu)) {
+    const first = Number(match[1]);
+    const last = Number(match[2]);
+    if (Number.isSafeInteger(first) && Number.isSafeInteger(last) && value >= Math.min(first, last) && value <= Math.max(first, last)) return true;
+  }
+  return false;
+}
+
+function numericQuestionLabel(label: string): number | null {
+  const match = /^(\d+)[.)]?$/u.exec(label.trim());
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+function withoutInlineNumericSteps<T extends { printedLabel: string; anchorBox: SourceBox; baseline: number }>(candidates: T[], items: TextBox[]): T[] {
   const readingOrder = [...candidates].sort((left, right) => left.baseline - right.baseline || left.anchorBox[0] - right.anchorBox[0]);
   return readingOrder.filter((candidate, index) => {
-    if (!/^\d+$/u.test(candidate.printedLabel)) return true;
-    const value = Number(candidate.printedLabel);
+    const value = numericQuestionLabel(candidate.printedLabel);
+    if (value === null) return true;
+    const parent = [...readingOrder.slice(0, index)].reverse().find((other) => candidate.anchorBox[0] > other.anchorBox[0] + 0.08);
+    const nearbySourceText = parent
+      ? items.filter((item) => item.baseline >= parent.baseline - 0.015 && item.baseline <= candidate.baseline + 0.02).sort((left, right) => left.baseline - right.baseline || left.box[0] - right.box[0]).map((item) => item.text).join(' ')
+      : '';
+    if (parent && mentionsNumberedRange(nearbySourceText, value)) return false;
     const outerPair = [...readingOrder.slice(0, index)].reverse().flatMap((previous) => {
-      if (!/^\d+$/u.test(previous.printedLabel)) return [];
-      const next = readingOrder.slice(index + 1).find((other) => /^\d+$/u.test(other.printedLabel) && Math.abs(other.anchorBox[0] - previous.anchorBox[0]) < 0.04);
+      if (numericQuestionLabel(previous.printedLabel) === null) return [];
+      const next = readingOrder.slice(index + 1).find((other) => numericQuestionLabel(other.printedLabel) !== null && Math.abs(other.anchorBox[0] - previous.anchorBox[0]) < 0.04);
       return next ? [{ previous, next }] : [];
     })[0];
     if (!outerPair) return true;
-    const previousValue = Number(outerPair.previous.printedLabel);
-    const nextValue = Number(outerPair.next.printedLabel);
-    return !(value < previousValue && nextValue === previousValue + 1 && candidate.anchorBox[0] > outerPair.previous.anchorBox[0] + 0.08);
+    const previousValue = numericQuestionLabel(outerPair.previous.printedLabel);
+    const nextValue = numericQuestionLabel(outerPair.next.printedLabel);
+    return !(previousValue !== null && nextValue !== null && value < previousValue && nextValue === previousValue + 1 && candidate.anchorBox[0] > outerPair.previous.anchorBox[0] + 0.08);
   });
 }
 
@@ -178,7 +199,7 @@ function buildLayout(source: SourcePageLayout['source'], image: Raster, items: T
     if (!match || !printedLabel || !contains(contentBox, item.box)) return [];
     const anchorBox = markerBox(item, match[0]);
     return visibleInk(image, anchorBox) ? [{ printedLabel, anchorBox, baseline: item.baseline }] : [];
-  })).sort((a, b) => a.anchorBox[0] - b.anchorBox[0] || a.baseline - b.baseline);
+  }), items).sort((a, b) => a.anchorBox[0] - b.anchorBox[0] || a.baseline - b.baseline);
   if (candidates.length === 0) return null;
   const columns: Array<typeof candidates> = [];
   for (const anchor of candidates) {
