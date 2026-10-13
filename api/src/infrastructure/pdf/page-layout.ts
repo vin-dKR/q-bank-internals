@@ -146,14 +146,39 @@ function optionPanel(image: Raster, items: TextBox[], question: SourceQuestionAn
   return { stemBbox: [question.bbox[0], question.bbox[1], question.bbox[2], panelTop], options };
 }
 
+/**
+ * A reaction frequently numbers its conditions "1." and "2." in the middle of a
+ * printed question.  They are native text anchors, but they are not questions.
+ *
+ * Recognize only the unambiguous form: a lower number appears away from the
+ * surrounding question-number margin between two consecutive outer questions.
+ * This preserves normal two-column question sequences and section restarts.
+ */
+function withoutInlineNumericSteps<T extends { printedLabel: string; anchorBox: SourceBox; baseline: number }>(candidates: T[]): T[] {
+  const readingOrder = [...candidates].sort((left, right) => left.baseline - right.baseline || left.anchorBox[0] - right.anchorBox[0]);
+  return readingOrder.filter((candidate, index) => {
+    if (!/^\d+$/u.test(candidate.printedLabel)) return true;
+    const value = Number(candidate.printedLabel);
+    const outerPair = [...readingOrder.slice(0, index)].reverse().flatMap((previous) => {
+      if (!/^\d+$/u.test(previous.printedLabel)) return [];
+      const next = readingOrder.slice(index + 1).find((other) => /^\d+$/u.test(other.printedLabel) && Math.abs(other.anchorBox[0] - previous.anchorBox[0]) < 0.04);
+      return next ? [{ previous, next }] : [];
+    })[0];
+    if (!outerPair) return true;
+    const previousValue = Number(outerPair.previous.printedLabel);
+    const nextValue = Number(outerPair.next.printedLabel);
+    return !(value < previousValue && nextValue === previousValue + 1 && candidate.anchorBox[0] > outerPair.previous.anchorBox[0] + 0.08);
+  });
+}
+
 function buildLayout(source: SourcePageLayout['source'], image: Raster, items: TextBox[], contentBox: SourceBox, width: number, height: number): SourcePageLayout | null {
-  const candidates = items.flatMap((item) => {
+  const candidates = withoutInlineNumericSteps(items.flatMap((item) => {
     const match = QUESTION_LABEL.exec(item.text.trim());
     const printedLabel = normalizePrintedQuestionLabel(match?.[1]);
     if (!match || !printedLabel || !contains(contentBox, item.box)) return [];
     const anchorBox = markerBox(item, match[0]);
     return visibleInk(image, anchorBox) ? [{ printedLabel, anchorBox, baseline: item.baseline }] : [];
-  }).sort((a, b) => a.anchorBox[0] - b.anchorBox[0] || a.baseline - b.baseline);
+  })).sort((a, b) => a.anchorBox[0] - b.anchorBox[0] || a.baseline - b.baseline);
   if (candidates.length === 0) return null;
   const columns: Array<typeof candidates> = [];
   for (const anchor of candidates) {

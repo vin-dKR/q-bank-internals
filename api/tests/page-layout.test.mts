@@ -104,3 +104,17 @@ void test('native-style option anchors exclude reaction intermediates and preser
   assert.equal(a.bbox[3], c.bbox[1]);
   assert.ok(a.bbox[1] < 0.26 && c.bbox[1] < 0.45, 'option bonds above their labels stay inside their panels');
 });
+
+void test('inline reaction condition numbers do not split a chemistry page into false columns', async () => {
+  const lines = [
+    line('3.', 80, 100, 105, 120), line('(A)', 140, 190, 170, 210), line('(B)', 560, 190, 590, 210), line('(C)', 140, 270, 170, 290), line('(D)', 560, 270, 590, 290),
+    line('4.', 80, 350, 105, 370), line('1. CCl4 + NaOH', 280, 390, 420, 410), line('2. H+', 280, 420, 340, 440),
+    line('5.', 80, 520, 105, 540), line('(A)', 140, 620, 170, 640), line('(B)', 560, 620, 590, 640), line('(C)', 140, 730, 170, 750), line('(D)', 560, 730, 590, 750),
+  ];
+  const png = await painted(lines.map((value) => ({ left: value.box.left, top: value.box.top, width: value.box.right - value.box.left, height: value.box.bottom - value.box.top })));
+  const layout = await pageLayoutFromOcr(png, lines);
+  assert.ok(layout);
+  assert.deepEqual(layout.questions.map((question) => question.printedLabel), ['3', '4', '5']);
+  assert.deepEqual(layout.questions[0]?.options.map((option) => option.label), ['A', 'B', 'C', 'D']);
+  assert.deepEqual(layout.questions[2]?.options.map((option) => option.label), ['A', 'B', 'C', 'D']);
+});

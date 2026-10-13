@@ -167,6 +167,8 @@ void test('initial matrix and inline prompts preserve source choice labels', () 
   assert.match(prompt, /"\(1\) …", "\(5\) …", "\(E\) …", "\(F\) …", "\(I\) …", or "\(iv\) …"/);
   assert.match(prompt, /never convert it to A\/B\/C\/D/i);
   assert.match(prompt, /do not convert numeric\/Roman\/extended labels to A–D/i);
+  assert.match(prompt, /TABULAR CHOICE CONTRACT/i);
+  assert.match(prompt, /Answer pattern \(left to right\)/i);
   assert.doesNotMatch(prompt, /normalize \(1\)\(2\)\(3\)\(4\) to \(A\)\(B\)\(C\)\(D\)/i);
   assert.doesNotMatch(prompt, /server generates verified A–D choices/i);
 });

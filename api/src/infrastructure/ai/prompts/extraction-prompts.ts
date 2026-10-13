@@ -260,6 +260,8 @@ function detectedTypeStructureRule(): string {
 /** Source labels are data, not ordinal aliases — this guard wins over editable batch-prompt prose. */
 const SOURCE_OPTION_LABEL_GUARD = `SOURCE OPTION LABEL CONTRACT (authoritative): Copy every printed option marker exactly as it appears. A question may have A–E, 1–5, I–IV, E/F, or any other short source labels; do not convert numeric/Roman/extended labels to A–D, even when there are four choices. Never invent a source-less option panel. The answer must use the same printed label vocabulary as that question's options.`;
 
+const TABULAR_CHOICE_GUARD = `TABULAR CHOICE CONTRACT: A table with A/B/C/D (or similar) as its ROWS and properties as its COLUMNS is an ordinary multiple-choice question, not a matrix-match question. Preserve the source column headings in their printed left-to-right order. Append this to question_text: "Answer pattern (left to right): <heading 1>; <heading 2>; …". For every option, write the row as "<heading 1>: <cell>; <heading 2>: <cell>; …" in exactly that same order. Do not omit a column, turn table-row labels into a new question, or populate columns/match for this format.`;
+
 /**
  * The question-extraction prompt for one page of a document. The model classifies each question's own
  * type + difficulty (see {@link classificationRule}); a concrete operator topic-config type is a
@@ -292,6 +294,7 @@ export function questionPrompt(
     document.answerLayout === 'inline' ? resolvePrompt(overrides, 'inlineAnswer') : '',
     resolvePyq(document, binding) ? resolvePrompt(overrides, 'pyq') : '',
     SOURCE_OPTION_LABEL_GUARD,
+    TABULAR_CHOICE_GUARD,
     PRINTED_IDENTITY_GUARD,
   ]
     .filter(Boolean)
