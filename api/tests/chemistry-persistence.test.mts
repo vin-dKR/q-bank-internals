@@ -80,3 +80,20 @@ void test('chemistry source rectangles cannot extend beyond their source page', 
   });
   assert.equal(parsed.success, false);
 });
+
+void test('automatic answer and solution source images survive extraction persistence', async () => {
+  const repository = new InMemoryQuestionRepository();
+  const answerImages = ['https://example.test/source-answer.png'];
+  const explanationImages = ['https://example.test/source-solution.png'];
+  await repository.replaceDocument('document', [], [draft({
+    answer: 'Product: [See source diagram]',
+    explanation: 'Reduction yields [See source diagram].',
+    answerImages,
+    explanationImages,
+  })]);
+  const [saved] = await repository.findByDocument('document');
+  assert.ok(saved);
+  assert.deepEqual(saved.answerImages, answerImages);
+  assert.deepEqual(saved.explanationImages, explanationImages);
+  assert.equal(saved.answer, 'Product: [See source diagram]');
+});

@@ -24,6 +24,8 @@ export type NewQuestion = {
   questionImage?: string | null;
   isOptionImage?: boolean;
   optionImages?: string[];
+  answerImages?: string[];
+  explanationImages?: string[];
   imageCrops?: ImageCrop[];
   path: SourcePath;
   stem: string;

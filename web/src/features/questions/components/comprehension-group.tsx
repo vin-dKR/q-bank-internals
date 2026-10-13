@@ -22,6 +22,7 @@ type Props = {
   count: number;
   /** The current shared-passage draft text (from the passage entity). */
   passage: string;
+  displayText?: ((text: string) => string) | undefined;
   /** The shared passage figure (Supabase URL), or null when none is attached. */
   passageImage: string | null;
   /** True when this passage has unsaved edits — shows the indicator. */
@@ -54,6 +55,7 @@ export function ComprehensionGroupPanel({
   passageId,
   count,
   passage,
+  displayText,
   passageImage,
   dirty,
   disabled = false,
@@ -211,6 +213,7 @@ export function ComprehensionGroupPanel({
       </div>
       <EditableLatexValue
         value={passage}
+        displayValue={displayText?.(passage) ?? passage}
         onChange={onPassageChange}
         multiline
         placeholder="Click to edit the shared passage"

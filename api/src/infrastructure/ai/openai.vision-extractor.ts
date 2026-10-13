@@ -22,6 +22,7 @@ import { sanitizeExtractedLatex } from './latex-sanitizer.js';
 import type { PromptOverrides } from '../../modules/prompts/index.js';
 import { mapWithConcurrency } from '../../shared/async/map-with-concurrency.js';
 import { createChemistryInventoryPreview } from './chemistry-inventory-preview.js';
+import { attachChemistryAnswerSources, CHEMISTRY_ANSWER_SOURCE_RULE, parsedAnswerSourceRegions, parsedAnswerVisualKinds } from './chemistry-answer-sources.js';
 import {
   applySmilesPatches, CHEMISTRY_AUDIT_RESPONSE_FORMAT, CHEMISTRY_STRUCTURE_AUDIT_PROMPT, enumerateSmilesCandidates, validateSmilesGraph,
 } from './chemistry-audit.js';
@@ -72,6 +73,10 @@ function asString(value: unknown): string {
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   if (typeof value === 'boolean') return String(value);
   return '';
+}
+
+function answerSourcePrompt(prompt: string, document: Document, subject?: string): string {
+  return isChemistryDocument(subject ? { ...document, subject } : document) ? `${prompt}\n\n${CHEMISTRY_ANSWER_SOURCE_RULE}` : prompt;
 }
 
 /** A model string with its mhchem `\ce{…}` JSON-escape corruption repaired (see {@link sanitizeExtractedLatex}). */
@@ -210,10 +215,14 @@ function normaliseAnswerMapKey(value: string): string | null {
 function toAnswerEntry(value: unknown, answerSource: AnswerSource): AnswerSheet['entries'][string] {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     const record = value as { answer?: unknown; explanation?: unknown };
+    const sourceRegions = parsedAnswerSourceRegions(value);
+    const sourceVisualKinds = parsedAnswerVisualKinds(value);
     return {
       answer: cleanStringOrNull(record.answer),
       explanation: cleanStringOrNull(record.explanation),
       answerSource,
+      ...(sourceRegions.length > 0 ? { sourceRegions } : {}),
+      ...(sourceVisualKinds ? { sourceVisualKinds } : {}),
     };
   }
   return { answer: cleanStringOrNull(value), explanation: null, answerSource };
@@ -362,7 +371,7 @@ export class OpenAiVisionExtractor implements VisionExtractor {
         // each child has its own type.
         const answerType = questionType ?? (boundType === 'comprehension' ? null : boundType);
         const printedLabel = normalizePrintedQuestionLabel(region?.printed_label ?? (asString(raw.printed_label) || asString(raw.question_number)));
-        const chemistry = region ? await this.chemistryMetadata(raw, region) : null;
+        const chemistry = region ? await this.chemistryMetadata(raw, region, input.document.id, page.pageNumber) : null;
         results.push({
           questionNumber: toQuestionNumber(raw.question_number),
           printedLabel,
@@ -428,9 +437,10 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     if (inventory.page_role === 'empty') return { questions: [], sheets: [] };
     if (inventory.page_role === 'answers' || inventory.page_role === 'solutions') {
       // Separate answer/solution pages inside a question PDF enrich existing identities, never create rows.
-      const sourcePrompt = companionPrompt(document, page.pageNumber, overrides);
+      const sourcePrompt = `${companionPrompt(document, page.pageNumber, overrides)}\n\n${CHEMISTRY_ANSWER_SOURCE_RULE}`;
       const { content } = await this.call(sourcePrompt, page.png, usage, signal);
-      return { questions: [], sheets: inventory.page_role === 'answers' ? parseAnswerSheets(content, document.sectionName) : parseSolutionSheets(content, document.sectionName) };
+      const sheets = inventory.page_role === 'answers' ? parseAnswerSheets(content, document.sectionName) : parseSolutionSheets(content, document.sectionName);
+      return { questions: [], sheets: await attachChemistryAnswerSources(sheets, document, page) };
     }
     const questions = await mapWithConcurrency(inventory.question_regions, 3, async (region): Promise<RegionQuestion> => {
       const png = await cropChemistryRegions(page.png, chemistryQuestionRegions(region));
@@ -463,23 +473,23 @@ export class OpenAiVisionExtractor implements VisionExtractor {
       return { raw, region };
     });
     if (inventory.page_role === 'mixed') {
-      const { content } = await this.call(companionPrompt(document, page.pageNumber, overrides), page.png, usage, signal);
-      return { questions, sheets: parseCompanionSheets(content, document.sectionName) };
+      const { content } = await this.call(`${companionPrompt(document, page.pageNumber, overrides)}\n\n${CHEMISTRY_ANSWER_SOURCE_RULE}`, page.png, usage, signal);
+      return { questions, sheets: await attachChemistryAnswerSources(parseCompanionSheets(content, document.sectionName), document, page) };
     }
     return { questions, sheets: [] };
   }
 
-  private async chemistryMetadata(raw: RawQuestion, region: ChemistryQuestionRegion): Promise<ChemistryExtraction> {
+  private async chemistryMetadata(raw: RawQuestion, region: ChemistryQuestionRegion, documentId: string, pageNumber: number): Promise<ChemistryExtraction> {
     const stem = cleanString(raw.question_text);
     const options = Array.isArray(raw.options) ? raw.options.map(normaliseOption).filter((option): option is string => option !== null) : [];
     const issues: string[] = [];
     if (enumerateSmilesCandidates({ columns: raw.columns, passage: raw.passage }).length > 0) issues.push('Molecular drawings in a matrix or shared passage require source-image review before publication.');
     const visuals: ChemistryExtraction['visuals'] = [];
-    const addVisual = async (field: 'stem' | 'option', optionLabel: string | null, text: string, kind: 'molecule' | 'reaction' | 'figure', bbox: ChemistryQuestionRegion['bbox'], regions?: ChemistryQuestionRegion['bbox'][]): Promise<void> => {
+    const addVisual = async (field: ChemistryExtraction['visuals'][number]['field'], optionLabel: string | null, text: string, kind: 'molecule' | 'reaction' | 'figure', bbox: ChemistryQuestionRegion['bbox'], regions?: ChemistryQuestionRegion['bbox'][]): Promise<void> => {
       const smiles = enumerateSmilesCandidates({ stem: text }).map((candidate) => candidate.smiles);
       const validation = await Promise.all(smiles.map(validateSmilesGraph));
       if (validation.some((result) => !result.ok)) issues.push(`Invalid or unsupported candidate structure in ${optionLabel ? `option ${optionLabel}` : 'stem'}; source image is authoritative.`);
-      visuals.push({ id: `${field}:${optionLabel ?? 'source'}`, field, optionLabel, kind, bbox: chemistryCropBox(bbox), ...(regions && regions.length > 1 ? { regions: regions.map(chemistryCropBox) } : {}), candidateSmiles: smiles, graphValid: smiles.length ? validation.every((result) => result.ok) : null, cropUrl: null });
+      visuals.push({ id: `${field}:${optionLabel ?? 'source'}`, field, optionLabel, kind, bbox: chemistryCropBox(bbox), ...(regions && regions.length > 1 ? { regions: regions.map(chemistryCropBox) } : {}), candidateSmiles: smiles, graphValid: smiles.length ? validation.every((result) => result.ok) : null, cropUrl: null, sourceDocumentId: documentId, sourcePage: pageNumber });
     };
     if (region.stem_bbox && (region.visual_kind !== 'none' || region.stem_regions.length > 1 || enumerateSmilesCandidates({ stem }).length > 0)) {
       await addVisual('stem', null, stem, region.visual_kind === 'none' ? 'figure' : region.visual_kind, region.stem_bbox, chemistryStemRegions(region));
@@ -490,7 +500,12 @@ export class OpenAiVisionExtractor implements VisionExtractor {
         await addVisual('option', option.label, text, option.visual_kind === 'none' ? 'molecule' : option.visual_kind, option.bbox);
       }
     }
-    return { version: 1, status: visuals.length || issues.length ? 'needs_review' : 'source_preserved', issues, candidateStem: stem, candidateOptions: options, visuals };
+    const answer = cleanStringOrNull(raw.answer);
+    const explanation = cleanStringOrNull(raw.explanation);
+    for (const [field, text] of [['answer', answer], ['explanation', explanation]] as const) {
+      if (text && enumerateSmilesCandidates({ stem: text }).length > 0) await addVisual(field, null, text, 'reaction', region.bbox, chemistryQuestionRegions(region));
+    }
+    return { version: 1, status: visuals.length || issues.length ? 'needs_review' : 'source_preserved', issues, candidateStem: stem, candidateOptions: options, ...(answer ? { candidateAnswer: answer } : {}), ...(explanation ? { candidateExplanation: explanation } : {}), visuals };
   }
 
   private accumulateUsage(usage: AiTokenUsage, reported: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined): void {
@@ -518,9 +533,9 @@ export class OpenAiVisionExtractor implements VisionExtractor {
       // A sibling answer PDF's page numbers and document-level fallback type are unrelated to the
       // question PDF once a chapter contains several leaves. A bound scope therefore wins over the
       // sibling document when selecting the answer grammar and fallback section name.
-      const prompt = answerPrompt(input.document, page.pageNumber, overrides, input.scope);
+      const prompt = answerSourcePrompt(answerPrompt(input.document, page.pageNumber, overrides, input.scope), input.document, input.scope?.subject);
       const { content } = await this.call(prompt, page.png, usage, input.signal);
-      sheets.push(...parseAnswerSheets(content, input.scope?.sectionName ?? input.document.sectionName));
+      sheets.push(...await attachChemistryAnswerSources(parseAnswerSheets(content, input.scope?.sectionName ?? input.document.sectionName), input.document, page));
     }
     return { sheets, usage };
   }
@@ -535,9 +550,9 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     const usage = this.emptyUsage();
     const overrides = await this.loadPromptOverrides();
     for (const page of input.pages) {
-      const prompt = solutionPrompt(input.document, page.pageNumber, overrides, input.scope);
+      const prompt = answerSourcePrompt(solutionPrompt(input.document, page.pageNumber, overrides, input.scope), input.document, input.scope?.subject);
       const { content } = await this.call(prompt, page.png, usage, input.signal);
-      sheets.push(...parseSolutionSheets(content, input.scope?.sectionName ?? input.document.sectionName));
+      sheets.push(...await attachChemistryAnswerSources(parseSolutionSheets(content, input.scope?.sectionName ?? input.document.sectionName), input.document, page));
     }
     return { sheets, usage };
   }
@@ -552,9 +567,9 @@ export class OpenAiVisionExtractor implements VisionExtractor {
     const usage = this.emptyUsage();
     const overrides = await this.loadPromptOverrides();
     for (const page of input.pages) {
-      const prompt = companionPrompt(input.document, page.pageNumber, overrides, input.scope);
+      const prompt = answerSourcePrompt(companionPrompt(input.document, page.pageNumber, overrides, input.scope), input.document, input.scope?.subject);
       const { content } = await this.call(prompt, page.png, usage, input.signal);
-      sheets.push(...parseCompanionSheets(content, input.scope?.sectionName ?? input.document.sectionName));
+      sheets.push(...await attachChemistryAnswerSources(parseCompanionSheets(content, input.scope?.sectionName ?? input.document.sectionName), input.document, page));
     }
     return { sheets, usage };
   }

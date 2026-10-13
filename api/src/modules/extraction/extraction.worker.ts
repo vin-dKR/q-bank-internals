@@ -1,4 +1,5 @@
 import {
+  chemistrySourceText,
   type AiFilled,
   type Document,
   matchKeyToAnswer,
@@ -23,6 +24,7 @@ import {
   type AnswerExtractionScope,
   type AnswerSheet,
   type ExtractedQuestion,
+  type PageImage,
   type VisionExtractor,
 } from './vision-extractor.js';
 import { materializePassages } from './group-comprehension.js';
@@ -152,16 +154,21 @@ function normalizeQuestionType(raw: string | null): string | null {
  * operator's cut-time config. A concrete cut-time type is authoritative (except the comprehension
  * container, whose children legitimately carry their own types).
  */
-function sourceImageProjection(draft: ExtractedQuestion, options: QuestionOption[]): Pick<NewQuestion, 'stem' | 'options' | 'isQuestionImage' | 'questionImage' | 'isOptionImage' | 'optionImages' | 'imageCrops'> {
+function sourceImageProjection(draft: ExtractedQuestion, options: QuestionOption[]): Pick<NewQuestion, 'stem' | 'options' | 'isQuestionImage' | 'questionImage' | 'isOptionImage' | 'optionImages' | 'answerImages' | 'explanationImages' | 'imageCrops'> & Partial<Pick<NewQuestion, 'answer' | 'explanation'>> {
   const visuals = draft.chemistry?.visuals ?? [];
   const stem = visuals.find((visual) => visual.field === 'stem');
   const optionImages = options.map((option) => visuals.find((visual) => visual.field === 'option' && visual.optionLabel?.trim().toUpperCase() === option.label.trim().toUpperCase())?.cropUrl ?? '');
+  const answerImages = visuals.filter((visual) => visual.field === 'answer').flatMap((visual) => visual.cropUrl ? [visual.cropUrl] : []);
+  const explanationImages = visuals.filter((visual) => visual.field === 'explanation').flatMap((visual) => visual.cropUrl ? [visual.cropUrl] : []);
   if (visuals.some((visual) => !visual.cropUrl)) throw errors.extractionFailed('A chemistry diagram has no preserved source image.');
   return {
-    stem: stem ? '' : draft.questionText,
-    options: options.map((option, index) => ({ ...option, body: optionImages[index] ? '' : option.body })),
+    stem: stem ? chemistrySourceText(draft.questionText) : draft.questionText,
+    options: options.map((option, index) => ({ ...option, body: optionImages[index] ? chemistrySourceText(option.body) : option.body })),
+    ...(answerImages.length ? { answer: chemistrySourceText(draft.answer ?? '') } : {}),
+    ...(explanationImages.length ? { explanation: chemistrySourceText(draft.explanation ?? '') || null } : {}),
     isQuestionImage: Boolean(stem?.cropUrl), questionImage: stem?.cropUrl ?? null,
     isOptionImage: optionImages.some(Boolean), optionImages: optionImages.some(Boolean) ? optionImages : [],
+    answerImages: [...new Set(answerImages)], explanationImages: [...new Set(explanationImages)],
     imageCrops: draft.imageCrops ?? [],
   };
 }
@@ -410,7 +417,8 @@ export class ExtractionWorker {
         if (result.questions.some((question) => (question.chemistry?.visuals.length ?? 0) > 0) && !this.visuals) throw errors.extractionFailed('Chemistry source preservation is not configured.');
         const preserved = this.visuals ? await this.visuals.preserve(document.id, page, result.questions) : result.questions;
         if (result.sheets && result.sheets.length > 0) {
-          await this.drafts.saveSheetPage({ jobId, documentId: document.id, phase: 'companion', pageNumber: page.pageNumber, scopeKey: 'inline-source', sheets: result.sheets });
+          const sheets = await this.preserveSourceSheets(document.id, [page], result.sheets);
+          await this.drafts.saveSheetPage({ jobId, documentId: document.id, phase: 'companion', pageNumber: page.pageNumber, scopeKey: 'inline-source', sheets });
         }
         await this.drafts.saveQuestionPage({
           jobId,
@@ -633,10 +641,11 @@ export class ExtractionWorker {
           };
           const result = await extract(slice, scope);
           await this.recordUsage(source, result.usage);
+          const preservedSheets = await this.preserveSourceSheets(source.id, slice, result.sheets);
           // Fold every entry this range produced under the topic's own name. A solution may cross a
           // page boundary, so a later non-duplicate explanation is a continuation, not a value to drop.
           const entries: Record<string, AnswerEntry> = {};
-          for (const sheet of result.sheets) {
+          for (const sheet of preservedSheets) {
             for (const [number, entry] of Object.entries(sheet.entries)) {
               entries[number] = mergeAnswerEntries(entries[number], entry);
             }
@@ -671,7 +680,7 @@ export class ExtractionWorker {
       const pages = await this.rasterizer.rasterize(pdf);
       const result = await extract(pages);
       await this.recordUsage(source, result.usage);
-      sink.push(...result.sheets);
+      sink.push(...await this.preserveSourceSheets(source.id, pages, result.sheets));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn(
@@ -679,5 +688,10 @@ export class ExtractionWorker {
         'Answer/solution extraction failed; keeping questions as-is',
       );
     }
+  }
+
+  private async preserveSourceSheets(documentId: string, pages: PageImage[], sheets: AnswerSheet[]): Promise<AnswerSheet[]> {
+    if (sheets.some((sheet) => Object.values(sheet.entries).some((entry) => entry.chemistryVisuals?.length)) && !this.visuals) throw errors.extractionFailed('Chemistry answer and solution source preservation is not configured.');
+    return this.visuals ? this.visuals.preserveSheets(documentId, pages, sheets) : sheets;
   }
 }

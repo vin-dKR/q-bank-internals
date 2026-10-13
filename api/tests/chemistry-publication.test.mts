@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   DocumentSchema,
+  chemistrySourceText,
   PassageSchema,
   QuestionSchema,
   UpdateQuestionSchema,
@@ -206,6 +207,38 @@ void test('reviewer can accept existing complete source crops through ordinary P
   const updated = await service.update(question.id, patch);
   assert.equal(updated.chemistry?.status, 'source_preserved');
   assert.equal(saved.length, 1);
+});
+
+void test('readable chemistry transcription and its authoritative diagrams can be reviewed together', async () => {
+  const chemistry = metadata();
+  const question = sourceQuestion({
+    chemistry,
+    stem: chemistrySourceText(chemistry.candidateStem),
+    options: [{ label: 'A', body: '[See source diagram]', isCorrect: true }, { label: 'F', body: 'Second source option', isCorrect: false }],
+  });
+  assert.deepEqual(chemistrySourceReviewIssues(question), []);
+  const { service } = editing(question);
+  const accepted = await service.update('q1', { chemistry: { ...chemistry, status: 'source_preserved' } });
+  const { service: publish, writes } = publication(accepted);
+  await publish.publishDocument('doc');
+  assert.equal(writes.length, 1);
+  assert.equal(accepted.stem, '[See source diagram] + reagent');
+  assert.equal(accepted.questionImage, STEM_URL);
+  const { service: change } = editing(accepted);
+  const moved = await change.update('q1', { stem: 'A different reaction result' });
+  assert.equal(moved.chemistry?.status, 'needs_review');
+});
+
+void test('readable text projection preserves formulas and every reaction condition without promoting molecular guesses', () => {
+  const source = String.raw`Find the product: <smiles>Oc1ccccc1</smiles> \\(\\xrightarrow[\\Delta]{\\ce{HBr}}\\) <smiles>CC</smiles>.`;
+  const text = chemistrySourceText(source);
+  assert.match(text, /Find the product:/);
+  assert.match(text, /xrightarrow/);
+  assert.match(text, /HBr/);
+  assert.match(text, /Delta/);
+  assert.equal((text.match(/\[See source diagram\]/gu) ?? []).length, 2);
+  assert.doesNotMatch(text, /smiles|Oc1ccccc1/iu);
+  assert.equal(chemistrySourceText('Start <smiles>unfinished'), 'Start [See source diagram]');
 });
 
 void test('acceptance rejects forged ledgers, ledger removal, missing crops and concurrent candidate text', async () => {

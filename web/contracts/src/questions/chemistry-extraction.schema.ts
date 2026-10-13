@@ -14,9 +14,12 @@ export const ChemistryExtractionSchema = z.object({
   issues: z.array(z.string()),
   candidateStem: z.string(),
   candidateOptions: z.array(z.string()),
+  candidateAnswer: z.string().optional(),
+  candidateExplanation: z.string().optional(),
+  unresolvedSourceFields: z.array(z.enum(['answer', 'explanation'])).optional(),
   visuals: z.array(z.object({
     id: z.string(),
-    field: z.enum(['stem', 'option']),
+    field: z.enum(['stem', 'option', 'answer', 'explanation']),
     optionLabel: z.string().nullable(),
     kind: z.enum(['molecule', 'reaction', 'figure']),
     /** Normalized source-page rectangle: x, y, width, height. */
@@ -26,6 +29,8 @@ export const ChemistryExtractionSchema = z.object({
     candidateSmiles: z.array(z.string()),
     graphValid: z.boolean().nullable(),
     cropUrl: z.string().nullable(),
+    sourceDocumentId: z.string().optional(),
+    sourcePage: z.number().int().positive().optional(),
   })),
 });
 export type ChemistryExtraction = z.infer<typeof ChemistryExtractionSchema>;

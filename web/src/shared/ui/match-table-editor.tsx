@@ -175,6 +175,7 @@ export function MatchTableEditor({
   disabled = false,
   sourceActionsDisabled = false,
   allowImages = true,
+  displayText,
 }: {
   value: MatchData;
   onChange: (next: MatchData) => void;
@@ -191,6 +192,8 @@ export function MatchTableEditor({
   sourceActionsDisabled?: boolean;
   /** When false, entry figures are read-only (shown but not croppable/removable). Defaults to on. */
   allowImages?: boolean;
+  /** Source-backed views can hide audit candidates without changing the raw editable entries. */
+  displayText?: ((text: string) => string) | undefined;
 }): JSX.Element {
   const { columns, key } = value;
   const toast = useToast();
@@ -535,6 +538,7 @@ export function MatchTableEditor({
                     <div className="min-w-0">
                       <EditableLatexValue
                         value={entry.body}
+                        displayValue={displayText?.(entry.body) ?? entry.body}
                         onChange={(body) => {
                           patchEntry(colIndex, entryIndex, { ...entry, body });
                         }}

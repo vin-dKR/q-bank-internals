@@ -17,6 +17,7 @@ import {
 } from './modules/extraction/index.js';
 import {
   QuestionsService,
+  ChemistryRepairService,
   type DiagramDetector,
   type ImageStore,
   type LatexRefiner,
@@ -390,6 +391,8 @@ export function createContainer(): Container {
       ? new MongoBankQuestionStore(getPrisma())
       : new UnconfiguredBankQuestionStore();
   const imageStore = buildImageStore();
+  const imageCropper = new SharpImageCropper();
+  const chemistryRepairService = new ChemistryRepairService(questions, documents, imageStore, pagesService, imageCropper);
   const questionsService = new QuestionsService(
     questions,
     documents,
@@ -401,6 +404,7 @@ export function createContainer(): Container {
     pagesService,
     buildQuestionReExtractor(loadPromptOverrides),
     buildPaperMetadataExtractor(),
+    chemistryRepairService,
   );
   const bankPublisher =
     env.DB_DRIVER === 'mongo'
@@ -466,7 +470,7 @@ export function createContainer(): Container {
     usageService,
     env.EXTRACTION_PAGES_PER_TASK,
     pagesService,
-    new ExtractionVisualsService(imageStore, new SharpImageCropper()),
+    new ExtractionVisualsService(imageStore, imageCropper),
   );
   const ingestionService = new IngestionService(
     driveService,

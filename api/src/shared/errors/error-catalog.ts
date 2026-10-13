@@ -20,6 +20,8 @@ export const errors = {
     new AppError('STRUCTURE_DETECTION_FAILED', 422, `Structure detection failed: ${reason}`),
   validation: (details: unknown): AppError =>
     new AppError('VALIDATION_FAILED', 400, 'Request failed validation.', details),
+  chemistryRecoveryFailed: (reason: string): AppError =>
+    new AppError('CHEMISTRY_RECOVERY_FAILED', 422, `Chemistry content could not be restored: ${reason}`),
 
   documentNotFound: (id: string): AppError =>
     new AppError('DOCUMENT_NOT_FOUND', 404, `No document with id "${id}".`),

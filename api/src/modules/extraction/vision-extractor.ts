@@ -90,6 +90,13 @@ export type AnswerEntry = {
   answerSource?: AnswerSource;
   /** Equal-priority sources disagree, so this entry must not supply an automatically chosen answer. */
   answerConflict?: boolean;
+  /** Full numbered source blocks, in normalized left/top/right/bottom coordinates. */
+  sourceRegions?: Array<[number, number, number, number]>;
+  sourceVisualKinds?: Partial<Record<'answer' | 'explanation', 'molecule' | 'reaction' | 'figure'>>;
+  chemistryVisuals?: ChemistryExtraction['visuals'];
+  chemistryIssues?: string[];
+  unresolvedSourceFields?: Array<'answer' | 'explanation'>;
+  imageCrops?: ImageCrop[];
 };
 
 function hasAnswer(entry: AnswerEntry): boolean {
@@ -141,11 +148,37 @@ export function mergeAnswerEntries(
       : next.includes(prior)
         ? next
         : `${prior}\n\n${next}`;
+  const answerVisuals = chosen.chemistryVisuals?.filter((visual) => visual.field === 'answer') ?? [];
+  const explanationVisuals = [
+    ...(existing.chemistryVisuals?.filter((visual) => visual.field === 'explanation') ?? []),
+    ...(incoming.chemistryVisuals?.filter((visual) => visual.field === 'explanation') ?? []),
+  ];
+  const chemistryVisuals = [...new Map([...answerVisuals, ...explanationVisuals].map((visual) => [visual.id, visual])).values()];
+  const sourceRegions = [...new Map([...(existing.sourceRegions ?? []), ...(incoming.sourceRegions ?? [])].map((box) => [box.join(':'), box])).values()];
+  const chemistryIssues = [...new Set([...(existing.chemistryIssues ?? []), ...(incoming.chemistryIssues ?? [])])];
+  const selectedUrls = new Set(chemistryVisuals.flatMap((visual) => visual.cropUrl ? [visual.cropUrl] : []));
+  const imageCrops = [...(existing.imageCrops ?? []), ...(incoming.imageCrops ?? [])].filter((crop) => selectedUrls.has(crop.url));
+  const explanationKind = incoming.sourceVisualKinds?.explanation ?? existing.sourceVisualKinds?.explanation;
+  const unresolvedSourceFields = [...new Set([
+    ...(chosen.unresolvedSourceFields?.filter((field) => field === 'answer') ?? []),
+    ...(existing.unresolvedSourceFields?.filter((field) => field === 'explanation') ?? []),
+    ...(incoming.unresolvedSourceFields?.filter((field) => field === 'explanation') ?? []),
+  ])];
+  const sourceVisualKinds = {
+    ...(chosen.sourceVisualKinds?.answer ? { answer: chosen.sourceVisualKinds.answer } : {}),
+    ...(explanationKind ? { explanation: explanationKind } : {}),
+  };
   return {
     answer: !answerConflict && hasAnswer(chosen) ? chosen.answer : null,
     explanation,
     ...(chosen.answerSource ? { answerSource: chosen.answerSource } : {}),
     ...(answerConflict ? { answerConflict: true } : {}),
+    ...(sourceRegions.length ? { sourceRegions } : {}),
+    ...(chemistryVisuals.length ? { chemistryVisuals } : {}),
+    ...(chemistryIssues.length ? { chemistryIssues } : {}),
+    ...(imageCrops.length ? { imageCrops } : {}),
+    ...(Object.keys(sourceVisualKinds).length ? { sourceVisualKinds } : {}),
+    ...(unresolvedSourceFields.length ? { unresolvedSourceFields } : {}),
   };
 }
 

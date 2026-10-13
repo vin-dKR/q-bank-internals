@@ -1,4 +1,4 @@
-import type { ChapterTopic } from '@ingest/contracts';
+import type { ChapterTopic, ChemistryExtraction } from '@ingest/contracts';
 import { mergeAnswerEntries, type AnswerEntry, type AnswerSheet, type ExtractedQuestion } from './vision-extractor.js';
 import { normalizePrintedQuestionLabel, questionNumberFromPrintedLabel } from './question-identity.js';
 import { topicBindingForPage } from './topic-lookup.js';
@@ -70,6 +70,37 @@ function matchingEntry(
   return label === undefined ? undefined : index.byLabel.get(label);
 }
 
+function mergeChemistrySources(question: ExtractedQuestion, entry: AnswerEntry): Pick<ExtractedQuestion, 'chemistry' | 'imageCrops'> {
+  const current = question.chemistry;
+  const incoming = entry.chemistryVisuals ?? [];
+  const molecularAnswer = /<smiles\b/iu.test(entry.answer ?? '');
+  const molecularExplanation = /<smiles\b/iu.test(entry.explanation ?? '');
+  if (!current && !incoming.length && !entry.chemistryIssues?.length && !molecularAnswer && !molecularExplanation) return {};
+  const retained = (current?.visuals ?? []).filter((visual) =>
+    visual.field === 'stem' || visual.field === 'option' ||
+    (visual.field === 'answer' && entry.answer === null && !entry.answerConflict) ||
+    (visual.field === 'explanation' && entry.explanation === null),
+  );
+  const visuals = [...retained, ...incoming.filter((visual) => visual.field !== 'answer' || !entry.answerConflict)];
+  const unresolvedSourceFields = [...new Set([
+    ...(current?.unresolvedSourceFields?.filter((field) => (field === 'answer' && entry.answer === null && !entry.answerConflict) || (field === 'explanation' && entry.explanation === null)) ?? []),
+    ...(entry.unresolvedSourceFields?.filter((field) => field !== 'answer' || !entry.answerConflict) ?? []),
+  ])];
+  const chemistry: ChemistryExtraction = {
+    version: 1, status: 'needs_review',
+    issues: [...new Set([...(current?.issues ?? []), ...(entry.chemistryIssues ?? [])])],
+    candidateStem: current?.candidateStem ?? question.questionText,
+    candidateOptions: current?.candidateOptions ?? question.options,
+    ...(entry.answer !== null ? { candidateAnswer: entry.answer } : current?.candidateAnswer !== undefined ? { candidateAnswer: current.candidateAnswer } : {}),
+    ...(entry.explanation !== null ? { candidateExplanation: entry.explanation } : current?.candidateExplanation !== undefined ? { candidateExplanation: current.candidateExplanation } : {}),
+    ...(unresolvedSourceFields.length ? { unresolvedSourceFields } : {}),
+    visuals,
+  };
+  const discardedUrls = new Set((current?.visuals ?? []).filter((visual) => !retained.includes(visual)).flatMap((visual) => visual.cropUrl ? [visual.cropUrl] : []));
+  const imageCrops = [...(question.imageCrops ?? []).filter((crop) => !discardedUrls.has(crop.url)), ...(entry.imageCrops ?? [])];
+  return { chemistry, ...(imageCrops.length ? { imageCrops } : {}) };
+}
+
 /**
  * Join source keys by their full printed identity within the operator's topic scope. Numeric
  * compatibility matching is permitted only when both question and key have a unique numeric
@@ -126,6 +157,7 @@ export function mergeAnswers(
       ...question,
       answer: entry.answerConflict ? null : entry.answer ?? question.answer,
       explanation: entry.explanation ?? question.explanation,
+      ...mergeChemistrySources(question, entry),
     };
   });
 }

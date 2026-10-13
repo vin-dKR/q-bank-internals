@@ -230,6 +230,8 @@ export class PrismaQuestionRepository implements QuestionRepository {
         questionImage: question.questionImage ?? null,
         isOptionImage: question.isOptionImage ?? false,
         optionImages: question.optionImages ?? [],
+        answerImages: question.answerImages ?? [],
+        explanationImages: question.explanationImages ?? [],
         imageCrops: question.imageCrops ?? [],
         questionType: question.questionType,
         level: question.level,

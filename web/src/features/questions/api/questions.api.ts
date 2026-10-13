@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import type {
   BatchUpdateQuestionsResult,
+  ChemistryRepairRequest,
+  ChemistryRepairResult,
   DetectedFigures,
   DetectedFiguresBatch,
   LatexFixResult,
@@ -23,6 +25,7 @@ import type {
 } from '@ingest/contracts';
 import {
   BatchUpdateQuestionsResultSchema,
+  ChemistryRepairResultSchema,
   DetectedFiguresBatchSchema,
   DetectedFiguresSchema,
   LatexFixResultSchema,
@@ -55,6 +58,9 @@ export type ReExtractGroupOptions = {
 
 /** Feature-scoped calls to the questions + pages endpoints. The only place this feature hits the network. */
 export const questionsApi = {
+  /** Restore source-backed chemistry without rerunning the document's recognition. */
+  repairChemistry: (input: ChemistryRepairRequest): Promise<ChemistryRepairResult> =>
+    request('/questions/chemistry-repair', { method: 'POST', body: input, schema: ChemistryRepairResultSchema }),
   /** Automatically re-check staged questions after extraction and after Verify edits. */
   scanLatex: (documentId: string): Promise<LatexScan> =>
     request(`/questions/latex-scan?${new URLSearchParams({ documentId }).toString()}`, { schema: LatexScanSchema }),

@@ -1,5 +1,6 @@
 import type {
   BatchUpdateQuestionsResult,
+  ChemistryRepairResult,
   DetectFiguresSource,
   DetectedFigure,
   DetectedFigures,
@@ -46,6 +47,7 @@ import type { BankQuestionStore } from '../bank/index.js';
 import type { DiagramDetector } from './diagram-detector.js';
 import { matchFiguresToQuestions } from './figure-matcher.js';
 import { chemistryReviewPatch } from './chemistry-source-review.js';
+import type { ChemistryRepairService } from './chemistry-repair.service.js';
 import type { ImageStore } from './image-store.js';
 import type { LatexRefiner } from './latex-refiner.js';
 import type { PageRenderer } from './page-renderer.js';
@@ -472,6 +474,7 @@ export class QuestionsService {
     private readonly pages: PageRenderer,
     private readonly reExtractor: QuestionReExtractor,
     private readonly paperMetadata: PaperMetadataExtractor,
+    private readonly chemistryRepair?: ChemistryRepairService,
   ) {}
 
   /** The questions extracted from a single document (PDF reading order) + the passages they reference. */
@@ -481,6 +484,12 @@ export class QuestionsService {
       this.questions.findPassagesByDocument(documentId),
     ]);
     return { questions, passages };
+  }
+
+  /** Recover source-backed text and companion images in place, preserving existing question rows. */
+  repairChemistry(documentId: string, questionId?: string): Promise<ChemistryRepairResult> {
+    if (!this.chemistryRepair) throw errors.validation({ message: 'Chemistry recovery is unavailable in this server configuration.' });
+    return this.chemistryRepair.repair(documentId, questionId);
   }
 
   /** Scan current staged text on demand. Session and Verify queries start this after extraction. */

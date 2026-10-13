@@ -56,9 +56,9 @@ void test('diagram inventory preserves missing primary structures as owned sourc
   const draft = preserved[0];
   assert.ok(draft);
   const row = toNewQuestion(document, draft, { model: 'model', at: new Date(0).toISOString() });
-  assert.equal(row.stem, '');
+  assert.equal(row.stem, 'Product?');
   assert.equal(row.questionImage, 'https://images.example/1.png');
-  assert.deepEqual(row.options.map((option) => option.body), ['', '']);
+  assert.deepEqual(row.options.map((option) => option.body), ['unreadable', 'unreadable']);
   assert.deepEqual(row.optionImages, ['https://images.example/2.png', 'https://images.example/3.png']);
   assert.ok(row.chemistry);
   assert.equal(row.chemistry.candidateStem, 'Product?');
