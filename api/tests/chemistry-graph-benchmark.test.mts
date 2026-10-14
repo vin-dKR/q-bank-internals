@@ -46,6 +46,7 @@ await test('missing and extra molecules penalize complete field fidelity', async
   assert.equal(missing.production.exactFields, 0);
   const extra = await score(['C'], ['C', 'CC']);
   assert.equal(extra.production.precisionPercent, 50);
+  assert.equal(extra.production.parseValidMolecules, 2);
   assert.equal(extra.production.extraMolecules, 1);
   assert.equal(extra.production.exactFields, 0);
 });
