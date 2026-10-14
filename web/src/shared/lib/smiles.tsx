@@ -10,7 +10,9 @@ import SmilesDrawer from 'smiles-drawer';
  * smiles-drawer parses + lays out per call and draws into a real SVG element, so this is a client-only,
  * effect-driven component (there is no server render of the structure).
  */
-const drawer = new SmilesDrawer.SmiDrawer({ width: 220, height: 160, padding: 12 });
+const MAX_STRUCTURE_WIDTH = 220;
+const MAX_STRUCTURE_HEIGHT = 120;
+const drawer = new SmilesDrawer.SmiDrawer({ width: MAX_STRUCTURE_WIDTH, height: MAX_STRUCTURE_HEIGHT, padding: 12 });
 
 /**
  * Verify is a print-like, light surface. Use smiles-drawer's monochrome theme rather than the
@@ -19,6 +21,24 @@ const drawer = new SmilesDrawer.SmiDrawer({ width: 220, height: 160, padding: 12
  * label and bond equally legible.
  */
 const VERIFY_STRUCTURE_THEME = 'oldschool';
+
+/** The drawer measures an inline SVG before it has intrinsic bounds, which can produce 0px styles. */
+export function sizeSmilesSvg(svg: SVGSVGElement): void {
+  const viewBox = svg.getAttribute('viewBox')?.trim().split(/[\s,]+/).map(Number);
+  const width = viewBox?.[2];
+  const height = viewBox?.[3];
+  if (viewBox?.length !== 4 || width === undefined || height === undefined ||
+    !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error('The molecular drawing has no usable geometry.');
+  }
+  const scale = Math.min(MAX_STRUCTURE_WIDTH / width, MAX_STRUCTURE_HEIGHT / height);
+  const displayedWidth = Math.max(1, Math.round(width * scale));
+  const displayedHeight = Math.max(1, Math.round(height * scale));
+  svg.setAttribute('width', String(displayedWidth));
+  svg.setAttribute('height', String(displayedHeight));
+  svg.style.width = `${String(displayedWidth)}px`;
+  svg.style.height = 'auto';
+}
 
 export function SmilesStructure({ smiles }: { smiles: string }): JSX.Element {
   const ref = useRef<SVGSVGElement | null>(null);
@@ -38,6 +58,7 @@ export function SmilesStructure({ smiles }: { smiles: string }): JSX.Element {
       drawer.draw(normalizedSmiles, svg, VERIFY_STRUCTURE_THEME, undefined, () => {
         throw new Error('The molecular structure could not be drawn.');
       });
+      sizeSmilesSvg(svg);
       setFailed(svg.childNodes.length === 0);
     } catch {
       setFailed(true);
@@ -49,9 +70,11 @@ export function SmilesStructure({ smiles }: { smiles: string }): JSX.Element {
       {/* Keep the drawing target mounted: editing invalid SMILES must be able to recover. */}
       <svg
         ref={ref}
+        width={MAX_STRUCTURE_WIDTH}
+        height={MAX_STRUCTURE_HEIGHT}
         role="img"
         aria-label={`Chemical structure ${normalizedSmiles}`}
-        className={failed ? 'hidden' : 'inline-block max-w-full align-middle [height:auto] [max-height:6.5rem] [width:auto]'}
+        className={failed ? 'hidden' : 'inline-block max-w-full align-middle'}
       />
       {failed ? <span className="font-mono text-xs text-ink-3">{normalizedSmiles}</span> : null}
     </span>

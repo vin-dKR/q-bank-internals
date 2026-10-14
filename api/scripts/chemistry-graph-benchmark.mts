@@ -89,7 +89,7 @@ type MoleculeComparison = {
 type FieldComparison = {
   id: string; split: GoldField['split']; documentId: string; page: number; printedLabel: string;
   field: string; questionFound: boolean; identityAmbiguous: boolean; sourceImageDisplayed: boolean;
-  candidateSmiles: string[]; expectedMolecules: number; extraMolecules: number; graphExact: boolean;
+  candidateSmiles: string[]; expectedMolecules: number; extraMolecules: number; extraParseValidMolecules: number; graphExact: boolean;
   comparisons: MoleculeComparison[];
 };
 type GraphMetrics = {
@@ -153,6 +153,7 @@ async function compareField(gold: GoldField, results: ChemistryGraphResults, use
     : gold.field === 'stem' ? row?.stem ?? '' : optionText(row?.options ?? [], gold.field);
   const smiles = enumerateSmilesCandidates({ stem: fieldText }).map((candidate) => candidate.smiles);
   const comparisons = await Promise.all(gold.molecules.map((molecule, index) => compareMolecule(molecule, smiles[index])));
+  const extraValidation = await Promise.all(smiles.slice(gold.molecules.length).map(validateSmilesGraph));
   const optionIndex = row?.options.findIndex((option) => option.label.toUpperCase() === gold.field.slice('option-'.length).toUpperCase()) ?? -1;
   const sourceImageDisplayed = gold.field === 'stem'
     ? row?.isQuestionImage === true && Boolean(row.questionImage)
@@ -162,6 +163,7 @@ async function compareField(gold: GoldField, results: ChemistryGraphResults, use
     field: gold.field, questionFound: matches.length === 1, identityAmbiguous: matches.length > 1,
     sourceImageDisplayed, candidateSmiles: smiles, expectedMolecules: gold.molecules.length,
     extraMolecules: Math.max(0, smiles.length - gold.molecules.length),
+    extraParseValidMolecules: extraValidation.filter((validation) => validation.ok).length,
     graphExact: matches.length === 1 && smiles.length === gold.molecules.length && comparisons.every((comparison) => comparison.graphExact), comparisons,
   };
 }
@@ -170,7 +172,7 @@ function metrics(fields: FieldComparison[]): GraphMetrics {
   const expectedMolecules = fields.reduce((sum, field) => sum + field.expectedMolecules, 0);
   const emittedMolecules = fields.reduce((sum, field) => sum + field.candidateSmiles.length, 0);
   const exactMolecules = fields.reduce((sum, field) => sum + field.comparisons.filter((comparison) => comparison.graphExact).length, 0);
-  const parseValidMolecules = fields.reduce((sum, field) => sum + field.comparisons.filter((comparison) => comparison.parseValid).length, 0);
+  const parseValidMolecules = fields.reduce((sum, field) => sum + field.comparisons.filter((comparison) => comparison.parseValid).length + field.extraParseValidMolecules, 0);
   const missingMolecules = fields.reduce((sum, field) => sum + Math.max(0, field.expectedMolecules - field.candidateSmiles.length), 0);
   const extraMolecules = fields.reduce((sum, field) => sum + field.extraMolecules, 0);
   const exactFields = fields.filter((field) => field.graphExact).length;
