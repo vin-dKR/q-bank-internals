@@ -43,6 +43,12 @@ export type ExtractedQuestion = {
   difficultyConfidence: number | null;
   sourcePage: number;
   /**
+   * Whether the model identified this as a previous-year question from a source label on this page.
+   * This is optional for backwards-compatible saved drafts; an operator-configured PYQ segment still
+   * wins in the worker.
+   */
+  isPyq?: boolean;
+  /**
    * The SOURCE exam + year the model read off the page for a PYQ segment (e.g. "NEET" / "2019"), or
    * null when the segment is not PYQ or the page did not print them. Distinct from the target
    * exam/subject; stamped onto the persisted question by {@link toNewQuestion}.

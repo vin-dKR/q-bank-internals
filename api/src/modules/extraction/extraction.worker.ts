@@ -175,10 +175,12 @@ export function toNewQuestion(
 ): NewQuestion {
   const binding = topicBindingForPage(document.topics, draft.sourcePage);
 
-  // PYQ is the segment's per-node toggle (else the legacy document-level flag). When on, the source
-  // exam/year come from what the model read on the page, falling back to the document for legacy rows;
-  // when off, the question carries no PYQ provenance.
-  const isPyq = binding?.pyq ?? document.pyq;
+  // An operator-marked PYQ segment is authoritative. For ordinary mixed modules, the vision pass also
+  // detects a printed PYQ label and propagates it across the rest of that source page, so an Allen
+  // exercise can contain both normal questions and NEET/JEE questions without losing provenance.
+  // Older saved drafts omit `isPyq`, which preserves their previous configured-only behaviour.
+  const configuredPyq = binding?.pyq ?? document.pyq;
+  const isPyq = configuredPyq || draft.isPyq === true;
   const pyq = {
     isPyq,
     pyqExam: isPyq ? draft.pyqExam ?? document.pyqExam : null,

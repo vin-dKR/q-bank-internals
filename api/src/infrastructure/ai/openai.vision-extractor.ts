@@ -67,6 +67,7 @@ type RawQuestion = {
   answer?: unknown;
   explanation?: unknown;
   /** Present only on a PYQ segment — the source exam + year the model read off the page. */
+  is_pyq?: unknown;
   pyq_exam?: unknown;
   pyq_year?: unknown;
 };
@@ -441,6 +442,7 @@ export class OpenAiVisionExtractor implements VisionExtractor {
           level: normalizeDifficulty(raw.difficulty),
           difficultyConfidence: normalizeDifficultyConfidence(raw.difficulty_confidence),
           sourcePage: page.pageNumber,
+          isPyq: raw.is_pyq === true,
           pyqExam: asStringOrNull(raw.pyq_exam),
           pyqYear: asStringOrNull(raw.pyq_year),
           match: toMatchData(raw.columns, raw.match),

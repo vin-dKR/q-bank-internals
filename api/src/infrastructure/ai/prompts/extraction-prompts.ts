@@ -265,6 +265,13 @@ const SOURCE_OPTION_LABEL_GUARD = `SOURCE OPTION LABEL CONTRACT (authoritative):
 const TABULAR_CHOICE_GUARD = `TABULAR CHOICE CONTRACT: A table with A/B/C/D (or similar) as its ROWS and properties as its COLUMNS is an ordinary multiple-choice question, not a matrix-match question. Preserve the source column headings in their printed left-to-right order. Append this to question_text: "Answer pattern (left to right): <heading 1>; <heading 2>; …". For every option, write the row as "<heading 1>: <cell>; <heading 2>: <cell>; …" in exactly that same order. Do not omit a column, turn table-row labels into a new question, or populate columns/match for this format.`;
 
 /**
+ * Mixed coaching modules often print one PYQ label (for example, "NEET-UG 2022") above a run of
+ * questions, rather than repeating it beside each one. This is deliberately code-owned: prompt
+ * overrides for the regular extraction shape must not silently disable provenance detection.
+ */
+const PAGE_PYQ_PROVENANCE_GUARD = `PYQ PROVENANCE (required for EVERY question): Return "is_pyq": true or false on EVERY question object. A visible previous-year exam/year label such as "NEET-UG 2022", "AIPMT 2006", "JEE Main 2021", or "PYQ" makes the labelled question a PYQ. That label establishes the active source provenance for every following question in its contiguous question block on THIS PAGE, including a continuation printed in another column, until another exam/year/PYQ label replaces it; copy the active label's exam into "pyq_exam" and year into "pyq_year" for each of those questions. Do not carry it to a different page. Questions before the first such label, and questions explicitly marked as non-PYQ, must return "is_pyq": false and omit "pyq_exam" and "pyq_year". Never infer PYQ status, exam, or year merely from the target exam/subject in the context. When the page is an operator-configured PYQ segment, return "is_pyq": true for every question and read any printed source exam/year you can see.`;
+
+/**
  * The question-extraction prompt for one page of a document. The model classifies each question's own
  * type + difficulty (see {@link classificationRule}); a concrete operator topic-config type is a
  * lock (and selects the type-specific extraction rule). When the paper's answer layout is
@@ -296,6 +303,7 @@ export function questionPrompt(
     CHEMISTRY_ANNOTATION_GUARD,
     document.answerLayout === 'inline' ? resolvePrompt(overrides, 'inlineAnswer') : '',
     resolvePyq(document, binding) ? resolvePrompt(overrides, 'pyq') : '',
+    PAGE_PYQ_PROVENANCE_GUARD,
     SOURCE_OPTION_LABEL_GUARD,
     TABULAR_CHOICE_GUARD,
     PRINTED_IDENTITY_GUARD,

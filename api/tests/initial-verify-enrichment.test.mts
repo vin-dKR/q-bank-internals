@@ -8,6 +8,7 @@ import { IngestionService } from '../src/modules/ingestion/ingestion.service.js'
 import type { DriveService } from '../src/modules/drive/index.js';
 import type { ExtractionService } from '../src/modules/extraction/index.js';
 import { mergeAnswers } from '../src/modules/extraction/merge-answers.js';
+import { toNewQuestion } from '../src/modules/extraction/extraction.worker.js';
 import type { AnswerSheet, ExtractedQuestion } from '../src/modules/extraction/vision-extractor.js';
 import type { SessionsService } from '../src/modules/sessions/index.js';
 
@@ -171,6 +172,30 @@ void test('initial matrix and inline prompts preserve source choice labels', () 
   assert.match(prompt, /Answer pattern \(left to right\)/i);
   assert.doesNotMatch(prompt, /normalize \(1\)\(2\)\(3\)\(4\) to \(A\)\(B\)\(C\)\(D\)/i);
   assert.doesNotMatch(prompt, /server generates verified A–D choices/i);
+});
+
+void test('mixed module pages detect and retain page-local PYQ provenance', () => {
+  const document = promptDocument({ pyq: false, pyqExam: null, pyqYear: null });
+  const prompt = questionPrompt(document, 1, {});
+
+  assert.match(prompt, /"is_pyq": true or false on EVERY question/i);
+  assert.match(prompt, /every following question in its contiguous question block on THIS PAGE/i);
+  assert.match(prompt, /Do not carry it to a different page/i);
+
+  const draft: ExtractedQuestion = {
+    questionNumber: 34,
+    questionText: 'A standard tungsten lamp consumes 100 W.',
+    options: ['(1) 0.707 A', '(2) 1 A'],
+    answer: '1', explanation: null, sectionName: 'All sections',
+    questionType: 'single_correct', level: 'medium', difficultyConfidence: 0.9,
+    sourcePage: 1, isPyq: true, pyqExam: 'NEET-UG', pyqYear: '2022',
+    match: null, passage: null, passageId: null, groupOrder: null,
+  };
+  const row = toNewQuestion(document, draft, { model: 'test', at: new Date(0).toISOString() });
+
+  assert.equal(row.isPyq, true);
+  assert.equal(row.pyqExam, 'NEET-UG');
+  assert.equal(row.pyqYear, '2022');
 });
 
 void test('initial inline extraction retains non-A–D source labels, answer, and explanation', async () => {
