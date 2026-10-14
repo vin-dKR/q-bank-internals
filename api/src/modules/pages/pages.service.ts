@@ -3,7 +3,7 @@ import { logger } from '../../shared/logger/logger.js';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { DriveService } from '../drive/index.js';
-import type { PdfRasterizer } from '../extraction/index.js';
+import type { PageImage, PdfRasterizer } from '../extraction/index.js';
 import type { PagePreviewStore } from './page-preview.store.js';
 
 export type SourcePagePreview = { url: string } | { png: Buffer };
@@ -31,11 +31,16 @@ export class PagesService {
 
   /** Render exactly one PDF page for crop/re-extraction paths that need original PNG pixels. */
   async renderPage(documentId: string, page: number): Promise<Buffer> {
+    return (await this.readSourcePage(documentId, page)).png;
+  }
+
+  /** Preserve native source labels alongside pixels for a deterministic repair of saved drafts. */
+  async readSourcePage(documentId: string, page: number): Promise<PageImage> {
     const document = await this.documents.findById(documentId);
     if (!document) throw errors.documentNotFound(documentId);
     const pdf = await this.drive.downloadPdf(document.driveFileId);
     try {
-      return (await this.rasterizer.rasterizePage(pdf, page)).png;
+      return await this.rasterizer.rasterizePage(pdf, page);
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('PDF page ')) throw errors.pageNotFound(documentId, page);
       throw error;

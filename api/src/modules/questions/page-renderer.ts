@@ -4,7 +4,12 @@
  * directly, so the two stay decoupled. Satisfied in the composition root by {@link PagesService},
  * whose `renderPage` already rasterizes-and-caches a document's PDF pages.
  */
+import type { PageImage } from '../extraction/index.js';
+
 export interface PageRenderer {
   /** Render one page of a document's source PDF as a PNG. Throws if the document or page is missing. */
   renderPage(documentId: string, page: number): Promise<Buffer>;
+  /** Inspect native PDF labels with the original pixels; source recovery never needs a vision read. */
+  readSourcePage?(documentId: string, page: number): Promise<PageImage>;
+  pageCount?(documentId: string): Promise<number>;
 }

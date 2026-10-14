@@ -31,6 +31,8 @@ export class InMemoryQuestionRepository implements QuestionRepository {
       id: randomUUID(),
       documentId,
       questionNumber: question.questionNumber,
+      printedLabel: question.printedLabel ?? null,
+      chemistry: question.chemistry ?? null,
       path: question.path,
       stem: question.stem,
       options: question.options,
@@ -40,13 +42,13 @@ export class InMemoryQuestionRepository implements QuestionRepository {
       groupOrder: question.groupOrder,
       explanation: question.explanation,
       images: question.images,
-      isQuestionImage: false,
-      questionImage: null,
-      isOptionImage: false,
-      optionImages: [],
-      answerImages: [],
-      explanationImages: [],
-      imageCrops: [],
+      isQuestionImage: question.isQuestionImage ?? false,
+      questionImage: question.questionImage ?? null,
+      isOptionImage: question.isOptionImage ?? false,
+      optionImages: question.optionImages ?? [],
+      answerImages: question.answerImages ?? [],
+      explanationImages: question.explanationImages ?? [],
+      imageCrops: question.imageCrops ?? [],
       questionType: question.questionType,
       level: question.level,
       sectionName: question.sectionName,
@@ -122,6 +124,7 @@ export class InMemoryQuestionRepository implements QuestionRepository {
       const updated: Question = {
         ...existing,
         ...(aiFilled !== undefined ? { aiFilled } : {}),
+        ...(patch.chemistry !== undefined ? { chemistry: patch.chemistry } : {}),
         ...(patch.stem !== undefined ? { stem: patch.stem } : {}),
         ...(patch.options !== undefined ? { options: patch.options } : {}),
         ...(patch.answer !== undefined ? { answer: patch.answer } : {}),
@@ -151,6 +154,14 @@ export class InMemoryQuestionRepository implements QuestionRepository {
       return Promise.resolve(updated);
     }
     throw new Error(`Question ${id} not found in the in-memory store.`);
+  }
+
+  findPassageById(id: string): Promise<Passage | null> {
+    for (const rows of this.passagesByDocument.values()) {
+      const passage = rows.find((row) => row.id === id);
+      if (passage) return Promise.resolve(passage);
+    }
+    return Promise.resolve(null);
   }
 
   updatePassage(id: string, patch: UpdatePassage): Promise<Passage> {

@@ -20,7 +20,7 @@ import type {
   ReExtractSource,
   TranscribeAreaTarget,
 } from '@ingest/contracts';
-import { DETECT_FIGURES_MAX_PAGES } from '@ingest/contracts';
+import { chemistrySourceText, DETECT_FIGURES_MAX_PAGES } from '@ingest/contracts';
 import { getCroppedBlob } from '../../../shared/lib/crop-image.js';
 import { useDocument } from '../../documents/index.js';
 import { questionsApi } from '../api/questions.api.js';
@@ -32,6 +32,8 @@ import {
   usePassages,
   usePublishIssues,
   useQuestions,
+  useRepairChemistry,
+  useChemistryRepairPending,
   useUngroupPassage,
   useUpdatePassage,
   useUpdateQuestion,
@@ -73,6 +75,7 @@ import { ComprehensionGroupPanel } from './comprehension-group.js';
 import { SourcePreviewPane, type SourcePreviewMagnifier } from './source-preview-pane.js';
 import { useVerifySources } from '../hooks/use-verify-sources.js';
 import type { VerifySibling } from '../lib/verify-sources.js';
+import { chemistryReadWarning } from '../lib/chemistry-read-diagnostics.js';
 import { PublishIssueActions } from './publish-issue-actions.js';
 
 /** Which source PDFs sit beside the question page: question only, + answer, or + answer & solution. */
@@ -686,6 +689,8 @@ export function VerifyWorkspace({
   // Comprehension passages (BLA-125, v2) are a separate entity, edited once in the group panel.
   const passages = usePassages(documentId);
   const passageDrafts = usePassageDrafts(documentId, passages.data);
+  const chemistryRepair = useRepairChemistry(documentId);
+  const chemistryRepairPending = useChemistryRepairPending(documentId);
   // The shared passage figure saves immediately on crop (like question images), not through the draft.
   const passageImageUpdate = useUpdatePassage(documentId);
   // Auto-attach a detected shared-passage figure: crop the bbox off `sourcePage`, upload, and save it as
@@ -1378,6 +1383,8 @@ export function VerifyWorkspace({
   const applyGroupReExtract = useCallback(
     (passageId: string, groupQuestions: Question[], result: ReExtractedGroup): void => {
       passageDrafts.setText(passageId, result.passage);
+      const warning = chemistryReadWarning(result);
+      if (warning) toast.toast({ tone: 'info', title: 'SMILES reread needs review', description: warning });
       // A passage-only operation deliberately has no authority to replace any child field, even if an
       // older/misbehaving server returned them. This keeps the selected Verify scope non-destructive.
       if (result.mode === 'passage_only') return;
@@ -2042,7 +2049,10 @@ export function VerifyWorkspace({
           req.resolve(null);
           return;
         }
-        req.resolve(await questionsApi.transcribeArea(documentId, req.transcribeTarget, blob));
+        const read = await questionsApi.transcribeArea(documentId, req.transcribeTarget, blob);
+        req.resolve(read.text);
+        const warning = chemistryReadWarning(read);
+        if (warning) toast.toast({ tone: 'info', title: 'SMILES reread needs review', description: warning });
         return;
       }
       const siblingSource =
@@ -2199,7 +2209,10 @@ export function VerifyWorkspace({
       destination: target.destination,
       ...(target.destination === 'option' ? { optionIndex: target.optionIndex } : {}),
       ...(target.source ? { source: target.source } : {}),
-    }).then(({ text }) => {
+    }).then((read) => {
+      const { text } = read;
+      const warning = chemistryReadWarning(read);
+      if (warning) toast.toast({ tone: 'info', title: 'SMILES reread needs review', description: warning });
       const currentQuestion = questionById.get(target.questionId);
       const currentDraft = currentQuestion ? drafts.draftFor(currentQuestion) : null;
       const optionIndex = target.optionIndex;
@@ -3087,13 +3100,16 @@ export function VerifyWorkspace({
     >
       <EditableQuestionCard
         question={question}
+        passage={question.passageId === null ? null : passageById.get(question.passageId) ?? null}
+        passageDirty={question.passageId !== null && passageDrafts.dirtyIds.has(question.passageId)}
+        chemistryRepairIssues={chemistryRepair.data?.unresolved.filter((issue) => issue.questionId === question.id) ?? []}
         number={questionNumberById.get(question.id) ?? 1}
         draft={drafts.draftFor(question)}
         dirty={drafts.dirtyIds.has(question.id)}
         saving={drafts.savingIds.has(question.id)}
         boxes={cardBoxesFor(question.id)}
         drawTarget={cardDrawTargetFor(question.id)}
-        cropDisabled={runActive}
+        cropDisabled={runActive || chemistryRepairPending}
         nested={nested}
         {...(!nested
           ? {
@@ -3584,7 +3600,8 @@ export function VerifyWorkspace({
                 disabled={
                   drafts.dirtyIds.size + passageDrafts.dirtyIds.size === 0 ||
                   drafts.isSaving ||
-                  passageDrafts.isSaving
+                  passageDrafts.isSaving ||
+                  chemistryRepairPending
                 }
                 onClick={() => {
                   void drafts.save([...drafts.dirtyIds]);
@@ -3603,7 +3620,32 @@ export function VerifyWorkspace({
                   }`
                 )}
               </Button>
+              {questions.data.some((question) => question.chemistry !== null) ? (
+                <Button
+                  size="xs"
+                  disabled={runActive || chemistryRepairPending || drafts.dirtyIds.size + passageDrafts.dirtyIds.size > 0 || drafts.isSaving || passageDrafts.isSaving}
+                  title="Restore saved molecular SMILES across this document and remove only automatically attached source crops"
+                  onClick={() => { chemistryRepair.mutate({ documentId }); }}
+                >
+                  {chemistryRepair.isPending ? <Spinner /> : null}
+                  {chemistryRepair.isPending ? 'Restoring SMILES…' : 'Restore extracted SMILES'}
+                </Button>
+              ) : null}
             </div>
+            {chemistryRepair.data?.unresolved.length ? (
+              <details className="rounded-md border border-line bg-warn-soft p-2 text-xs text-warn">
+                <summary className="cursor-pointer font-medium">{chemistryRepair.data.unresolved.length} chemistry field(s) still need attention</summary>
+                <ul className="m-0 mt-2 max-h-48 list-none space-y-2 overflow-auto p-0">
+                  {chemistryRepair.data.unresolved.map((issue, index) => (
+                    <li key={`${issue.questionId}-${issue.field}-${String(index)}`}>
+                      <button type="button" className="w-full rounded-md p-1 text-left hover:bg-surface" onClick={() => { focusQuestionInWorkspace(issue.questionId); }}>
+                        <strong>{questions.data.find((question) => question.id === issue.questionId)?.printedLabel ?? 'Question'} · {issue.field}</strong>: {issue.message}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
             {missingNumbers.length > 0 ? (
               <div className="flex items-start gap-2 rounded-md bg-warn-soft p-2 text-[13px] text-warn">
                 <IconWarning />
@@ -3754,9 +3796,10 @@ export function VerifyWorkspace({
                   passageId={item.passageId}
                   count={item.questions.length}
                   passage={passageDrafts.textFor(item.passageId)}
+                  displayText={item.questions.some((question) => question.chemistry !== null && question.chemistry.representation !== 'transcription') ? chemistrySourceText : undefined}
                   passageImage={passageById.get(item.passageId)?.passageImage ?? null}
                   dirty={passageDrafts.dirtyIds.has(item.passageId)}
-                  disabled={runActive}
+                  disabled={runActive || chemistryRepairPending}
                   onPassageChange={(value) => {
                     passageDrafts.setText(item.passageId, value);
                   }}

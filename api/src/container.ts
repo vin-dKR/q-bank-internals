@@ -6,6 +6,7 @@ import {
   ExtractionRunRegistry,
   ExtractionService,
   ExtractionWorker,
+  ExtractionVisualsService,
   type ExtractionJobStore,
   type ExtractionDraftStore,
   type JobQueue,
@@ -16,6 +17,7 @@ import {
 } from './modules/extraction/index.js';
 import {
   QuestionsService,
+  ChemistryRepairService,
   type DiagramDetector,
   type ImageStore,
   type LatexRefiner,
@@ -64,6 +66,7 @@ import { InProcessJobQueue } from './infrastructure/queue/in-process.job-queue.j
 import { BullMqJobQueue } from './infrastructure/queue/bullmq.job-queue.js';
 import { VercelJobQueue } from './infrastructure/queue/vercel.job-queue.js';
 import { PdfToImgRasterizer } from './infrastructure/pdf/pdf-to-img.rasterizer.js';
+import { SharpImageCropper } from './infrastructure/pdf/sharp-image-cropper.js';
 import { TesseractPageOcr } from './infrastructure/pdf/tesseract.page-ocr.js';
 import { OpenAiVisionExtractor } from './infrastructure/ai/openai.vision-extractor.js';
 import { UnconfiguredVisionExtractor } from './infrastructure/ai/unconfigured.vision-extractor.js';
@@ -78,6 +81,7 @@ import { PrismaPromptOverrideStore } from './infrastructure/database/repositorie
 import { OpenAiLatexRefiner } from './infrastructure/ai/openai.latex-refiner.js';
 import { UnconfiguredLatexRefiner } from './infrastructure/ai/unconfigured.latex-refiner.js';
 import { OpenAiDiagramDetector } from './infrastructure/ai/openai.diagram-detector.js';
+import { RdkitSmilesValidator } from './infrastructure/ai/rdkit.smiles-validator.js';
 import { UnconfiguredDiagramDetector } from './infrastructure/ai/unconfigured.diagram-detector.js';
 import { OpenAiQuestionReExtractor } from './infrastructure/ai/openai.question-reextractor.js';
 import { UnconfiguredQuestionReExtractor } from './infrastructure/ai/unconfigured.question-reextractor.js';
@@ -387,23 +391,29 @@ export function createContainer(): Container {
     env.DB_DRIVER === 'mongo'
       ? new MongoBankQuestionStore(getPrisma())
       : new UnconfiguredBankQuestionStore();
+  const imageStore = buildImageStore();
+  const imageCropper = new SharpImageCropper();
+  const chemistryRepairService = new ChemistryRepairService(questions, documents);
+  const smilesValidator = new RdkitSmilesValidator();
   const questionsService = new QuestionsService(
     questions,
     documents,
     bankQuestionStore,
-    buildImageStore(),
+    imageStore,
     buildLatexRefiner(loadPromptOverrides),
     usageService,
     buildDiagramDetector(loadPromptOverrides),
     pagesService,
     buildQuestionReExtractor(loadPromptOverrides),
     buildPaperMetadataExtractor(),
+    chemistryRepairService,
+    smilesValidator,
   );
   const bankPublisher =
     env.DB_DRIVER === 'mongo'
       ? new MongoBankPublisher(getPrisma())
       : new UnconfiguredBankPublisher();
-  const publishService = new PublishService(documents, questions, bankPublisher, taxonomyResolver);
+  const publishService = new PublishService(documents, questions, bankPublisher, taxonomyResolver, smilesValidator);
   const bankService = new BankService(bankQuestionStore);
   const catalogStore =
     env.DB_DRIVER === 'mongo' ? new MongoCatalogStore(getPrisma()) : new UnconfiguredCatalogStore();
@@ -463,6 +473,7 @@ export function createContainer(): Container {
     usageService,
     env.EXTRACTION_PAGES_PER_TASK,
     pagesService,
+    new ExtractionVisualsService(imageStore, imageCropper),
   );
   const ingestionService = new IngestionService(
     driveService,

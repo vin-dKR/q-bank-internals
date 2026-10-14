@@ -29,6 +29,7 @@ export function createQuestionsRouter(service: QuestionsService): Router {
   router.post('/latex-fix/automatic', controller.fixLatexAutomatically);
   router.post('/latex-fix/ai', controller.fixLatexWithAi);
   router.post('/refine', controller.refine);
+  router.post('/chemistry-repair', controller.repairChemistry);
   router.post('/transcribe-area', upload.single('file'), controller.transcribeArea);
   router.post('/paper-metadata', upload.single('file'), controller.extractPaperMetadata);
   router.post('/re-extract', controller.reExtract);

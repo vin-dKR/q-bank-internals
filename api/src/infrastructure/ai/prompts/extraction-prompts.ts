@@ -70,7 +70,11 @@ function chemistryExtractionRules(
  * even with no operator override — otherwise a model often turns an expanded structural drawing into
  * a flat `\\ce{…}` formula that the UI cannot redraw.
  */
-const DRAWN_CHEMISTRY_STRUCTURE_GUARD = `DRAWN CHEMISTRY STRUCTURE (required whenever one appears): When the source visibly draws bonds, double bonds, rings, or atom positions, emit each complete molecule in place as exactly one <smiles>RAW_SMILES</smiles>. The tag contains only one raw SMILES string: never LaTeX, \\ce, a reagent, or a fragment of a connected molecule. An expanded structural formula with every atom written beside drawn bonds is still a diagram, not a \\ce formula. Preserve connectivity, charge, ring positions, and I/II/III/IV order; never simplify it to a formula, chemical name, or prose. For a substituted aromatic ring, trace the ring edges between every pair of substituents before writing SMILES: adjacent is ortho (1,2), one ring atom between is meta (1,3), and opposite is para (1,4). Never choose an isomer from chemical plausibility or a default. Before returning JSON, privately compare each emitted SMILES with the drawing: every visible atom and bond must be represented, and no atom connected in the source may sit outside the tag. For example, a drawn CF3-S(=O)2-O− is <smiles>[O-]S(=O)(=O)C(F)(F)F</smiles>, a drawn phenoxide is <smiles>[O-]c1ccccc1</smiles>, and a meta-methoxyphenol is <smiles>Oc1cccc(OC)c1</smiles>. Use an image fallback only when connectivity or stereochemistry is genuinely unreadable or ambiguous; never guess a SMILES.`;
+const DRAWN_CHEMISTRY_STRUCTURE_GUARD = `DRAWN CHEMISTRY STRUCTURE (required whenever one appears): When the source visibly draws bonds, double bonds, rings, or atom positions, emit each complete molecule in place as exactly one <smiles>RAW_SMILES</smiles>. The tag contains only one raw SMILES string: never LaTeX, \\ce, a reagent, or a fragment of a connected molecule. An expanded structural formula with every atom written beside drawn bonds is still a diagram, not a \\ce formula. Transcribe EVERY depicted species, including simple aromatic rings and EACH reactant, intermediate, product, option pair, matrix entry and worked-solution step. Keep its original position among prose, subpart labels, arrows and above/below reaction conditions. Never replace a readable molecule with "See source diagram", a whole-question image, a formula, a name or an empty slot. Preserve connectivity, charge, isotope, readable stereochemistry, ring positions, and I/II/III/IV order. For a substituted aromatic ring, trace the ring edges between every pair of substituents before writing SMILES: adjacent is ortho (1,2), one ring atom between is meta (1,3), and opposite is para (1,4). Trace EACH ring vertex, including shared fused vertices; never change five-membered rings into six- or seven-membered rings. Expand attached groups completely: COCH3 is acetyl, not carboxyl; NHCOCH3 contains nitrogen, carbonyl carbon, oxygen and methyl carbon. Never choose an isomer or stereochemical form from chemical plausibility or a default. Before returning JSON, privately count all source drawings and emitted SMILES, then compare each one: every visible atom and bond must be represented, and no atom connected in the source may sit outside the tag. For example, a drawn CF3-S(=O)2-O− is <smiles>[O-]S(=O)(=O)C(F)(F)F</smiles>, a drawn phenoxide is <smiles>[O-]c1ccccc1</smiles>, and a meta-methoxyphenol is <smiles>Oc1cccc(OC)c1</smiles>. When one individual molecule is genuinely unreadable or ambiguous, write [Unresolved molecular structure: specific reason] in that exact position and keep every other readable molecule and all question text. The operator may crop that individual structure manually as the final fallback; never guess a SMILES or automatically replace the whole question.`;
+
+const PRINTED_IDENTITY_GUARD = 'PRINTED IDENTITY: preserve the full printed question label including its subsection prefix. Return printed_label (for example "B-3") separately from the numeric question_number. Answer/solution maps use that full label as their key: A-1, B-1 and C-1 are different entries. Separate repeated labels from different exercises/parts into separate section_name scopes. Never flatten an answer table or a worked solution into new question objects.';
+
+const CHEMISTRY_ANNOTATION_GUARD = 'SOURCE ATOM ANNOTATIONS: preserve an atom-adjacent star (*) and its exact atom/position explicitly. Without a printed isotope mass or clear legend, never infer mass 13/14, radioactivity, a wildcard atom or chirality. If SMILES cannot represent the annotation faithfully, keep the readable connectivity plus the literal source annotation and state [Unresolved molecular structure: atom annotation meaning unspecified] at that molecule; never erase the source mark or replace the entire question.';
 
 const TYPE_RULES: Record<string, string> = {
   single_correct:
@@ -258,6 +262,15 @@ function detectedTypeStructureRule(): string {
 /** Source labels are data, not ordinal aliases — this guard wins over editable batch-prompt prose. */
 const SOURCE_OPTION_LABEL_GUARD = `SOURCE OPTION LABEL CONTRACT (authoritative): Copy every printed option marker exactly as it appears. A question may have A–E, 1–5, I–IV, E/F, or any other short source labels; do not convert numeric/Roman/extended labels to A–D, even when there are four choices. Never invent a source-less option panel. The answer must use the same printed label vocabulary as that question's options.`;
 
+const TABULAR_CHOICE_GUARD = `TABULAR CHOICE CONTRACT: A table with A/B/C/D (or similar) as its ROWS and properties as its COLUMNS is an ordinary multiple-choice question, not a matrix-match question. Preserve the source column headings in their printed left-to-right order. Append this to question_text: "Answer pattern (left to right): <heading 1>; <heading 2>; …". For every option, write the row as "<heading 1>: <cell>; <heading 2>: <cell>; …" in exactly that same order. Do not omit a column, turn table-row labels into a new question, or populate columns/match for this format.`;
+
+/**
+ * Mixed coaching modules often print one PYQ label (for example, "NEET-UG 2022") above a run of
+ * questions, rather than repeating it beside each one. This is deliberately code-owned: prompt
+ * overrides for the regular extraction shape must not silently disable provenance detection.
+ */
+const PAGE_PYQ_PROVENANCE_GUARD = `PYQ PROVENANCE (required for EVERY question): Return "is_pyq": true or false on EVERY question object. A visible previous-year exam/year label such as "NEET-UG 2022", "AIPMT 2006", "JEE Main 2021", or "PYQ" makes the labelled question a PYQ. That label establishes the active source provenance for every following question in its contiguous question block on THIS PAGE, including a continuation printed in another column, until another exam/year/PYQ label replaces it; copy the active label's exam into "pyq_exam" and year into "pyq_year" for each of those questions. Do not carry it to a different page. Questions before the first such label, and questions explicitly marked as non-PYQ, must return "is_pyq": false and omit "pyq_exam" and "pyq_year". Never infer PYQ status, exam, or year merely from the target exam/subject in the context. When the page is an operator-configured PYQ segment, return "is_pyq": true for every question and read any printed source exam/year you can see.`;
+
 /**
  * The question-extraction prompt for one page of a document. The model classifies each question's own
  * type + difficulty (see {@link classificationRule}); a concrete operator topic-config type is a
@@ -287,9 +300,13 @@ export function questionPrompt(
     expectedType ? '' : detectedTypeStructureRule(),
     ...chemistryExtractionRules(document, overrides, binding?.subject),
     DRAWN_CHEMISTRY_STRUCTURE_GUARD,
+    CHEMISTRY_ANNOTATION_GUARD,
     document.answerLayout === 'inline' ? resolvePrompt(overrides, 'inlineAnswer') : '',
     resolvePyq(document, binding) ? resolvePrompt(overrides, 'pyq') : '',
+    PAGE_PYQ_PROVENANCE_GUARD,
     SOURCE_OPTION_LABEL_GUARD,
+    TABULAR_CHOICE_GUARD,
+    PRINTED_IDENTITY_GUARD,
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -351,6 +368,7 @@ export function transcribeSourceAreaPrompt(target: 'matrix_column_title' | 'matr
     'TRANSCRIBE RULES:\n1. Read ONLY what is visibly inside the selected rectangle, in its printed order. Never borrow neighbouring rows/columns, infer missing words, correct a statement, or add a label that is not part of the requested field.\n2. Preserve math precisely using LaTeX delimiters such as \\(...\\) or \\[...\\]; preserve signs, subscripts, superscripts, fractions, arrows, units, and punctuation.\n3. Chemical formulas/ions/reactions use mhchem inside inline math, e.g. \\(\\ce{H2O}\\), \\(\\ce{SO4^2-}\\), \\(\\ce{2H2 + O2 -> 2H2O}\\). Do not balance or repair what is printed.\n4. If the selected area is unreadable or contains only a non-text diagram, return an empty string.\n5. Return valid JSON only — no prose, markdown fence, or extra keys.',
     'A drawn chemical structure counts as readable content: do not discard it as a non-text diagram. Encode it as <smiles>RAW_SMILES</smiles> under the drawn-structure rule below.',
     DRAWN_CHEMISTRY_STRUCTURE_GUARD,
+    CHEMISTRY_ANNOTATION_GUARD,
   ].join('\n\n');
 }
 
@@ -363,6 +381,7 @@ export function transcribeSourceAreaPrompt(target: 'matrix_column_title' | 'matr
 export function reExtractQuestionPrompt(
   target: {
     questionNumber: number | null;
+    printedLabel?: string | null | undefined;
     stemHint: string;
     questionType: string | null;
     sourceKind?: 'question' | 'answer' | 'solution' | 'companion';
@@ -407,6 +426,7 @@ export function reExtractQuestionPrompt(
             : '';
   return [
     sourceIntro,
+    target.printedLabel ? `EXACT TARGET LABEL: ${target.printedLabel}. Read only this printed identity; another subsection with the same numeric ordinal is a different question.` : '',
     targetReadInstruction,
     reExtractOverrideRules(overrides, {
       sourceKind,
@@ -430,9 +450,10 @@ export function reExtractQuestionPrompt(
 4. columns/match: leave "columns" as [] and OMIT "match" UNLESS this is a MATRIX MATCH question (see the type-specific rule).
 5. answer: use "" when the page does not indicate the correct answer (question papers usually do not).
 6. explanation: use null when no worked solution is printed on this page.
-7. Preserve all math as LaTeX, and write any chemistry (formulae, ions, reactions) with mhchem \\(\\ce{...}\\) — e.g. \\(\\ce{H2O}\\), \\(\\ce{SO4^2-}\\), \\(\\ce{2H2 + O2 -> 2H2O}\\); one whole reaction per \\ce, keep units/quantities as ordinary math (not \\ce), and never wrap prose words in \\ce. A molecule DRAWN as a 2-D diagram (a benzene ring, a skeletal/organic structure) is written inline as <smiles>RAW_SMILES</smiles> — e.g. <smiles>c1ccccc1</smiles>, <smiles>Oc1ccccc1</smiles> — never as \\ce and never wrapped in \\( \\); leave a wedge/dash-stereo or unreadable drawing for image. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`,
+7. Preserve all math as LaTeX, and write any chemistry (formulae, ions, reactions) with mhchem \\(\\ce{...}\\) — e.g. \\(\\ce{H2O}\\), \\(\\ce{SO4^2-}\\), \\(\\ce{2H2 + O2 -> 2H2O}\\); keep units/quantities as ordinary math (not \\ce), and never wrap prose words in \\ce. Every molecule DRAWN as a 2-D diagram is written inline as <smiles>RAW_SMILES</smiles>, including readable wedge/dash stereochemistry, at its exact source position among reaction arrows and conditions. Follow the drawn-structure rule for an individually unreadable molecule. Return valid, complete JSON only — no prose, double-quoted keys/strings, no trailing commas.`,
     sourceRule,
     DRAWN_CHEMISTRY_STRUCTURE_GUARD,
+    CHEMISTRY_ANNOTATION_GUARD,
     sourceKind === 'question' && isMatrix
       ? 'MATRIX MATCH: put ONLY the instruction/stem in "stem" — do NOT copy the columns into it. Fill "columns" — an array of EVERY printed column in order (usually two, sometimes three), each { "title": the heading, "entries": [ { "label": the printed label e.g. "A"/"p"/"t", "body": that entry\'s text with math as LaTeX } ] }. ALSO fill "options" with every printed multiple-choice answer in its printed order. Each option label must be that exact source label (for example "1", "5", "E", "F", "I", or "iv"), never a normalized A–D label; its body is that choice\'s full matching text exactly as printed. Return "match" for every relation that is clearly readable: copy a printed key when present, otherwise solve only unambiguous relations from the table. If any relation is unreadable or ambiguous, leave that mapping absent but still return every readable stem, column, and printed option; never return a blank object. When printed choices exist, write "answer" as only the visibly marked source choice label, never the expanded matching. With no printed choices, use mapping text as "answer" only for a genuine direct-response matrix. Never reconstruct or invent unreadable or missing printed choices, and never generate a new option panel.'
       : sourceKind === 'question'
@@ -449,6 +470,7 @@ export function reExtractQuestionPrompt(
 
 type GroupReExtractPromptMember = {
   questionNumber: number | null;
+  printedLabel?: string | null;
   stemHint: string;
   questionType: string | null;
 };
@@ -515,7 +537,7 @@ export function reExtractGroupPrompt(
       const number =
         member.questionNumber === null ? 'unnumbered' : `question ${String(member.questionNumber)}`;
       const stem = member.stemHint.replace(/\s+/g, ' ').trim().slice(0, 72);
-      return `${String(index)} | ${number} | fixed type: ${member.questionType ?? 'unknown'}${stem ? ` | begins: "${stem}"` : ''}`;
+      return `${String(index)} | ${member.printedLabel ?? number} | fixed type: ${member.questionType ?? 'unknown'}${stem ? ` | begins: "${stem}"` : ''}`;
     })
     .join('\n');
 
@@ -533,6 +555,7 @@ export function reExtractGroupPrompt(
       `Return ONLY this exact JSON shape:\n\n{\n  "passage": "the FULL shared passage VERBATIM, math as LaTeX like \\\\( \\\\sqrt{3} \\\\)"\n}`,
       'RULES:\n1. Copy the complete shared passage exactly once; do not include any numbered sub-question.\n2. Preserve math as LaTeX. Write chemistry formulae/reactions with mhchem, for example \\(\\ce{H2O}\\) and \\(\\ce{2H2 + O2 -> 2H2O}\\).\n3. Return valid JSON only — no prose, markdown fence, or extra keys.',
       DRAWN_CHEMISTRY_STRUCTURE_GUARD,
+      CHEMISTRY_ANNOTATION_GUARD,
     ].join('\n\n');
   }
 
@@ -569,13 +592,14 @@ export function reExtractGroupPrompt(
     `MEMBER TYPE CONTRACTS:\n${structuralRules}`,
     sourceRule,
     DRAWN_CHEMISTRY_STRUCTURE_GUARD,
+    CHEMISTRY_ANNOTATION_GUARD,
     `RE-EXTRACT RULES:
-1. Return one object for EVERY target member and use its exact member_index. Keep question_number as printed (or null); never use a matrix row label or option label as a question number.
+1. Return one object for EVERY target member and use its exact member_index and full printed_label. Keep question_number as its numeric ordinal (or null); never use a matrix row label or option label as a question number.
 2. passage is the FULL shared passage exactly once, VERBATIM. NEVER repeat it inside stem. stem contains ONLY the member's own question.
 3. options contains only that member's printed answer choices. Labels follow printed order; normalize bare (1)(2)(3)(4) to A/B/C/D only when they are actual choices. Never turn matrix column labels into options.
 4. columns is [] and match is omitted for every non-matrix child. For a matrix child, preserve the full table AND the separate selectable answer options; do not flatten columns into stem/options.
 5. answer is "" if this source does not state it. explanation is null if this source does not print working. Never guess either one.
-6. Preserve math as LaTeX. Write chemistry formulae/reactions with mhchem, for example \\(\\ce{H2O}\\) and \\(\\ce{SO4^2-}\\). For an unreadable drawn molecule, preserve it for an image rather than inventing SMILES.
+6. Preserve math as LaTeX. Write chemistry formulae/reactions with mhchem, for example \\(\\ce{H2O}\\) and \\(\\ce{SO4^2-}\\). Transcribe every readable drawn molecule as SMILES; leave an explicit unresolved marker for an individually unreadable structure, following the drawn-structure rule.
 7. Return valid, complete JSON only — no prose, markdown fence, or trailing commas.`,
   ].join('\n\n');
 }
@@ -605,6 +629,8 @@ export function answerPrompt(
     typeRule ? `ANSWER TYPE-SPECIFIC RULE:\n${typeRule}` : '',
     answerChemistryRule,
     DRAWN_CHEMISTRY_STRUCTURE_GUARD,
+    CHEMISTRY_ANNOTATION_GUARD,
+    PRINTED_IDENTITY_GUARD,
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -631,6 +657,8 @@ export function solutionPrompt(
     typeRule ? `ANSWER TYPE-SPECIFIC RULE:\n${typeRule}` : '',
     ...chemistryExtractionRules(document, overrides, scope?.subject),
     DRAWN_CHEMISTRY_STRUCTURE_GUARD,
+    CHEMISTRY_ANNOTATION_GUARD,
+    PRINTED_IDENTITY_GUARD,
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -677,6 +705,8 @@ export function companionPrompt(
       : '',
     ...chemistryExtractionRules(document, overrides, scope?.subject),
     DRAWN_CHEMISTRY_STRUCTURE_GUARD,
+    CHEMISTRY_ANNOTATION_GUARD,
+    PRINTED_IDENTITY_GUARD,
   ]
     .filter(Boolean)
     .join('\n\n');

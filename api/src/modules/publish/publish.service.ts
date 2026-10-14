@@ -14,7 +14,7 @@ import {
 } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
-import type { QuestionRepository } from '../questions/index.js';
+import { chemistrySmilesIssues, chemistrySourceReviewIssues, type QuestionRepository, type SmilesValidator } from '../questions/index.js';
 import type { QuestionTaxonomyInput, ResolvedTaxonomy, TaxonomyResolver } from '../masters/index.js';
 import type { BankPublisher, BankQuestion } from './bank-publisher.js';
 
@@ -31,6 +31,7 @@ export class PublishService {
     private readonly questions: QuestionRepository,
     private readonly bank: BankPublisher,
     private readonly taxonomy: TaxonomyResolver,
+    private readonly smilesValidator: SmilesValidator | null = null,
   ) {}
 
   async publishDocument(documentId: string): Promise<{ published: number }> {
@@ -54,6 +55,7 @@ export class PublishService {
     // eduents renderer/counter needs no change. group_id == the passage's stable id.
     const passages = await this.questions.findPassagesByDocument(documentId);
     const passageById = new Map(passages.map((passage) => [passage.id, passage] as const));
+    for (const question of questions) await assertChemistryPublishable(question, this.smilesValidator, question.passageId === null ? null : passageById.get(question.passageId));
 
     // Resolve each question's taxonomy strings to dictionary FKs before mapping. The resolver caches
     // per dimension and dedupes concurrent creates, so this stays a handful of reads even across a
@@ -103,8 +105,18 @@ export class PublishService {
         });
       }
 
+      let projectedOptions = question.options;
       try {
-        matrixProjectionForPublish(question);
+        projectedOptions = matrixProjectionForPublish(question)?.options ?? question.options;
+      } catch (caught) {
+        issues.push({
+          questionId: question.id,
+          questionNumber: question.questionNumber,
+          message: caught instanceof Error ? caught.message : String(caught),
+        });
+      }
+      try {
+        await assertChemistryPublishable({ ...question, options: projectedOptions }, this.smilesValidator, passage);
       } catch (caught) {
         issues.push({
           questionId: question.id,
@@ -154,6 +166,18 @@ const PUBLISHABLE_STATUSES: ReadonlySet<Document['status']> = new Set([
   'approved',
   'completed',
 ]);
+
+async function assertChemistryPublishable(question: Question, validator: SmilesValidator | null, passage?: Passage | null): Promise<void> {
+  if (!question.chemistry) return;
+  if (question.chemistry.status === 'needs_review' ||
+    (question.chemistry.representation === 'transcription' && question.chemistry.status !== 'transcription_reviewed')) {
+    throw errors.chemistryNotPublishable(question.id, question.chemistry.representation === 'transcription' ? 'its extracted chemistry still requires review.' : 'its source images still require reviewer acceptance.');
+  }
+  const issues = chemistrySourceReviewIssues(question, passage);
+  if (issues.length > 0) throw errors.chemistryNotPublishable(question.id, issues.join(' '));
+  const smilesIssues = await chemistrySmilesIssues(question, validator, passage);
+  if (smilesIssues.length > 0) throw errors.chemistryNotPublishable(question.id, smilesIssues.join(' '));
+}
 
 /** camelCase → snake_case, so `pyqExamName` becomes the bank's `pyq_exam_name` column style. */
 function snakeCase(key: string): string {
@@ -322,6 +346,7 @@ function toBankQuestion(
   }
   const matrix = matrixProjectionForPublish(question);
   const options = matrix?.options ?? question.options;
+  // Source/graph acceptance is checked by the service before projecting rows into bank format.
   const answer = matrix?.answer ?? answerForBank(question);
   return {
     // The shared admin bank: ingest publishes for every org to read. eduents' tenancy read filter

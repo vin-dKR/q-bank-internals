@@ -1,6 +1,7 @@
 import type { RequestHandler } from 'express';
 import {
   BatchUpdateQuestionsSchema,
+  ChemistryRepairRequestSchema,
   DetectFiguresBatchRequestSchema,
   DetectFiguresRequestSchema,
   GroupQuestionsSchema,
@@ -25,6 +26,7 @@ import type { QuestionsService } from './questions.service.js';
 
 export function createQuestionsController(service: QuestionsService): {
   list: RequestHandler;
+  repairChemistry: RequestHandler;
   scanLatex: RequestHandler;
   checkLatexField: RequestHandler;
   fixLatexAutomatically: RequestHandler;
@@ -49,6 +51,11 @@ export function createQuestionsController(service: QuestionsService): {
     list: asyncHandler(async (req, res) => {
       const { documentId } = parseOrThrow(QuestionListQuerySchema, req.query);
       ok(res, await service.listByDocument(documentId));
+    }),
+
+    repairChemistry: asyncHandler(async (req, res) => {
+      const { documentId, questionId } = parseOrThrow(ChemistryRepairRequestSchema, req.body);
+      ok(res, await service.repairChemistry(documentId, questionId));
     }),
 
     scanLatex: asyncHandler(async (req, res) => {
@@ -86,7 +93,7 @@ export function createQuestionsController(service: QuestionsService): {
     transcribeArea: asyncHandler(async (req, res) => {
       if (!req.file) throw errors.uploadMissingFile();
       const { documentId, target } = parseOrThrow(TranscribeAreaRequestSchema, req.body);
-      ok(res, { text: await service.transcribeSourceArea(documentId, req.file.buffer, target) });
+      ok(res, await service.transcribeSourceArea(documentId, req.file.buffer, target));
     }),
 
     reExtract: asyncHandler(async (req, res) => {

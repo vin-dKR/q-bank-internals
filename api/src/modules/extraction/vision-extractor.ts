@@ -1,8 +1,9 @@
-import type { Document, MatchData, PageRange } from '@ingest/contracts';
+import type { ChemistryExtraction, Document, ImageCrop, MatchData, PageRange } from '@ingest/contracts';
 import type { AiTokenUsage } from '../usage/index.js';
+import type { SourcePageLayout } from './source-page-layout.js';
 
 /** One rasterized PDF page handed to the vision model. */
-export type PageImage = { pageNumber: number; png: Buffer };
+export type PageImage = { pageNumber: number; png: Buffer; layout?: SourcePageLayout | null; nativeChoiceKeys?: Record<string, string> | null };
 
 /** One masters dictionary row as presented to the model (its id, display name, canonical key + kind). */
 export type MasterOption = { id: string; name: string; key: string; kind: string | null };
@@ -20,7 +21,13 @@ export type MastersSnapshot = { questionType: MasterOption[]; level: MasterOptio
  * parsing stay faithful. `answer` is filled in later, during the answer merge.
  */
 export type ExtractedQuestion = {
+  imageCrops?: ImageCrop[];
   questionNumber: number | null;
+  /** Exact printed question identity, including an exercise prefix; absent on older draft runs. */
+  printedLabel?: string | null;
+  chemistry?: ChemistryExtraction | null;
+  /** Normalized source question bounds, in the persisted SourceRegion bbox convention. */
+  sourceBbox?: [number, number, number, number];
   questionText: string;
   options: string[];
   answer: string | null;
@@ -35,6 +42,12 @@ export type ExtractedQuestion = {
   /** The model's 0–1 confidence in its difficulty classification; null for legacy/custom prompt replies. */
   difficultyConfidence: number | null;
   sourcePage: number;
+  /**
+   * Whether the model identified this as a previous-year question from a source label on this page.
+   * This is optional for backwards-compatible saved drafts; an operator-configured PYQ segment still
+   * wins in the worker.
+   */
+  isPyq?: boolean;
   /**
    * The SOURCE exam + year the model read off the page for a PYQ segment (e.g. "NEET" / "2019"), or
    * null when the segment is not PYQ or the page did not print them. Distinct from the target
@@ -81,6 +94,18 @@ export type AnswerEntry = {
   answer: string | null;
   explanation: string | null;
   answerSource?: AnswerSource;
+  /** Equal-priority sources disagree, so this entry must not supply an automatically chosen answer. */
+  answerConflict?: boolean;
+  /** Full numbered source blocks, in normalized left/top/right/bottom coordinates. */
+  sourceRegions?: Array<[number, number, number, number]>;
+  sourceVisualKinds?: Partial<Record<'answer' | 'explanation', 'molecule' | 'reaction' | 'figure'>>;
+  /** Drawn species counted independently, including fields whose primary SMILES were omitted. */
+  sourceMoleculeCounts?: ChemistryExtraction['sourceMoleculeCounts'];
+  chemistryVisuals?: ChemistryExtraction['visuals'];
+  chemistryIssues?: string[];
+  molecularAudits?: NonNullable<ChemistryExtraction['molecularAudits']>;
+  unresolvedSourceFields?: Array<'answer' | 'explanation'>;
+  imageCrops?: ImageCrop[];
 };
 
 function hasAnswer(entry: AnswerEntry): boolean {
@@ -98,21 +123,31 @@ function answerSourceRank(source: AnswerSource | undefined): number {
 /**
  * Combine repeated page fragments for one question. An answer key is authoritative over a worked
  * solution's final-answer restatement, while a solution always contributes any non-duplicate working.
- * Equal-priority sources retain their first value in PDF order rather than letting a later OCR pass
- * silently flip it.
+ * Equal-priority sources that disagree leave the answer unresolved. A later source at that same
+ * priority cannot erase the conflict; only a higher-priority answer key can resolve a solution conflict.
  */
 export function mergeAnswerEntries(
   existing: AnswerEntry | undefined,
   incoming: AnswerEntry,
 ): AnswerEntry {
   if (!existing) return incoming;
-  const chosen = !hasAnswer(existing)
+  const existingRank = answerSourceRank(existing.answerSource);
+  const incomingRank = answerSourceRank(incoming.answerSource);
+  const chosen = existing.answerConflict && (existingRank >= incomingRank || !hasAnswer(incoming))
+    ? existing
+    : incoming.answerConflict && incomingRank >= existingRank
+      ? incoming
+      : !hasAnswer(existing)
     ? incoming
     : !hasAnswer(incoming)
       ? existing
-      : answerSourceRank(incoming.answerSource) > answerSourceRank(existing.answerSource)
+      : incomingRank > existingRank
         ? incoming
         : existing;
+  const answerConflict = chosen.answerConflict === true || (
+    hasAnswer(existing) && hasAnswer(incoming) && existingRank === incomingRank &&
+    existing.answer?.trim().toUpperCase() !== incoming.answer?.trim().toUpperCase()
+  );
   const prior = existing.explanation?.trim() ?? '';
   const next = incoming.explanation?.trim() ?? '';
   const explanation = !prior
@@ -122,10 +157,59 @@ export function mergeAnswerEntries(
       : next.includes(prior)
         ? next
         : `${prior}\n\n${next}`;
+  // Metadata must follow the explanation fragment that survives prose deduplication. Keeping both
+  // source ledgers for a repeated or superseded block would count every drawn molecule twice.
+  const explanationSources = !prior
+    ? !next && (existing.chemistryVisuals?.some((visual) => visual.field === 'explanation') || existing.unresolvedSourceFields?.includes('explanation'))
+      ? [existing]
+      : [incoming]
+    : !next || prior === next || prior.includes(next)
+      ? [existing]
+      : next.includes(prior)
+        ? [incoming]
+        : [existing, incoming];
+  const answerVisuals = chosen.chemistryVisuals?.filter((visual) => visual.field === 'answer') ?? [];
+  const explanationVisuals = explanationSources.flatMap((entry) => entry.chemistryVisuals?.filter((visual) => visual.field === 'explanation') ?? []);
+  const chemistryVisuals = [...new Map([...answerVisuals, ...explanationVisuals].map((visual) => [visual.id, visual])).values()];
+  const sourceRegions = [...new Map([...(existing.sourceRegions ?? []), ...(incoming.sourceRegions ?? [])].map((box) => [box.join(':'), box])).values()];
+  const chemistryIssues = [...new Set([...(existing.chemistryIssues ?? []), ...(incoming.chemistryIssues ?? [])])];
+  const molecularAudits = [
+    ...(chosen.molecularAudits?.filter((audit) => audit.fieldPath.endsWith('/answer')) ?? []),
+    ...explanationSources.flatMap((entry) => entry.molecularAudits?.filter((audit) => !audit.fieldPath.endsWith('/answer')) ?? []),
+  ];
+  const selectedUrls = new Set(chemistryVisuals.flatMap((visual) => visual.cropUrl ? [visual.cropUrl] : []));
+  const imageCrops = [...(existing.imageCrops ?? []), ...(incoming.imageCrops ?? [])].filter((crop) => selectedUrls.has(crop.url));
+  const explanationKind = [...explanationSources].reverse().find((entry) => entry.sourceVisualKinds?.explanation)?.sourceVisualKinds?.explanation;
+  const explanationCounts = explanationSources.flatMap((entry) => entry.sourceMoleculeCounts?.explanation !== undefined ? [entry.sourceMoleculeCounts.explanation] : []);
+  const overlappingCounts = [existing, incoming].flatMap((entry) => entry.sourceMoleculeCounts?.explanation !== undefined ? [entry.sourceMoleculeCounts.explanation] : []);
+  const explanationCount = prior && next && (prior === next || prior.includes(next) || next.includes(prior)) && overlappingCounts.length
+    ? Math.max(...overlappingCounts)
+    : explanationCounts.length ? explanationCounts.reduce((sum, count) => sum + count, 0) : undefined;
+  const sourceMoleculeCounts = {
+    ...(chosen.sourceMoleculeCounts?.answer !== undefined ? { answer: chosen.sourceMoleculeCounts.answer } : {}),
+    ...(explanationCount !== undefined ? { explanation: explanationCount } : {}),
+  };
+  const unresolvedSourceFields = [...new Set([
+    ...(chosen.unresolvedSourceFields?.filter((field) => field === 'answer') ?? []),
+    ...explanationSources.flatMap((entry) => entry.unresolvedSourceFields?.filter((field) => field === 'explanation') ?? []),
+  ])];
+  const sourceVisualKinds = {
+    ...(chosen.sourceVisualKinds?.answer ? { answer: chosen.sourceVisualKinds.answer } : {}),
+    ...(explanationKind ? { explanation: explanationKind } : {}),
+  };
   return {
-    answer: hasAnswer(chosen) ? chosen.answer : null,
+    answer: !answerConflict && hasAnswer(chosen) ? chosen.answer : null,
     explanation,
     ...(chosen.answerSource ? { answerSource: chosen.answerSource } : {}),
+    ...(answerConflict ? { answerConflict: true } : {}),
+    ...(sourceRegions.length ? { sourceRegions } : {}),
+    ...(chemistryVisuals.length ? { chemistryVisuals } : {}),
+    ...(chemistryIssues.length ? { chemistryIssues } : {}),
+    ...(molecularAudits.length ? { molecularAudits } : {}),
+    ...(imageCrops.length ? { imageCrops } : {}),
+    ...(Object.keys(sourceVisualKinds).length ? { sourceVisualKinds } : {}),
+    ...(Object.keys(sourceMoleculeCounts).length ? { sourceMoleculeCounts } : {}),
+    ...(unresolvedSourceFields.length ? { unresolvedSourceFields } : {}),
   };
 }
 
@@ -140,6 +224,8 @@ export type AnswerSheet = { sectionName: string | null; entries: Record<string, 
  * section name.
  */
 export type AnswerExtractionScope = {
+  /** Exact source identities requested by the owning question block; enables safe local key reading. */
+  expectedPrintedLabels?: string[];
   /** Stable topic/leaf key used by {@link mergeAnswers}; not merely a display heading. */
   sectionName: string;
   /** The exact type fixed on the corresponding question leaf; null means mixed/unknown. */
@@ -153,7 +239,7 @@ export type AnswerExtractionScope = {
 };
 
 /** Extraction results paired with the token spend the model reported producing them. */
-export type QuestionExtraction = { questions: ExtractedQuestion[]; usage: AiTokenUsage };
+export type QuestionExtraction = { questions: ExtractedQuestion[]; usage: AiTokenUsage; sheets?: AnswerSheet[] };
 export type AnswerExtraction = { sheets: AnswerSheet[]; usage: AiTokenUsage };
 
 /**

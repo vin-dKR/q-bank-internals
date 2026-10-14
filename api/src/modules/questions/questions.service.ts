@@ -1,5 +1,6 @@
 import type {
   BatchUpdateQuestionsResult,
+  ChemistryRepairResult,
   DetectFiguresSource,
   DetectedFigure,
   DetectedFigures,
@@ -21,10 +22,13 @@ import type {
   ReExtractSource,
   ReExtractSupportingSources,
   TranscribeAreaTarget,
+  TranscribedArea,
+  TranscribeQuestionRegionResponse,
   UpdatePassage,
   UpdateQuestion,
 } from '@ingest/contracts';
 import {
+  QuestionSchema,
   findMatrixChoiceForMatch,
   matrixChoiceMappingText,
   mergeMatrixKeyWithAnswer,
@@ -41,9 +45,14 @@ import { detectLatexInField } from '../quality/latex-rules.js';
 import { automaticLatexRepair, fullyAutomaticLatexRepair, preservesExtractedContent, questionLatexPatch, stagedLatexFields, stagedLatexIssues, type StagedLatexField } from './staged-latex.js';
 import type { AiTokenUsage, UsageService } from '../usage/index.js';
 import type { DocumentRepository } from '../documents/index.js';
+import { normalizePrintedQuestionLabel } from '../extraction/index.js';
 import type { BankQuestionStore } from '../bank/index.js';
 import type { DiagramDetector } from './diagram-detector.js';
 import { matchFiguresToQuestions } from './figure-matcher.js';
+import { chemistryReviewPatch } from './chemistry-source-review.js';
+import { chemistrySmilesIssues } from './chemistry-smiles-validation.js';
+import type { SmilesValidator } from './smiles-validator.js';
+import type { ChemistryRepairService } from './chemistry-repair.service.js';
 import type { ImageStore } from './image-store.js';
 import type { LatexRefiner } from './latex-refiner.js';
 import type { PageRenderer } from './page-renderer.js';
@@ -470,6 +479,8 @@ export class QuestionsService {
     private readonly pages: PageRenderer,
     private readonly reExtractor: QuestionReExtractor,
     private readonly paperMetadata: PaperMetadataExtractor,
+    private readonly chemistryRepair?: ChemistryRepairService,
+    private readonly smilesValidator: SmilesValidator | null = null,
   ) {}
 
   /** The questions extracted from a single document (PDF reading order) + the passages they reference. */
@@ -479,6 +490,12 @@ export class QuestionsService {
       this.questions.findPassagesByDocument(documentId),
     ]);
     return { questions, passages };
+  }
+
+  /** Recover source-backed text and companion images in place, preserving existing question rows. */
+  repairChemistry(documentId: string, questionId?: string): Promise<ChemistryRepairResult> {
+    if (!this.chemistryRepair) throw errors.validation({ message: 'Chemistry recovery is unavailable in this server configuration.' });
+    return this.chemistryRepair.repair(documentId, questionId);
   }
 
   /** Scan current staged text on demand. Session and Verify queries start this after extraction. */
@@ -511,7 +528,7 @@ export class QuestionsService {
     destination: 'stem' | 'option' | 'answer' | 'solution';
     optionIndex?: number | undefined;
     source?: ReExtractSource | undefined;
-  }): Promise<{ text: string }> {
+  }): Promise<TranscribeQuestionRegionResponse> {
     const [question, document] = await Promise.all([
       this.questions.findById(input.questionId),
       this.documents.findById(input.documentId),
@@ -555,14 +572,14 @@ export class QuestionsService {
       throw errors.validation({ message: 'Select a larger area of the page and try again.' });
     }
     const crop = await sharp(png).extract({ left, top, width: cropWidth, height: cropHeight }).png().toBuffer();
-    const { text, usage } = await this.reExtractor.transcribeRegion({ png: crop, destination: input.destination });
+    const { text, usage, molecularAudits, chemistryIssues } = await this.reExtractor.transcribeRegion({ png: crop, destination: input.destination });
     try {
       await this.usage.recordUsage({ source: 'reextract', documentId: input.documentId, ...usage });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn({ err: message }, 'Failed to record selected-region transcription usage');
     }
-    return { text };
+    return { text, ...(molecularAudits?.length ? { molecularAudits: molecularAudits.map((audit) => ({ ...audit, sourceDocumentId: source.documentId, sourcePage: source.page })) } : {}), ...(chemistryIssues?.length ? { chemistryIssues } : {}) };
   }
 
   /** Apply only mechanical repairs shared with Data Quality, skipping prose that needs judgment. */
@@ -664,7 +681,7 @@ export class QuestionsService {
     }
     const latest = await this.currentLatexField(documentId, target);
     if (!latest || latest.text !== target.text) throw new Error('This passage changed during the LaTeX fix. Refresh and retry.');
-    await this.questions.updatePassage(target.key.slice(2), { text });
+    await this.updatePassage(target.key.slice(2), { text });
   }
 
   /** Apply verify-screen edits (image flags/urls, stem, options, answer) to a question. */
@@ -674,7 +691,20 @@ export class QuestionsService {
     // Normalize before the one repository write, so batch and ordinary PATCH share exactly the same
     // table/choice invariant and a concurrent edit cannot be overwritten by a second repair write.
     const normalized = matrixNormalizationPatch(matrixStateAfterPatch(current, patch));
-    return this.questions.update(id, { ...patch, ...normalized });
+    const normalizedPatch = { ...patch, ...normalized };
+    const passages = current.chemistry && current.passageId !== null
+      ? await this.questions.findPassagesByDocument(current.documentId) : [];
+    const passage = passages.find((candidate) => candidate.id === current.passageId);
+    const chemistry = chemistryReviewPatch(current, normalizedPatch, passage);
+    const nextChemistry = chemistry.chemistry === undefined
+      ? normalizedPatch.chemistry === undefined ? current.chemistry : normalizedPatch.chemistry
+      : chemistry.chemistry;
+    if (nextChemistry?.representation === 'transcription' && nextChemistry.status === 'transcription_reviewed') {
+      const next = QuestionSchema.parse({ ...current, ...normalizedPatch, ...chemistry });
+      const issues = await chemistrySmilesIssues(next, this.smilesValidator, passage);
+      if (issues.length > 0) throw errors.chemistryReviewInvalid(issues.join(' '));
+    }
+    return this.questions.update(id, { ...normalizedPatch, ...chemistry });
   }
 
   /**
@@ -696,7 +726,16 @@ export class QuestionsService {
   }
 
   /** Apply verify-screen edits (text / shared image) to one comprehension passage — fixed in ONE place. */
-  updatePassage(id: string, patch: UpdatePassage): Promise<Passage> {
+  async updatePassage(id: string, patch: UpdatePassage): Promise<Passage> {
+    const current = await this.questions.findPassageById(id);
+    if (!current) throw errors.validation({ message: 'The shared passage no longer exists.' });
+    if ((patch.text !== undefined && patch.text !== current.text) ||
+      (patch.passageImage !== undefined && patch.passageImage !== current.passageImage)) {
+      const members = (await this.questions.findByDocument(current.documentId)).filter((question) => question.passageId === id);
+      // Invalidate before the passage write, so a failed update cannot leave changed source content
+      // attached to an accepted transcription. Repeating the invalidation is harmless.
+      await this.invalidateChemistryReviews(members);
+    }
     return this.questions.updatePassage(id, patch);
   }
 
@@ -705,7 +744,9 @@ export class QuestionsService {
    * a page whose passage the extractor missed). Creates the shared passage and links the questions; the
    * operator then re-extracts the group to read the passage off the page.
    */
-  groupQuestions(documentId: string, questionIds: string[]): Promise<Passage> {
+  async groupQuestions(documentId: string, questionIds: string[]): Promise<Passage> {
+    const members = (await this.questions.findByDocument(documentId)).filter((question) => questionIds.includes(question.id));
+    await this.invalidateChemistryReviews(members);
     return this.questions.groupQuestions(
       documentId,
       makePassageId(documentId, questionIds),
@@ -714,8 +755,21 @@ export class QuestionsService {
   }
 
   /** Dissolve a comprehension group back into standalone questions (the verify "ungroup" action). */
-  ungroupPassage(passageId: string): Promise<void> {
+  async ungroupPassage(passageId: string): Promise<void> {
+    const passage = await this.questions.findPassageById(passageId);
+    if (passage) {
+      const members = (await this.questions.findByDocument(passage.documentId)).filter((question) => question.passageId === passageId);
+      await this.invalidateChemistryReviews(members);
+    }
     return this.questions.ungroupPassage(passageId);
+  }
+
+  private async invalidateChemistryReviews(members: readonly Question[]): Promise<void> {
+    for (const member of members) {
+      if (member.chemistry && member.chemistry.status !== 'needs_review') {
+        await this.questions.update(member.id, { chemistry: { ...member.chemistry, status: 'needs_review' } });
+      }
+    }
   }
 
   /**
@@ -1093,15 +1147,17 @@ export class QuestionsService {
     questionType: string | null,
   ): Promise<QuestionReExtraction> {
     const png = await this.pages.renderPage(source.documentId, source.page);
-    return this.reExtractor.reExtract({
+    const fresh = await this.reExtractor.reExtract({
       png,
       questionNumber: question.questionNumber,
+      printedLabel: question.printedLabel,
       stemHint: question.stem,
       questionType,
       sourceKind: source.sourceKind,
       ...(source.fieldTarget ? { fieldTarget: source.fieldTarget } : {}),
       ...(source.inlineAnswers ? { inlineAnswers: true } : {}),
     });
+    return { ...fresh, ...(fresh.molecularAudits?.length ? { molecularAudits: fresh.molecularAudits.map((audit) => ({ ...audit, sourceDocumentId: source.documentId, sourcePage: source.page })) } : {}) };
   }
 
   /** A missing/illegible optional supporting page must never discard the selected question's read. */
@@ -1204,6 +1260,16 @@ export class QuestionsService {
       ),
       match: primary.match,
     };
+    const answerOwner = [answerRead, solutionRead, primary].find((read) => read?.answer.trim());
+    const explanationOwner = [solutionRead, answerRead, primary].find((read) => read?.explanation?.trim());
+    const audits = [
+      ...(primary.molecularAudits?.filter((audit) => audit.fieldPath !== '/answer' && audit.fieldPath !== '/explanation') ?? []),
+      ...(answerOwner?.molecularAudits?.filter((audit) => audit.fieldPath === '/answer') ?? []),
+      ...(explanationOwner?.molecularAudits?.filter((audit) => audit.fieldPath === '/explanation') ?? []),
+    ];
+    const issues = [...new Set([primary, answerOwner, explanationOwner].flatMap((read) => read?.chemistryIssues ?? []))];
+    if (audits.length) merged.molecularAudits = audits;
+    if (issues.length) merged.chemistryIssues = issues;
     try {
       await this.usage.recordUsage({ source: 'reextract', documentId, ...usage });
     } catch (error) {
@@ -1267,11 +1333,12 @@ export class QuestionsService {
     const pngs = await Promise.all(
       sourcePages.map((sourcePage) => this.pages.renderPage(resolvedSource.documentId, sourcePage)),
     );
-    const { passage, subQuestions, usage } = await this.reExtractor.reExtractGroup({
+    const { passage, subQuestions, usage, molecularAudits, chemistryIssues } = await this.reExtractor.reExtractGroup({
       pngs,
       mode,
       members: group.map((question) => ({
         questionNumber: question.questionNumber,
+        printedLabel: question.printedLabel,
         stemHint: question.stem,
         // A legacy group request sent one `questionType`; only use it when an old row has no type.
         // Never let a first-child type incorrectly force every mixed child into that shape.
@@ -1296,11 +1363,13 @@ export class QuestionsService {
     return {
       mode,
       passage: resolvedPassage,
+      ...(molecularAudits?.length ? { molecularAudits: molecularAudits.map((audit) => ({ ...audit, sourceDocumentId: resolvedSource.documentId, ...(sourcePages.length === 1 ? { sourcePage: sourcePages[0] } : {}) })) } : {}),
+      ...(chemistryIssues?.length ? { chemistryIssues } : {}),
       // Defend the passage-only contract even if a future adapter ignores the requested mode.
       subQuestions:
         mode === 'passage_only'
           ? []
-          : matchGroupSubQuestions(group, subQuestions, resolvedSource.sourceKind),
+          : matchGroupSubQuestions(group, subQuestions.map((draft) => ({ ...draft, ...(draft.molecularAudits?.length ? { molecularAudits: draft.molecularAudits.map((audit) => ({ ...audit, sourceDocumentId: resolvedSource.documentId, ...(sourcePages.length === 1 ? { sourcePage: sourcePages[0] } : {}) })) } : {}) })), resolvedSource.sourceKind),
     };
   }
 
@@ -1342,7 +1411,7 @@ export class QuestionsService {
     documentId: string,
     png: Buffer,
     target: TranscribeAreaTarget,
-  ): Promise<string> {
+  ): Promise<TranscribedArea> {
     const document = await this.documents.findById(documentId);
     if (!document || document.deletedAt !== null) throw errors.documentNotFound(documentId);
     if (document.kind !== 'question') {
@@ -1350,14 +1419,14 @@ export class QuestionsService {
         message: 'Source-area transcription is available only for question PDFs.',
       });
     }
-    const { text, usage } = await this.reExtractor.transcribeArea({ png, target });
+    const { text, usage, molecularAudits, chemistryIssues } = await this.reExtractor.transcribeArea({ png, target });
     try {
       await this.usage.recordUsage({ source: 'area-transcribe', documentId, ...usage });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn({ err: message }, 'Failed to record source-area transcription token usage');
     }
-    return text;
+    return { text, ...(molecularAudits?.length ? { molecularAudits: molecularAudits.map((audit) => ({ ...audit, sourceDocumentId: documentId })) } : {}), ...(chemistryIssues?.length ? { chemistryIssues } : {}) };
   }
 }
 
@@ -1385,15 +1454,34 @@ function matchGroupSubQuestions(
   const used = new Set<number>();
   const result: ReExtractedSubQuestion[] = [];
   group.forEach((row, index) => {
-    let draftIndex = drafts.findIndex((draft, i) => !used.has(i) && draft.memberIndex === index);
-    if (row.questionNumber !== null) {
+    const printedLabel = normalizePrintedQuestionLabel(row.printedLabel);
+    const identityAgrees = (draft: ReExtractedSubDraft): boolean => {
+      const draftLabel = normalizePrintedQuestionLabel(draft.printedLabel);
+      return (printedLabel === null || draftLabel === null || printedLabel === draftLabel) &&
+        (row.questionNumber === null || draft.questionNumber === null || row.questionNumber === draft.questionNumber);
+    };
+    let draftIndex = drafts.findIndex((draft, i) => !used.has(i) && draft.memberIndex === index && identityAgrees(draft));
+    if (draftIndex === -1 && printedLabel !== null) {
+      const matches = drafts.flatMap((draft, i) =>
+        !used.has(i) && identityAgrees(draft) && normalizePrintedQuestionLabel(draft.printedLabel) === printedLabel ? [i] : [],
+      );
+      if (matches.length === 1) draftIndex = matches[0] ?? -1;
+    }
+    if (row.questionNumber !== null && group.filter((member) => member.questionNumber === row.questionNumber).length === 1) {
       if (draftIndex === -1) {
-        draftIndex = drafts.findIndex(
-          (draft, i) => !used.has(i) && draft.questionNumber === row.questionNumber,
-        );
+        const matches = drafts.flatMap((draft, i) => {
+          const draftLabel = normalizePrintedQuestionLabel(draft.printedLabel);
+          const agrees = printedLabel === null || draftLabel === null || printedLabel === draftLabel;
+          return !used.has(i) && agrees && draft.questionNumber === row.questionNumber ? [i] : [];
+        });
+        if (matches.length === 1) draftIndex = matches[0] ?? -1;
       }
     }
-    if (draftIndex === -1 && index < drafts.length && !used.has(index)) draftIndex = index;
+    const positional = drafts[index];
+    if (draftIndex === -1 && row.questionNumber === null && printedLabel === null &&
+      positional?.questionNumber === null && normalizePrintedQuestionLabel(positional.printedLabel) === null && !used.has(index)) {
+      draftIndex = index;
+    }
     const draft = draftIndex === -1 ? undefined : drafts[draftIndex];
     if (!draft) return;
     used.add(draftIndex);
@@ -1407,6 +1495,8 @@ function matchGroupSubQuestions(
         // Only a matrix member may receive a rebuilt match table. A malformed/misclassified reply
         // must never attach matrix columns to another child merely because it shared a passage.
         match: row.questionType === 'matrix' ? draft.match : null,
+        ...(draft.molecularAudits?.length ? { molecularAudits: draft.molecularAudits } : {}),
+        ...(draft.chemistryIssues?.length ? { chemistryIssues: draft.chemistryIssues } : {}),
       },
       row.questionType,
       sourceKind,

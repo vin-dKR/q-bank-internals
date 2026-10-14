@@ -2,11 +2,14 @@ import {
   type UseMutationResult,
   type UseQueryResult,
   useMutation,
+  useIsMutating,
   useQueryClient,
   useQuery,
 } from '@tanstack/react-query';
 import type {
   BatchUpdateQuestionsResult,
+  ChemistryRepairRequest,
+  ChemistryRepairResult,
   Document,
   Passage,
   Question,
@@ -144,6 +147,35 @@ export function useUpdateQuestion(): UseMutationResult<
       void queryClient.invalidateQueries({ queryKey: ['latex-scan', question.documentId] });
       void queryClient.invalidateQueries({ queryKey: ['publish-issues', question.documentId] });
     },
+  });
+}
+
+/** Document-wide controls share the pending state of single-question and document repairs. */
+export function useChemistryRepairPending(documentId: string): boolean {
+  return useIsMutating({ mutationKey: ['chemistry-repair', documentId] }) > 0;
+}
+
+/** Repair saved chemistry fields in place and refresh the same cache used by every Verify card. */
+export function useRepairChemistry(documentId: string): UseMutationResult<ChemistryRepairResult, Error, ChemistryRepairRequest> {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationKey: ['chemistry-repair', documentId],
+    mutationFn: questionsApi.repairChemistry,
+    onSuccess: (result, input) => {
+      queryClient.setQueryData<QuestionListResponse>(questionsQueryKey(input.documentId), (previous) => previous
+        ? { ...previous, questions: previous.questions.map((question) => result.updated.find((updated) => updated.id === question.id) ?? question) }
+        : previous);
+      void queryClient.invalidateQueries({ queryKey: questionsQueryKey(input.documentId) });
+      void queryClient.invalidateQueries({ queryKey: ['latex-scan', input.documentId] });
+      void queryClient.invalidateQueries({ queryKey: ['publish-issues', input.documentId] });
+      toast.toast({
+        tone: result.unresolved.length > 0 ? 'info' : 'success',
+        title: result.unresolved.length > 0 ? 'SMILES restored with remaining issues' : 'Extracted SMILES restored',
+        description: `${String(result.updated.length)} question(s) updated. ${result.unresolved.length > 0 ? `${String(result.unresolved.length)} field(s) still need attention; see the question or publish issues.` : 'The extracted SMILES are restored. Check rings, bonds and substituent positions against the source before publishing.'}`,
+      });
+    },
+    onError: (error) => { toast.error('Could not restore extracted SMILES', error.message); },
   });
 }
 

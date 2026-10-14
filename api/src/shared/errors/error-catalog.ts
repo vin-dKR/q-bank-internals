@@ -20,6 +20,8 @@ export const errors = {
     new AppError('STRUCTURE_DETECTION_FAILED', 422, `Structure detection failed: ${reason}`),
   validation: (details: unknown): AppError =>
     new AppError('VALIDATION_FAILED', 400, 'Request failed validation.', details),
+  chemistryRecoveryFailed: (reason: string): AppError =>
+    new AppError('CHEMISTRY_RECOVERY_FAILED', 422, `Chemistry content could not be restored: ${reason}`),
 
   documentNotFound: (id: string): AppError =>
     new AppError('DOCUMENT_NOT_FOUND', 404, `No document with id "${id}".`),
@@ -166,6 +168,16 @@ export const errors = {
       422,
       `Matrix question "${questionId}" cannot be published: ${reason}. Complete the matching table or correct its selected option in Verify.`,
     ),
+
+  chemistryNotPublishable: (questionId: string, reason: string): AppError =>
+    new AppError(
+      'CHEMISTRY_NOT_PUBLISHABLE',
+      422,
+      `Chemistry question "${questionId}" cannot be published: ${reason} Review its complete source crops in Verify.`,
+    ),
+
+  chemistryReviewInvalid: (reason: string): AppError =>
+    new AppError('CHEMISTRY_REVIEW_INVALID', 422, `Chemistry source review cannot be accepted: ${reason}`),
 
   documentNotPublishable: (id: string, status: string): AppError =>
     new AppError(

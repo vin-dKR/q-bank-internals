@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ReExtractSourceSchema } from './question.schema.js';
+import { MolecularReadDiagnosticsSchema } from './chemistry-extraction.schema.js';
 
 /** A normalized rectangle selected on a rendered source page. */
 const NormalizedPageBoxSchema = z.tuple([
@@ -34,7 +35,7 @@ export const TranscribeQuestionRegionRequestSchema = z.object({
   }
 });
 
-export const TranscribeQuestionRegionResponseSchema = z.object({
+export const TranscribeQuestionRegionResponseSchema = MolecularReadDiagnosticsSchema.extend({
   text: z.string().min(1),
 });
 

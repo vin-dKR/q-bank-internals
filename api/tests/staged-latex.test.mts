@@ -32,6 +32,7 @@ function fixture(refine: (text: string, issues?: readonly { kind: string; detail
     findByDocument: async () => [...rows.values()],
     findById: async (id: string) => rows.get(id) ?? null,
     findPassagesByDocument: async () => [...passages.values()],
+    findPassageById: async (id: string) => passages.get(id) ?? null,
     update: async (id: string, patch: UpdateQuestion) => {
       writes.push({ id, patch });
       const current = rows.get(id);

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { SourcePathSchema } from '../common/source-path.js';
 import { PaperMetadataSchema } from '../common/paper-metadata.js';
 import { AiFilledSchema } from '../common/ai-filled.js';
+import { ChemistryExtractionSchema, MolecularReadDiagnosticsSchema } from './chemistry-extraction.schema.js';
 
 /** A figure extracted from the page, stored in Drive and referenced by the question. */
 export const QuestionImageSchema = z.object({
@@ -213,6 +214,9 @@ export const QuestionSchema = z.object({
   // The printed question number (1, 2, 3 …) as read from the page. Null when the model could not
   // read one. Used later to map an auto-detected figure back to the question it belongs to.
   questionNumber: z.number().int().nullable(),
+  /** Full printed identifier (for example `B-3`); the numeric part alone may repeat within a paper. */
+  printedLabel: z.string().nullable().default(null),
+  chemistry: ChemistryExtractionSchema.nullable().default(null),
   path: SourcePathSchema,
   stem: z.string(), // LaTeX-bearing
   options: z.array(QuestionOptionSchema),
@@ -346,6 +350,7 @@ export type QuestionListQuery = z.infer<typeof QuestionListQuerySchema>;
 
 /** Editable fields — what the verify screen is allowed to change before publishing. */
 export const UpdateQuestionSchema = QuestionSchema.pick({
+  chemistry: true,
   stem: true,
   options: true,
   answer: true,
@@ -417,7 +422,7 @@ export const TranscribeAreaRequestSchema = z.object({
 export type TranscribeAreaRequest = z.infer<typeof TranscribeAreaRequestSchema>;
 
 /** Exact text the vision reader transcribed from one operator-selected source area. */
-export const TranscribedAreaSchema = z.object({ text: z.string() });
+export const TranscribedAreaSchema = MolecularReadDiagnosticsSchema.extend({ text: z.string() });
 export type TranscribedArea = z.infer<typeof TranscribedAreaSchema>;
 
 /**
@@ -476,7 +481,7 @@ export type ReExtractQuestion = z.infer<typeof ReExtractQuestionSchema>;
  * `answer`/`explanation` are best-effort: a question paper rarely prints them, so they come back
  * empty/null unless the page itself shows the correct choice or a worked solution.
  */
-export const ReExtractedQuestionSchema = z.object({
+export const ReExtractedQuestionSchema = MolecularReadDiagnosticsSchema.extend({
   stem: z.string(),
   options: z.array(QuestionOptionSchema),
   answer: z.string(),
@@ -529,7 +534,7 @@ export type ReExtractedSubQuestion = z.infer<typeof ReExtractedSubQuestionSchema
  * current draft; extras it invented (no matching row) are dropped server-side, so the array only ever
  * addresses real rows.
  */
-export const ReExtractedGroupSchema = z.object({
+export const ReExtractedGroupSchema = MolecularReadDiagnosticsSchema.extend({
   // Default accepts a response from an older API during a rolling deploy.
   mode: ReExtractGroupModeSchema.default('passage_and_questions'),
   passage: z.string(),

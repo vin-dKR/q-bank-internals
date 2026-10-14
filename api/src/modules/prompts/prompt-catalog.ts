@@ -20,7 +20,10 @@ const EXTRACTION_DEFAULT = `Extract every visible exam question faithfully. Retu
       "question_text": "…",
       "options": ["(A) …", "(B) …", "(C) …", "(D) …"],
       "answer": "optional — only when printed with this question",
-      "explanation": "optional — only when printed with this question"
+      "explanation": "optional — only when printed with this question",
+      "is_pyq": false,
+      "pyq_exam": "optional — only for a previous-year question",
+      "pyq_year": "optional — only for a previous-year question"
     }
   ]
 }

@@ -97,11 +97,14 @@ function SafeMath({ value, block = false }: { value: string; block?: boolean }):
  */
 export function EditableLatexValue({
   value,
+  displayValue = value,
   onChange,
   multiline = false,
   placeholder = 'Click to edit',
 }: {
   value: string;
+  /** A source-backed presentation may hide audit-only molecular guesses while retaining the raw edit. */
+  displayValue?: string;
   onChange: (value: string) => void;
   multiline?: boolean;
   placeholder?: string;
@@ -187,7 +190,7 @@ export function EditableLatexValue({
       title="Click to edit raw"
       onClick={() => { setEditing(true); }}
     >
-      {value.trim() ? <RenderLatex text={value} /> : <span className="text-ink-3">{placeholder}</span>}
+      {displayValue.trim() ? <RenderLatex text={displayValue} /> : <span className="text-ink-3">{placeholder}</span>}
     </div>
   );
 }

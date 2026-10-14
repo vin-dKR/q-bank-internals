@@ -1,9 +1,13 @@
 // Public surface of the questions module (§4). Others import from here, never from internals.
 export { QuestionsService } from './questions.service.js';
+export { ChemistryRepairService } from './chemistry-repair.service.js';
 export { createQuestionsRouter } from './questions.routes.js';
 export type { NewPassage, NewQuestion, QuestionRepository } from './questions.repository.js';
 export { sortByPdfOrder } from './question-order.js';
 export { aiFilledAfterEdit } from './ai-filled-edits.js';
+export { chemistrySourceReviewIssues } from './chemistry-source-review.js';
+export { chemistrySmilesIssues } from './chemistry-smiles-validation.js';
+export type { SmilesValidator } from './smiles-validator.js';
 export type { ImageStore } from './image-store.js';
 export type { LatexRefiner, LatexRefinement, LatexIssueHint } from './latex-refiner.js';
 export type { PageRenderer } from './page-renderer.js';

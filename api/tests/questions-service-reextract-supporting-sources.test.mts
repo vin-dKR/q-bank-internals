@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { ChapterKind, Document, Question, QuestionOption } from '@ingest/contracts';
+import { PassageSchema, type ChapterKind, type ChemistryExtraction, type Document, type Passage, type Question, type QuestionOption } from '@ingest/contracts';
 import { QuestionsService } from '../src/modules/questions/questions.service.js';
 import type { BankQuestionStore } from '../src/modules/bank/index.js';
 import type { DocumentRepository } from '../src/modules/documents/index.js';
@@ -12,6 +12,8 @@ import type {
   QuestionReExtraction,
   QuestionReExtractor,
   ReExtractInput,
+  GroupReExtractInput,
+  GroupReExtraction,
 } from '../src/modules/questions/question-reextractor.js';
 import type { QuestionRepository } from '../src/modules/questions/questions.repository.js';
 import type { PaperMetadataExtractor } from '../src/modules/questions/paper-metadata-extractor.js';
@@ -149,6 +151,9 @@ function createHarness(input: {
   answerLayout: 'separate' | 'inline';
   documents: Document[];
   reExtract: (read: ReExtractInput) => Promise<QuestionReExtraction>;
+  questions?: Question[];
+  passages?: Passage[];
+  reExtractGroup?: (read: GroupReExtractInput) => Promise<GroupReExtraction>;
 }): Harness {
   const question = sourceQuestion();
   const reads: ReExtractInput[] = [];
@@ -156,7 +161,8 @@ function createHarness(input: {
   const recordedUsage: RecordUsageInput[] = [];
   const questions = {
     findByDocument: async (documentId: string) =>
-      documentId === QUESTION_DOCUMENT_ID ? [question] : [],
+      documentId === QUESTION_DOCUMENT_ID ? input.questions ?? [question] : [],
+    findPassagesByDocument: async () => input.passages ?? [],
   } as unknown as QuestionRepository;
   const documents = {
     findById: async (id: string) => input.documents.find((document) => document.id === id) ?? null,
@@ -173,6 +179,10 @@ function createHarness(input: {
     reExtract: async (read: ReExtractInput) => {
       reads.push(read);
       return input.reExtract(read);
+    },
+    reExtractGroup: async (read: GroupReExtractInput) => {
+      if (!input.reExtractGroup) throw new Error('Unexpected group reread');
+      return input.reExtractGroup(read);
     },
   } as unknown as QuestionReExtractor;
   const usageService = {
@@ -386,4 +396,29 @@ void test('a failed supporting read preserves the primary selected-question resu
       ...usage(),
     },
   ]);
+});
+
+void test('group member indexes cannot override conflicting printed identities and molecular diagnostics retain source provenance', async () => {
+  const base = sourceQuestion();
+  const first = { ...base, id: 'first', questionNumber: 1, printedLabel: 'A-1', passageId: 'group', groupOrder: 0 };
+  const second = { ...base, id: 'second', questionNumber: 2, printedLabel: 'B-2', passageId: 'group', groupOrder: 1 };
+  const audit = (candidateId: string): NonNullable<ChemistryExtraction['molecularAudits']>[number] => ({ candidateId, fieldPath: '/stem', status: 'matched', message: 'The graph matches the independent molecular read.' });
+  const shared = PassageSchema.parse({ id: 'group', documentId: QUESTION_DOCUMENT_ID, text: 'Old passage', passageImage: null, createdAt: base.createdAt, updatedAt: base.updatedAt });
+  const { service, recordedUsage } = createHarness({
+    answerLayout: 'inline', documents: [sourceDocument(QUESTION_DOCUMENT_ID, 'question', 'inline')], questions: [first, second], passages: [shared],
+    reExtract: async () => { throw new Error('Group reread must use its own port'); },
+    reExtractGroup: async () => ({
+      mode: 'passage_and_questions', passage: 'Use <smiles>CCO</smiles>', usage: usage(), molecularAudits: [{ ...audit('shared'), fieldPath: '/passage' }], chemistryIssues: ['Shared-source comparison needs review.'],
+      subQuestions: [
+        { memberIndex: 0, printedLabel: 'B-2', questionNumber: 2, stem: 'Second <smiles>CC</smiles>', options: primaryOptions(), answer: '2', explanation: null, match: null, molecularAudits: [audit('second')], chemistryIssues: ['Second structure needs review.'] },
+        { memberIndex: 1, printedLabel: 'A-1', questionNumber: 1, stem: 'First <smiles>CO</smiles>', options: primaryOptions(), answer: '1', explanation: null, match: null, molecularAudits: [audit('first')], chemistryIssues: ['First structure needs review.'] },
+      ],
+    }),
+  });
+  const result = await service.reExtractGroup(QUESTION_DOCUMENT_ID, 'group');
+  assert.deepEqual(result.subQuestions.map((entry) => [entry.questionId, entry.stem]), [['first', 'First <smiles>CO</smiles>'], ['second', 'Second <smiles>CC</smiles>']]);
+  assert.deepEqual(result.subQuestions.map((entry) => entry.molecularAudits?.map((entryAudit) => [entryAudit.candidateId, entryAudit.sourceDocumentId, entryAudit.sourcePage])), [[['first', QUESTION_DOCUMENT_ID, 52]], [['second', QUESTION_DOCUMENT_ID, 52]]]);
+  assert.deepEqual(result.subQuestions.map((entry) => entry.chemistryIssues), [['First structure needs review.'], ['Second structure needs review.']]);
+  assert.deepEqual(result.molecularAudits?.map((entry) => [entry.candidateId, entry.sourceDocumentId, entry.sourcePage]), [['shared', QUESTION_DOCUMENT_ID, 52]]);
+  assert.deepEqual(recordedUsage, [{ source: 'reextract', documentId: QUESTION_DOCUMENT_ID, ...usage() }]);
 });

@@ -1,5 +1,6 @@
 import type {
   AiFilled,
+  ChemistryExtraction,
   ImageCrop,
   MatchData,
   PaperMetadata,
@@ -16,6 +17,16 @@ import type {
 export type NewQuestion = {
   documentId: string;
   questionNumber: number | null;
+  /** Full printed identity; optional for callers restoring pre-identity extraction drafts. */
+  printedLabel?: string | null;
+  chemistry?: ChemistryExtraction | null;
+  isQuestionImage?: boolean;
+  questionImage?: string | null;
+  isOptionImage?: boolean;
+  optionImages?: string[];
+  answerImages?: string[];
+  explanationImages?: string[];
+  imageCrops?: ImageCrop[];
   path: SourcePath;
   stem: string;
   options: QuestionOption[];
@@ -85,6 +96,8 @@ export interface QuestionRepository {
   findById(id: string): Promise<Question | null>;
   /** Read the comprehension passages for a document (empty when the document has no groups). */
   findPassagesByDocument(documentId: string): Promise<Passage[]>;
+  /** Resolve a passage before an edit invalidates its member questions' chemistry review. */
+  findPassageById(id: string): Promise<Passage | null>;
   /** Apply verify-screen edits (image flags/urls, stem, options, answer) to one question. */
   update(id: string, patch: UpdateQuestion): Promise<Question>;
   /** Apply verify-screen edits (text / shared image) to one comprehension passage — fixed in ONE place. */

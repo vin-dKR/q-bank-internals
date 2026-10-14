@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import type {
   BatchUpdateQuestionsResult,
+  ChemistryRepairRequest,
+  ChemistryRepairResult,
   DetectedFigures,
   DetectedFiguresBatch,
   LatexFixResult,
@@ -18,11 +20,14 @@ import type {
   ReExtractSource,
   ReExtractSupportingSources,
   TranscribeAreaTarget,
+  TranscribedArea,
+  TranscribeQuestionRegionResponse,
   UpdatePassage,
   UpdateQuestion,
 } from '@ingest/contracts';
 import {
   BatchUpdateQuestionsResultSchema,
+  ChemistryRepairResultSchema,
   DetectedFiguresBatchSchema,
   DetectedFiguresSchema,
   LatexFixResultSchema,
@@ -55,6 +60,9 @@ export type ReExtractGroupOptions = {
 
 /** Feature-scoped calls to the questions + pages endpoints. The only place this feature hits the network. */
 export const questionsApi = {
+  /** Restore saved molecular transcriptions without rerunning document recognition. */
+  repairChemistry: (input: ChemistryRepairRequest): Promise<ChemistryRepairResult> =>
+    request('/questions/chemistry-repair', { method: 'POST', body: input, schema: ChemistryRepairResultSchema }),
   /** Automatically re-check staged questions after extraction and after Verify edits. */
   scanLatex: (documentId: string): Promise<LatexScan> =>
     request(`/questions/latex-scan?${new URLSearchParams({ documentId }).toString()}`, { schema: LatexScanSchema }),
@@ -160,7 +168,7 @@ export const questionsApi = {
     documentId: string,
     target: TranscribeAreaTarget,
     blob: Blob,
-  ): Promise<string> => {
+  ): Promise<TranscribedArea> => {
     const form = new FormData();
     form.append('documentId', documentId);
     form.append('target', target);
@@ -170,7 +178,7 @@ export const questionsApi = {
       body: form,
       schema: TranscribedAreaSchema,
     });
-    return result.text;
+    return result;
   },
 
   /**
@@ -247,7 +255,7 @@ export const questionsApi = {
       optionIndex?: number;
       source?: ReExtractSource;
     },
-  ): Promise<{ text: string }> => request(`/questions/${questionId}/transcribe-region`, {
+  ): Promise<TranscribeQuestionRegionResponse> => request(`/questions/${questionId}/transcribe-region`, {
     method: 'POST', body: input, schema: TranscribeQuestionRegionResponseSchema,
   }),
 

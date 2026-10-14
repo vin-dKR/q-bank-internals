@@ -1,10 +1,13 @@
 import type { JSX } from 'react';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
+  chemistrySourceText,
   mergeMatrixKeyWithAnswer,
   parseMatchKey,
   synthesizeMatrixChoiceOptions,
   type MatchData,
+  type ChemistryRepairResult,
+  type Passage,
   type Question,
   type QuestionOption,
   type ReExtractedQuestion,
@@ -35,9 +38,13 @@ import {
 import { EditableLatexValue } from '../../../shared/lib/latex.js';
 import { toQuestionTypeOptions, useDictionary } from '../../taxonomy/index.js';
 import { questionsApi } from '../api/questions.api.js';
-import { useSetQuestionImageMode, useUpdateQuestion } from '../hooks/use-questions.js';
+import { useChemistryRepairPending, useRepairChemistry, useSetQuestionImageMode, useUpdateQuestion } from '../hooks/use-questions.js';
 import { nextOptionLabel, optionLabelKey } from '../lib/option-labels.js';
 import type { QuestionDraft } from '../hooks/use-question-drafts.js';
+import { ChemistrySourceReview } from './chemistry-source-review.js';
+import { chemistrySourceReviewBlockers } from '../lib/chemistry-source-review.js';
+import { chemistryResultText } from '../lib/chemistry-result-text.js';
+import { chemistryReadWarning } from '../lib/chemistry-read-diagnostics.js';
 
 /** A not-yet-saved crop region of this question: uploading (`saving`) or awaiting a manual retry. */
 export type CardBox = {
@@ -83,6 +90,10 @@ type Props = {
    */
   answerSource?: ReExtractSource | undefined;
   solutionSource?: ReExtractSource | undefined;
+  /** Shared source content participates in the same review gate as this child question. */
+  passage?: Pick<Passage, 'text' | 'passageImage'> | null;
+  passageDirty?: boolean;
+  chemistryRepairIssues?: ChemistryRepairResult['unresolved'];
   /** Inline papers keep answer/solution material on the question canvas, so their crop controls stay available. */
   inlineAnswers?: boolean;
   /**
@@ -542,15 +553,28 @@ function FigureThumbnail({
   alt,
   onRemove,
   disabled = false,
+  sourceResult = false,
 }: {
   src: string;
   alt: string;
   onRemove: () => void;
   disabled?: boolean;
+  sourceResult?: boolean;
 }): JSX.Element {
+  const [originalSize, setOriginalSize] = useState(false);
   return (
-    <div className="group relative w-28 flex-none rounded-lg border border-line bg-white p-1.5">
-      <img src={src} alt={alt} className="h-20 w-full rounded object-contain" />
+    <div className={sourceResult ? 'group relative w-full min-w-0 rounded-lg border border-line bg-white p-2' : 'group relative w-28 flex-none rounded-lg border border-line bg-white p-1.5'}>
+      {sourceResult ? (
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <span className="text-xs font-medium text-ink-2">Source diagram · displayed result</span>
+          <Button size="xs" variant="ghost" aria-expanded={originalSize} onClick={() => { setOriginalSize((value) => !value); }}>
+            {originalSize ? 'Fit preview' : 'View at original size'}
+          </Button>
+        </div>
+      ) : null}
+      <div className={sourceResult && originalSize ? 'max-h-[32rem] overflow-auto' : undefined}>
+        <img src={src} alt={alt} className={sourceResult ? (originalSize ? 'h-auto w-auto max-w-none rounded' : 'h-auto w-auto max-w-full rounded') : 'h-20 w-full rounded object-contain'} />
+      </div>
       <button
         type="button"
         aria-label={`Remove ${alt}`}
@@ -707,6 +731,9 @@ export function EditableQuestionCard({
   subject,
   answerSource,
   solutionSource,
+  passage,
+  passageDirty = false,
+  chemistryRepairIssues = [],
   inlineAnswers = false,
   onDraftUpdate,
   onSave,
@@ -720,6 +747,8 @@ export function EditableQuestionCard({
   transcribingRegion = false,
 }: Props): JSX.Element {
   const update = useUpdateQuestion();
+  const repair = useRepairChemistry(question.documentId);
+  const chemistryRepairPending = useChemistryRepairPending(question.documentId);
   const setImageMode = useSetQuestionImageMode();
   const toast = useToast();
   // Crop buttons can remain open while another image is removed. Always derive image-list patches
@@ -943,9 +972,10 @@ export function EditableQuestionCard({
     try {
       // Pass the type the operator currently has selected (the local draft), so a re-read honours a
       // just-changed type before the draft is saved — not the stale stored type.
-      apply(
-        await questionsApi.reExtract(question.documentId, question.id, source, draft.questionType),
-      );
+      const fresh = await questionsApi.reExtract(question.documentId, question.id, source, draft.questionType);
+      apply(fresh);
+      const warning = chemistryReadWarning(fresh);
+      if (warning) toast.toast({ tone: 'info', title: 'SMILES reread needs review', description: warning });
     } catch (error) {
       // The page read failed (empty/truncated model reply, network, etc.). Surface it instead of
       // silently doing nothing — and critically, never touch the field, so the current value survives.
@@ -1004,10 +1034,11 @@ export function EditableQuestionCard({
           next.explanation = fresh.explanation;
         return next;
       });
+      const warning = chemistryReadWarning(fresh);
       toast.toast({
-        tone: 'success',
-        title: 'Re-extracted from the page',
-        description: 'Review the updated fields, then Update to save.',
+        tone: warning ? 'info' : 'success',
+        title: warning ? 'Re-extracted; chemistry needs review' : 'Re-extracted from the page',
+        description: warning ?? 'Review the updated fields, then Update to save.',
       });
     } catch (error) {
       toast.error(
@@ -1112,6 +1143,19 @@ export function EditableQuestionCard({
     void update.mutateAsync({ id: question.id, patch: { flagged: !question.flagged } });
   };
 
+  const markChemistrySourceReviewed = (): void => {
+    const current = latestQuestion.current;
+    if (!current.chemistry || passageDirty || chemistryRepairPending || chemistrySourceReviewBlockers(current, passage).length > 0) return;
+    void update.mutateAsync({
+      id: current.id,
+      patch: { chemistry: { ...current.chemistry, status: current.chemistry.representation === 'transcription' ? 'transcription_reviewed' : 'source_preserved' } },
+    }).then(() => {
+      toast.toast({ tone: 'success', title: 'Chemistry reviewed', description: current.chemistry?.representation === 'transcription' ? 'The displayed SMILES transcription was reviewed against the source.' : 'The selected source images were reviewed.' });
+    }).catch((error: unknown) => {
+      toast.error('Could not save chemistry review', error instanceof Error ? error.message : 'Please try again.');
+    });
+  };
+
   const removeQuestionImage = (url: string): void => {
     const current = latestQuestion.current;
     const urls = splitUrls(current.questionImage).filter((u) => u !== url);
@@ -1145,6 +1189,8 @@ export function EditableQuestionCard({
     drawTarget !== null && drawTarget.type === type && drawTarget.optionIndex === optionIndex;
   const qBoxes = boxes.filter((b) => b.type === 'question');
   const savedQ = splitUrls(question.questionImage);
+  const sourceResultFor = (field: 'stem' | 'option' | 'answer' | 'explanation', url: string): boolean =>
+    question.chemistry?.visuals.some((visual) => visual.field === field && visual.cropUrl === url) ?? false;
   const specs = [
     exam,
     subject,
@@ -1408,6 +1454,7 @@ export function EditableQuestionCard({
       ) : (
         <EditableLatexValue
           value={draft.answer}
+          displayValue={chemistryResultText(question, 'answer', draft.answer)}
           onChange={applyChoiceAnswer}
           multiline={draft.questionType === 'subjective'}
           placeholder={answerDetails.placeholder}
@@ -1420,6 +1467,7 @@ export function EditableQuestionCard({
               key={url}
               src={url}
               alt={`answer figure ${String(index + 1)}`}
+              sourceResult={sourceResultFor('answer', url)}
               disabled={cropDisabled}
               onRemove={() => {
                 removeAnswerImage(url);
@@ -1556,6 +1604,7 @@ export function EditableQuestionCard({
               key={url}
               src={url}
               alt={`answer figure ${String(index + 1)}`}
+              sourceResult={sourceResultFor('answer', url)}
               disabled={cropDisabled}
               onRemove={() => {
                 removeAnswerImage(url);
@@ -1587,7 +1636,7 @@ export function EditableQuestionCard({
           />
         ) : null}
         <span className="rounded-full bg-brand-soft px-2.5 py-0.5 text-[13px] font-bold text-brand">
-          Q{number}
+          {question.printedLabel?.trim() || `Q${String(number)}`}
         </span>
         {dirty ? <Badge tone="progress">Unsaved</Badge> : null}
         <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
@@ -1607,6 +1656,7 @@ export function EditableQuestionCard({
               type="checkbox"
               className="w-auto"
               checked={imageFlags.isQuestionImage}
+              disabled={chemistryRepairPending}
               onChange={(e) => {
                 toggle('isQuestionImage', e.target.checked);
               }}
@@ -1621,6 +1671,7 @@ export function EditableQuestionCard({
                 type="checkbox"
                 className="w-auto"
                 checked={imageFlags.isOptionImage}
+                disabled={chemistryRepairPending}
                 onChange={(e) => {
                   toggle('isOptionImage', e.target.checked);
                 }}
@@ -1650,6 +1701,17 @@ export function EditableQuestionCard({
           ))}
         </div>
       ) : null}
+
+      <ChemistrySourceReview
+        question={question}
+        passage={passage}
+        disabled={dirty || passageDirty || saving || cropDisabled || imageModeSaving || chemistryRepairPending}
+        pending={update.isPending}
+        onReview={markChemistrySourceReviewed}
+        onRepair={() => { repair.mutate({ documentId: question.documentId, questionId: question.id }); }}
+        repairing={repair.isPending}
+        unresolved={repair.data?.unresolved.filter((issue) => issue.questionId === question.id) ?? chemistryRepairIssues}
+      />
 
       <section
         aria-labelledby={`question-${question.id}`}
@@ -1682,10 +1744,12 @@ export function EditableQuestionCard({
         <span className={FIELD_LABEL}>Question text</span>
         <EditableLatexValue
           value={draft.stem}
+          displayValue={chemistryResultText(question, 'stem', draft.stem)}
           onChange={(v) => {
             set('stem', v);
           }}
           multiline
+          placeholder="Click to edit"
         />
         {imageFlags.isQuestionImage ? (
           <div className="flex flex-col gap-2 border-t border-line pt-2">
@@ -1756,6 +1820,7 @@ export function EditableQuestionCard({
                     key={url}
                     src={url}
                     alt={`question figure ${String(index + 1)}`}
+                    sourceResult={sourceResultFor('stem', url)}
                     disabled={cropDisabled}
                     onRemove={() => {
                       removeQuestionImage(url);
@@ -1796,6 +1861,7 @@ export function EditableQuestionCard({
             />
             <MatchTableEditor
               value={draft.match}
+              displayText={question.chemistry && question.chemistry.representation !== 'transcription' ? chemistrySourceText : undefined}
               onChange={setMatch}
               disabled={saving}
               sourceActionsDisabled={cropDisabled}
@@ -1968,7 +2034,7 @@ export function EditableQuestionCard({
               <span className={FIELD_LABEL}>Answer key</span>
               <div className="min-h-[38px] rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm text-ink-2">
                 {draft.answer.trim() ? (
-                  draft.answer
+                  chemistryResultText(question, 'answer', draft.answer)
                 ) : (
                   <span className="text-ink-3">
                     Select a printed option, or fill the direct matching above
@@ -1983,6 +2049,7 @@ export function EditableQuestionCard({
                     key={url}
                     src={url}
                     alt={`answer figure ${String(index + 1)}`}
+                    sourceResult={sourceResultFor('answer', url)}
                     disabled={cropDisabled}
                     onRemove={() => {
                       removeAnswerImage(url);
@@ -2121,6 +2188,7 @@ export function EditableQuestionCard({
                       <div className="mt-2 min-w-0 space-y-2">
                         <EditableLatexValue
                           value={option.body}
+                          displayValue={chemistryResultText(question, 'option', option.body, i)}
                           onChange={(value) => {
                             setOption(i, value);
                           }}
@@ -2132,6 +2200,7 @@ export function EditableQuestionCard({
                               <FigureThumbnail
                                 src={savedImage}
                                 alt={`option ${option.label} figure`}
+                                sourceResult={sourceResultFor('option', savedImage)}
                                 disabled={cropDisabled}
                                 onRemove={() => {
                                   removeOptionImage(i);
@@ -2296,6 +2365,7 @@ export function EditableQuestionCard({
           <>
             <EditableLatexValue
               value={draft.explanation}
+              displayValue={chemistryResultText(question, 'explanation', draft.explanation)}
               onChange={(value) => {
                 set('explanation', value);
               }}
@@ -2309,6 +2379,7 @@ export function EditableQuestionCard({
                     key={url}
                     src={url}
                     alt={`explanation figure ${String(index + 1)}`}
+                    sourceResult={sourceResultFor('explanation', url)}
                     disabled={cropDisabled}
                     onRemove={() => {
                       removeExplanationImage(url);
@@ -2476,7 +2547,7 @@ export function EditableQuestionCard({
         <Button size="xs" variant="danger" onClick={onDelete}>
           <IconTrash /> Delete
         </Button>
-        <Button size="xs" disabled={!dirty || saving} onClick={onSave}>
+        <Button size="xs" disabled={!dirty || saving || chemistryRepairPending} onClick={onSave}>
           {saving ? 'Saving…' : 'Update'}
         </Button>
       </div>

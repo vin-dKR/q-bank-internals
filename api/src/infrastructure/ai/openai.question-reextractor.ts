@@ -25,6 +25,9 @@ import {
 } from './prompts/extraction-prompts.js';
 import { sanitizeExtractedLatex } from './latex-sanitizer.js';
 import type { PromptOverrides } from '../../modules/prompts/index.js';
+import { normalizePrintedQuestionLabel, questionNumberFromPrintedLabel } from '../../modules/extraction/index.js';
+import { enumerateSmilesCandidates } from './chemistry-audit.js';
+import { applySourceTopologyAudit, CHEMISTRY_TOPOLOGY_AUDIT_PROMPT, CHEMISTRY_TOPOLOGY_RESPONSE_FORMAT, prepareSourceTopologyAudit, type MolecularTopologyAudit } from './chemistry-topology.schema.js';
 
 /**
  * Output-token budget for the first re-extract attempt. Covers a reasoning model's hidden reasoning
@@ -33,8 +36,6 @@ import type { PromptOverrides } from '../../modules/prompts/index.js';
  */
 const MAX_TOKENS = 16000;
 const GROUP_MAX_TOKENS = 32000;
-const SMILES_TAG = /<smiles\b/i;
-const SMILES_AUDIT_PROMPT = 'CHEMISTRY STRUCTURE AUDIT: The candidate JSON below was extracted from the supplied exam image. Inspect only every <smiles>…</smiles> value against the drawn structures in the image. Confirm each tag contains one complete connected molecule and that every bond, charge, and aromatic substituent position matches the drawing. For rings, explicitly count ring edges between substituents; do not accept a plausible but wrong ortho/meta/para isomer. Return the complete candidate JSON unchanged when all structures match. Otherwise, change only the incorrect SMILES values and return the complete valid JSON. Do not alter prose, question boundaries, options, answers, or any non-SMILES field.\n\nCANDIDATE JSON:\n';
 /** A tight selected field does not need the full-page re-extractor's large reasoning budget. */
 const AREA_TRANSCRIBE_MAX_TOKENS = 4096;
 
@@ -42,6 +43,7 @@ const AREA_TRANSCRIBE_MAX_TOKENS = 4096;
 type RawOption = { label?: unknown; body?: unknown; is_correct?: unknown };
 type RawReExtract = {
   question_number?: unknown;
+  printed_label?: unknown;
   question_text?: unknown;
   stem?: unknown;
   options?: unknown;
@@ -54,6 +56,7 @@ type RawReExtract = {
 type RawGroupQuestion = {
   member_index?: unknown;
   question_number?: unknown;
+  printed_label?: unknown;
   stem?: unknown;
   options?: unknown;
   columns?: unknown;
@@ -62,6 +65,7 @@ type RawGroupQuestion = {
   explanation?: unknown;
 };
 type RawGroupReExtract = { passage?: unknown; questions?: unknown };
+type MolecularVisionResult = { content: string; usage: AiTokenUsage; molecularAudits?: MolecularTopologyAudit[]; chemistryIssues?: string[] };
 
 function asString(value: unknown): string {
   if (typeof value === 'string') return value;
@@ -77,10 +81,7 @@ function toQuestionNumber(value: unknown): number | null {
     const number = Math.trunc(value);
     return number > 0 ? number : null;
   }
-  const match = /\d+/.exec(asString(value));
-  if (!match) return null;
-  const number = Number(match[0]);
-  return Number.isSafeInteger(number) && number > 0 ? number : null;
+  return questionNumberFromPrintedLabel(asString(value));
 }
 
 /** Parse a zero-based comprehension-member index, or null when the model omitted/garbled it. */
@@ -131,23 +132,47 @@ function parseReply(content: string): unknown {
  * to answer using the batch `{ questions: [...] }` shape. Select the requested printed number from
  * that shape instead of treating an otherwise readable response as empty.
  */
-function targetReply(content: string, questionNumber: number | null): RawReExtract {
+function targetReplySelection(content: string, questionNumber: number | null, printedLabel?: string | null): { raw: RawReExtract; prefix: string } {
   const parsed = parseReply(content);
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { raw: {}, prefix: '' };
   const record = parsed as RawReExtract & { questions?: unknown };
-  if (!Array.isArray(record.questions)) return record;
+  const targetLabel = normalizePrintedQuestionLabel(printedLabel);
+  const labelOf = (candidate: RawReExtract): string | null => normalizePrintedQuestionLabel(asString(candidate.printed_label) || asString(candidate.question_number));
+  if (!Array.isArray(record.questions)) {
+    const returnedLabel = labelOf(record);
+    if (targetLabel && returnedLabel && returnedLabel !== targetLabel) return { raw: {}, prefix: '' };
+    return { raw: record, prefix: '' };
+  }
   const candidates = record.questions.filter(
     (candidate): candidate is RawReExtract => Boolean(candidate) && typeof candidate === 'object' && !Array.isArray(candidate),
   );
-  const selected = questionNumber === null
-    ? candidates[0]
-    : candidates.find((candidate) => toQuestionNumber(candidate.question_number) === questionNumber) ??
-      (candidates.length === 1 ? candidates[0] : undefined);
-  if (!selected) return {};
+  const exact = targetLabel ? candidates.filter((candidate) => labelOf(candidate) === targetLabel) : [];
+  const numeric = candidates.filter((candidate) => toQuestionNumber(candidate.question_number) === questionNumber);
+  const selected = exact.length === 1 ? exact[0]
+    : targetLabel ? undefined
+      : questionNumber === null ? (candidates.length === 1 ? candidates[0] : undefined)
+        : numeric.length === 1 ? numeric[0] : (candidates.length === 1 && !labelOf(candidates[0] ?? {}) ? candidates[0] : undefined);
+  if (!selected) return { raw: {}, prefix: '' };
   return {
-    ...selected,
-    stem: selected.stem ?? selected.question_text,
+    raw: { ...selected, stem: selected.stem ?? selected.question_text },
+    prefix: `/questions/${String(record.questions.indexOf(selected))}`,
   };
+}
+
+function targetReply(content: string, questionNumber: number | null, printedLabel?: string | null): RawReExtract {
+  return targetReplySelection(content, questionNumber, printedLabel).raw;
+}
+
+function targetMolecularMetadata(response: MolecularVisionResult, input: ReExtractInput): { molecularAudits: MolecularTopologyAudit[]; chemistryIssues: string[] } {
+  const { prefix } = targetReplySelection(response.content, input.questionNumber, input.printedLabel);
+  const molecularAudits = (response.molecularAudits ?? []).filter((audit) => prefix ? audit.fieldPath.startsWith(`${prefix}/`) : !audit.fieldPath.startsWith('/questions/')).map((audit) => {
+    let path = prefix ? audit.fieldPath.slice(prefix.length) : audit.fieldPath;
+    path = path.replace(/^\/question_text(?=\/|$)/, '/stem');
+    if (/^\/options\/\d+$/.test(path)) path += '/body';
+    return { ...audit, fieldPath: path };
+  });
+  const chemistryIssues = (response.chemistryIssues ?? []).filter((issue) => !prefix || !issue.startsWith('/questions/') || issue.startsWith(`${prefix}/`));
+  return { molecularAudits, chemistryIssues };
 }
 
 /** Safe reply diagnostics for production logs: schema only, never question text. */
@@ -306,7 +331,7 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     prompt: string,
     png: Buffer | readonly Buffer[],
     startTokens: number,
-  ): Promise<{ content: string; usage: AiTokenUsage }> {
+  ): Promise<MolecularVisionResult> {
     const pngs: readonly Buffer[] = Buffer.isBuffer(png) ? [png] : png;
     if (pngs.length === 0) {
       throw errors.extractionFailed('No source page was available to re-read.');
@@ -366,24 +391,26 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
       totalTokens,
       callCount,
     };
-    // The chemistry audit is a correction pass for an already-extracted SMILES tag. Running it
-    // on every question adds a second, unrelated vision read; for non-chemistry questions it can
-    // return an empty JSON object and overwrite an otherwise valid extraction (as happened to Q283).
-    // Do not ask it to discover new structures here — the primary prompt owns extraction.
-    if (!SMILES_TAG.test(content)) return { content, usage };
+    // Plain-text reads retain their single call. Molecular reads require independent atom/bond
+    // evidence, while the bounded ownership ledger prevents a review pass from rewriting prose.
+    const candidate = parseReply(content);
+    const candidates = enumerateSmilesCandidates(candidate);
+    if (candidates.length === 0) return { content, usage };
+    const { scopes, candidateLedger, sourceScopes } = prepareSourceTopologyAudit(candidate, () => 'source-pages');
+    const unresolved = (message: string): MolecularVisionResult => ({ content, usage, chemistryIssues: [message], molecularAudits: candidates.map((entry) => ({ candidateId: entry.id, fieldPath: entry.fieldPath, status: 'unresolved', message })) });
     try {
       const audit = await this.client.chat.completions.create({
         model: this.model,
-        max_completion_tokens: startTokens,
-        response_format: { type: 'json_object' },
+        max_completion_tokens: Math.max(startTokens, MAX_TOKENS),
+        response_format: CHEMISTRY_TOPOLOGY_RESPONSE_FORMAT,
         messages: [{
           role: 'user',
           content: [
-            { type: 'text', text: SMILES_AUDIT_PROMPT + content },
-            ...imageUrls.map((url) => ({
-              type: 'image_url' as const,
-              image_url: { url, detail: 'high' as const },
-            })),
+            { type: 'text', text: `${CHEMISTRY_TOPOLOGY_AUDIT_PROMPT}\nCANDIDATE OWNERSHIP:\n${JSON.stringify(candidateLedger)}\nSOURCE SCOPES:\n${JSON.stringify(sourceScopes)}` },
+            ...imageUrls.flatMap((url, index): OpenAI.ChatCompletionContentPart[] => [
+              { type: 'text', text: `Source group source-pages, page ${String(index + 1)}:` },
+              { type: 'image_url', image_url: { url, detail: 'high' } },
+            ]),
           ],
         }],
       });
@@ -392,16 +419,19 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
       usage.totalTokens += audit.usage?.total_tokens ?? 0;
       usage.callCount += 1;
       const audited = audit.choices[0]?.message.content?.trim() ?? '';
-      if (audit.choices[0]?.finish_reason !== 'length' && audited && typeof JSON.parse(audited) === 'object') {
-        return { content: audited, usage };
+      if (audit.choices[0]?.finish_reason !== 'length' && audited) {
+        const parsedAudit: unknown = JSON.parse(audited);
+        const result = await applySourceTopologyAudit(candidate, parsedAudit, scopes);
+        if (result.diagnostics.length) logger.warn({ diagnostics: result.diagnostics.map((entry) => entry.code) }, 'Re-extraction topology has unresolved source evidence');
+        return { content: JSON.stringify(result.value), usage, molecularAudits: result.audits, chemistryIssues: result.diagnostics.map((entry) => entry.message) };
       }
+      return unresolved('Independent atom/bond transcription was truncated or empty; the original re-extracted molecular candidates require review.');
     } catch (error) {
       // This is a best-effort chemistry correction. A network/model failure here must never throw
       // away an already valid first read of any question type.
-      logger.warn({ err: error }, 'SMILES audit failed; preserving first re-extraction');
+      logger.warn({ err: error }, 'Molecular topology audit failed; preserving first re-extraction');
+      return unresolved('Independent atom/bond transcription did not complete; the original re-extracted molecular candidates require review.');
     }
-    logger.warn({ model: this.model }, 'SMILES audit returned no usable JSON; preserving first re-extraction');
-    return { content, usage };
   }
 
   async reExtract(input: ReExtractInput): Promise<QuestionReExtraction> {
@@ -409,6 +439,7 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     const prompt = reExtractQuestionPrompt(
       {
         questionNumber: input.questionNumber,
+        printedLabel: input.printedLabel,
         stemHint: input.stemHint,
         questionType: input.questionType,
         ...(input.sourceKind ? { sourceKind: input.sourceKind } : {}),
@@ -419,7 +450,7 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     );
     type Fields = Omit<QuestionReExtraction, 'usage'>;
     const readFields = (content: string): Fields => {
-      const parsed = targetReply(content, input.questionNumber);
+      const parsed = targetReply(content, input.questionNumber, input.printedLabel);
       // A MATRIX MATCH question stores structured columns instead of options — parse them first, and when
       // present clear options so the flat option array is never cluttered with leaked column entries
       // (the "1 4 1 2 3 4 / same value four times" garbage). Non-matrix replies leave match null.
@@ -479,6 +510,7 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
     };
 
     let response = await this.callVision(prompt, input.png, MAX_TOKENS);
+    const molecularReads: MolecularVisionResult[] = [response];
     let fields = readFields(response.content);
     // A model can return non-empty prose or malformed JSON, which used to skip callVision's
     // empty-response retry and immediately surface "could not read". Give that failure shape one
@@ -492,6 +524,7 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
       const retryPrompt = `${prompt}\n\nRETRY: ${retryReason} Do not return prose, commentary, or a blank object.`;
       try {
         const retry = await this.callVision(retryPrompt, input.png, MAX_TOKENS);
+        molecularReads.push(retry);
         response = {
           content: retry.content,
           usage: {
@@ -543,7 +576,13 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
       { questionNumber: input.questionNumber, options: fields.options.length, match: fields.match !== null },
       'question re-extract done',
     );
-    return { ...fields, usage: response.usage };
+    const metadata = molecularReads.map((read) => targetMolecularMetadata(read, input));
+    const fieldCandidates = enumerateSmilesCandidates(fields);
+    const molecularAudits = metadata.flatMap((entry) => entry.molecularAudits).filter((audit) => {
+      const path = audit.fieldPath.replace(/^\/columns(?=\/|$)/, '/match/columns');
+      return fieldCandidates.some((candidate) => candidate.fieldPath === path && (audit.canonicalSmiles === undefined || candidate.smiles === audit.canonicalSmiles));
+    });
+    return { ...fields, usage: response.usage, ...(molecularAudits.length ? { molecularAudits } : {}), ...(metadata.some((entry) => entry.chemistryIssues.length) ? { chemistryIssues: [...new Set(metadata.flatMap((entry) => entry.chemistryIssues))] } : {}) };
   }
 
   /**
@@ -551,7 +590,7 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
    * so a matrix entry/title action cannot accidentally rewrite its neighbours or full table.
    */
   async transcribeArea(input: SourceAreaTranscriptionInput): Promise<SourceAreaTranscription> {
-    const { content, usage } = await this.callVision(
+    const { content, usage, molecularAudits, chemistryIssues } = await this.callVision(
       transcribeSourceAreaPrompt(input.target),
       input.png,
       AREA_TRANSCRIBE_MAX_TOKENS,
@@ -564,11 +603,11 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
       );
     }
     logger.info({ target: input.target, chars: text.length }, 'source area transcribed');
-    return { text, usage };
+    return { text, usage, ...(molecularAudits ? { molecularAudits } : {}), ...(chemistryIssues ? { chemistryIssues } : {}) };
   }
 
   /** Transcribe a field-specific crop while preserving mathematical notation. */
-  async transcribeRegion(input: TranscribeRegionInput): Promise<{ text: string; usage: AiTokenUsage }> {
+  async transcribeRegion(input: TranscribeRegionInput): Promise<SourceAreaTranscription> {
     const prompt = [
       'You are transcribing a cropped region of an exam paper into a question-bank text field.',
       `Destination field: ${input.destination}.`,
@@ -587,13 +626,13 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
       'For compact answer keys, preserve each printed question label and its corresponding answer; use line breaks between entries when visible or needed to keep the mapping unambiguous.',
       'If part of the crop is unreadable, transcribe the readable parts faithfully and do not guess the unreadable content. If the entire crop is unreadable or contains no text, return {"text":""}.',
     ].join('\n');
-    const { content, usage } = await this.callVision(prompt, input.png, 2000);
+    const { content, usage, molecularAudits, chemistryIssues } = await this.callVision(prompt, input.png, 2000);
     const parsed = parseReply(content) as { text?: unknown };
     const text = cleanString(parsed.text);
     if (!text || text.includes('[[FIGURE]]')) {
       throw errors.extractionFailed('The selected area did not produce readable text. The question was left unchanged.');
     }
-    return { text, usage };
+    return { text, usage, ...(molecularAudits ? { molecularAudits } : {}), ...(chemistryIssues ? { chemistryIssues } : {}) };
   }
 
   async reExtractGroup(input: GroupReExtractInput): Promise<GroupReExtraction> {
@@ -609,7 +648,7 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
       },
       overrides,
     );
-    const { content, usage } = await this.callVision(prompt, input.pngs, GROUP_MAX_TOKENS);
+    const { content, usage, molecularAudits, chemistryIssues } = await this.callVision(prompt, input.pngs, GROUP_MAX_TOKENS);
 
     const parsed = parseReply(content) as RawGroupReExtract;
     const passage = cleanString(parsed.passage);
@@ -643,6 +682,7 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
             return {
               memberIndex,
               questionNumber,
+              printedLabel: normalizePrintedQuestionLabel(asString(raw.printed_label) || asString(raw.question_number)),
               stem: cleanString(raw.stem),
               options: extractedOptions,
               answer: rawAnswer,
@@ -650,6 +690,8 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
               // A comprehension group can contain a matrix child. The service admits this shape only onto a
               // stored matrix row, so a model mistake cannot turn another child into a match-table question.
               match,
+              ...(molecularAudits ? { molecularAudits: molecularAudits.filter((audit) => audit.fieldPath.startsWith(`/questions/${String(position)}/`)).map((audit) => ({ ...audit, fieldPath: audit.fieldPath.replace(new RegExp(`^/questions/${String(position)}`), '') })) } : {}),
+              ...(chemistryIssues ? { chemistryIssues: chemistryIssues.filter((issue) => !issue.startsWith('/questions/') || issue.startsWith(`/questions/${String(position)}/`)) } : {}),
             };
           });
     // The read failed (bad JSON, wrong page, refusal) when it yields neither a passage nor any
@@ -668,6 +710,6 @@ export class OpenAiQuestionReExtractor implements QuestionReExtractor {
       },
       'comprehension group re-extract done',
     );
-    return { mode: input.mode, passage, subQuestions, usage };
+    return { mode: input.mode, passage, subQuestions, usage, ...(molecularAudits ? { molecularAudits } : {}), ...(chemistryIssues ? { chemistryIssues } : {}) };
   }
 }

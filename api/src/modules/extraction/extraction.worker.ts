@@ -6,6 +6,7 @@ import {
   type QuestionOption,
 } from '@ingest/contracts';
 import { logger } from '../../shared/logger/logger.js';
+import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
 import type { NewQuestion, QuestionRepository } from '../questions/index.js';
 import type { DriveService } from '../drive/index.js';
@@ -22,11 +23,14 @@ import {
   type AnswerExtractionScope,
   type AnswerSheet,
   type ExtractedQuestion,
+  type PageImage,
   type VisionExtractor,
 } from './vision-extractor.js';
 import { materializePassages } from './group-comprehension.js';
 import { mergeAnswers } from './merge-answers.js';
 import { topicBindingForPage } from './topic-lookup.js';
+import type { ExtractionVisualsService } from './extraction-visuals.service.js';
+import { isChemistryDocument } from './chemistry-document.js';
 
 const OPTION_RE = /^\s*(?:\(\s*([^()]+?)\s*\)|([A-Za-z0-9]+)\s*[.)])\s*([\s\S]*)$/;
 const TRUE_KEY_RE = /^\s*t(?:rue)?\s*$/i;
@@ -149,17 +153,34 @@ function normalizeQuestionType(raw: string | null): string | null {
  * operator's cut-time config. A concrete cut-time type is authoritative (except the comprehension
  * container, whose children legitimately carry their own types).
  */
-function toNewQuestion(
+function molecularTranscriptionProjection(draft: ExtractedQuestion, options: QuestionOption[]): Pick<NewQuestion, 'stem' | 'options' | 'isQuestionImage' | 'questionImage' | 'isOptionImage' | 'optionImages' | 'answerImages' | 'explanationImages' | 'imageCrops'> {
+  const visuals = draft.chemistry?.visuals ?? [];
+  const evidenceUrls = new Set(visuals.flatMap((visual) => visual.cropUrl ? [visual.cropUrl] : []));
+  return {
+    stem: draft.questionText,
+    options,
+    isQuestionImage: false, questionImage: null,
+    isOptionImage: false, optionImages: [],
+    answerImages: [], explanationImages: [],
+    // Source crops are evidence in chemistry.visuals. They must not become student-facing figures
+    // merely because molecular recognition is uncertain; an operator can add a figure explicitly.
+    imageCrops: (draft.imageCrops ?? []).filter((crop) => !evidenceUrls.has(crop.url)),
+  };
+}
+
+export function toNewQuestion(
   document: Document,
   draft: ExtractedQuestion,
   extraction: { model: string; at: string },
 ): NewQuestion {
   const binding = topicBindingForPage(document.topics, draft.sourcePage);
 
-  // PYQ is the segment's per-node toggle (else the legacy document-level flag). When on, the source
-  // exam/year come from what the model read on the page, falling back to the document for legacy rows;
-  // when off, the question carries no PYQ provenance.
-  const isPyq = binding?.pyq ?? document.pyq;
+  // An operator-marked PYQ segment is authoritative. For ordinary mixed modules, the vision pass also
+  // detects a printed PYQ label and propagates it across the rest of that source page, so an Allen
+  // exercise can contain both normal questions and NEET/JEE questions without losing provenance.
+  // Older saved drafts omit `isPyq`, which preserves their previous configured-only behaviour.
+  const configuredPyq = binding?.pyq ?? document.pyq;
+  const isPyq = configuredPyq || draft.isPyq === true;
   const pyq = {
     isPyq,
     pyqExam: isPyq ? draft.pyqExam ?? document.pyqExam : null,
@@ -220,9 +241,9 @@ function toNewQuestion(
     return {
       documentId: document.id,
       questionNumber: draft.questionNumber,
+      printedLabel: draft.printedLabel ?? null,
+      chemistry: draft.chemistry ? { ...draft.chemistry, representation: 'transcription' } : null,
       path: document.path,
-      stem: draft.questionText,
-      options,
       answer,
       match: completedMatch,
       passageId: draft.passageId,
@@ -240,22 +261,20 @@ function toNewQuestion(
       className: document.className,
       subject: binding?.subject ?? null,
       ...pyq,
-      sourceRegion: { page: draft.sourcePage, bbox: [0, 0, 1, 1] },
+      sourceRegion: { page: draft.sourcePage, bbox: draft.sourceBbox ?? [0, 0, 1, 1] },
+      ...molecularTranscriptionProjection(draft, options),
     };
   }
 
   const options = draft.options.map(parseOption);
   const answerLabels = normalizeAnswerLabels(draft.answer, options);
+  const storedOptions = options.map(({ label, body }) => ({ label, body, isCorrect: answerLabels.has(label) }));
   return {
     documentId: document.id,
     questionNumber: draft.questionNumber,
+    printedLabel: draft.printedLabel ?? null,
+    chemistry: draft.chemistry ? { ...draft.chemistry, representation: 'transcription' } : null,
     path: document.path,
-    stem: draft.questionText,
-    options: options.map(({ label, body }) => ({
-      label,
-      body,
-      isCorrect: answerLabels.has(label),
-    })),
     answer: canonicalOptionAnswer(draft.answer, answerLabels, questionType),
     match: null,
     passageId: draft.passageId,
@@ -270,7 +289,8 @@ function toNewQuestion(
     className: document.className,
     subject: binding?.subject ?? null,
     ...pyq,
-    sourceRegion: { page: draft.sourcePage, bbox: [0, 0, 1, 1] },
+    sourceRegion: { page: draft.sourcePage, bbox: draft.sourceBbox ?? [0, 0, 1, 1] },
+    ...molecularTranscriptionProjection(draft, storedOptions),
   };
 }
 
@@ -309,6 +329,7 @@ export class ExtractionWorker {
     private readonly usage: UsageService,
     private readonly pagesPerTask: number,
     private readonly pages: PagesService,
+    private readonly visuals: ExtractionVisualsService | null = null,
   ) {}
 
   /**
@@ -378,23 +399,29 @@ export class ExtractionWorker {
     const jobBeforeBatch = await this.jobs.findById(jobId);
     if (!jobBeforeBatch) return;
     const pageNumbers = Array.from(
-      { length: Math.min(this.pagesPerTask, jobBeforeBatch.pagesTotal - pageNumber + 1) },
+      { length: Math.min(isChemistryDocument(document) ? 1 : this.pagesPerTask, jobBeforeBatch.pagesTotal - pageNumber + 1) },
       (_, offset) => pageNumber + offset,
     ).filter((candidate) => !completed.has(candidate));
     if (pageNumbers.length > 0) {
       const pdf = await this.drive.downloadPdf(document.driveFileId);
       const pages = await this.rasterizer.rasterizePages(pdf, pageNumbers);
       for (const page of pages) {
-        const result = await this.extractor.extractQuestions({ pages: [page], document });
+        const result = await this.extractor.extractQuestions({ pages: [page], document, signal: AbortSignal.timeout(240_000) });
         await Promise.all([
           this.recordUsage(document, result.usage),
           this.pages.cacheRenderedPage(document.id, page.pageNumber, page.png),
         ]);
+        if (result.questions.some((question) => (question.chemistry?.visuals.length ?? 0) > 0) && !this.visuals) throw errors.extractionFailed('Chemistry source preservation is not configured.');
+        const preserved = this.visuals ? await this.visuals.preserve(document.id, page, result.questions) : result.questions;
+        if (result.sheets && result.sheets.length > 0) {
+          const sheets = await this.preserveSourceSheets(document.id, [page], result.sheets);
+          await this.drafts.saveSheetPage({ jobId, documentId: document.id, phase: 'companion', pageNumber: page.pageNumber, scopeKey: 'inline-source', sheets });
+        }
         await this.drafts.saveQuestionPage({
           jobId,
           documentId: document.id,
           pageNumber: page.pageNumber,
-          questions: result.questions,
+          questions: preserved,
         });
         // The document row's timestamp is the stale-run watchdog heartbeat. Touch it once a page is
         // durably committed so a many-hour PDF is never mistaken for an abandoned extraction.
@@ -425,7 +452,8 @@ export class ExtractionWorker {
     const drafts = pageDrafts.flatMap((page) => page.questions);
     // Answer/solution mapping is enrichment. Question text has already been durably checkpointed,
     // so a companion failure cannot make completed question pages spend their tokens again.
-    const answered = await this.applyAnswers(document, drafts, new AbortController().signal);
+    const sourceSheets = (await this.drafts.findSheetPages(jobId)).flatMap((sheet) => sheet.sheets);
+    const answered = await this.applyAnswers(document, drafts, new AbortController().signal, sourceSheets);
     const { drafts: grouped, passages } = materializePassages(answered, document.id);
     const extraction = { model: (await this.jobs.findById(jobId))?.model ?? 'unknown', at: now() };
     const rows = grouped.map((draft) => toNewQuestion(document, draft, extraction));
@@ -491,22 +519,23 @@ export class ExtractionWorker {
     document: Document,
     drafts: ExtractedQuestion[],
     signal: AbortSignal,
+    initialSheets: AnswerSheet[] = [],
   ): Promise<ExtractedQuestion[]> {
+    const sheets: AnswerSheet[] = [...initialSheets];
     // Inline papers carry every answer/solution immediately after its question. They must be a
     // closed extraction boundary: a stale or accidentally uploaded sibling key from the same session
     // must never overwrite the inline data the question pass already read.
-    if (document.answerLayout === 'inline') return drafts;
-    if (!document.sessionId) return drafts;
+    if (document.answerLayout === 'inline') return mergeAnswers(drafts, sheets, document.topics);
+    if (!document.sessionId) return mergeAnswers(drafts, sheets, document.topics);
     const siblings = await this.documents.listBySession(document.sessionId);
     const answerDocs = siblings.filter((s) => s.kind === 'answer' && sameGroup(s, document));
     const solutionDocs = siblings.filter((s) => s.kind === 'solution' && sameGroup(s, document));
     const companionDocs = siblings.filter((s) => s.kind === 'companion' && sameGroup(s, document));
     if (document.answerLayout === 'combined') {
-      if (companionDocs.length === 0) return drafts;
+      if (companionDocs.length === 0) return mergeAnswers(drafts, sheets, document.topics);
       const hasCompanionRanges = document.topics.some((topic) =>
         topic.types.some((block) => block.companionPageRange !== undefined),
       );
-      const sheets: AnswerSheet[] = [];
       for (const companionDoc of companionDocs) {
         if (hasCompanionRanges) {
           await this.collectTopicSheets(companionDoc, document.topics, 'companion', sheets, (pages, scope) =>
@@ -520,7 +549,7 @@ export class ExtractionWorker {
       }
       return mergeAnswers(drafts, sheets, document.topics);
     }
-    if (answerDocs.length === 0 && solutionDocs.length === 0) return drafts;
+    if (answerDocs.length === 0 && solutionDocs.length === 0) return mergeAnswers(drafts, sheets, document.topics);
 
     // v2 assembled uploads pin each topic's answer/solution pages, so we read every topic's key from
     // exactly its own pages and tag it with the topic name — the drag binding decides the match, not a
@@ -535,11 +564,11 @@ export class ExtractionWorker {
       topic.types.some((block) => block.solutionPageRange !== undefined),
     );
 
-    const sheets: AnswerSheet[] = [];
     if (hasAnswerRanges) {
       for (const answerDoc of answerDocs) {
         await this.collectTopicSheets(answerDoc, document.topics, 'answer', sheets, (pages, scope) =>
           this.extractor.extractAnswers({ pages, document: answerDoc, scope, signal }),
+          drafts,
         );
       }
     } else {
@@ -581,6 +610,7 @@ export class ExtractionWorker {
       pages: Awaited<ReturnType<PdfRasterizer['rasterize']>>,
       scope: AnswerExtractionScope,
     ) => Promise<AnswerExtraction>,
+    targets: ExtractedQuestion[] = [],
   ): Promise<void> {
     try {
       const pdf = await this.drive.downloadPdf(source.driveFileId);
@@ -604,13 +634,15 @@ export class ExtractionWorker {
             ...(topic.subject ? { subject: topic.subject } : {}),
             questionPageRange: block.pageRange,
             sourcePageRange: range,
+            expectedPrintedLabels: [...new Set(targets.filter((question) => question.sourcePage >= block.pageRange.from && question.sourcePage <= block.pageRange.to).flatMap((question) => question.printedLabel ? [question.printedLabel] : []))],
           };
           const result = await extract(slice, scope);
           await this.recordUsage(source, result.usage);
+          const preservedSheets = await this.preserveSourceSheets(source.id, slice, result.sheets);
           // Fold every entry this range produced under the topic's own name. A solution may cross a
           // page boundary, so a later non-duplicate explanation is a continuation, not a value to drop.
           const entries: Record<string, AnswerEntry> = {};
-          for (const sheet of result.sheets) {
+          for (const sheet of preservedSheets) {
             for (const [number, entry] of Object.entries(sheet.entries)) {
               entries[number] = mergeAnswerEntries(entries[number], entry);
             }
@@ -645,7 +677,7 @@ export class ExtractionWorker {
       const pages = await this.rasterizer.rasterize(pdf);
       const result = await extract(pages);
       await this.recordUsage(source, result.usage);
-      sink.push(...result.sheets);
+      sink.push(...await this.preserveSourceSheets(source.id, pages, result.sheets));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn(
@@ -653,5 +685,10 @@ export class ExtractionWorker {
         'Answer/solution extraction failed; keeping questions as-is',
       );
     }
+  }
+
+  private async preserveSourceSheets(documentId: string, pages: PageImage[], sheets: AnswerSheet[]): Promise<AnswerSheet[]> {
+    if (sheets.some((sheet) => Object.values(sheet.entries).some((entry) => entry.chemistryVisuals?.length)) && !this.visuals) throw errors.extractionFailed('Chemistry answer and solution source preservation is not configured.');
+    return this.visuals ? this.visuals.preserveSheets(documentId, pages, sheets) : sheets;
   }
 }
