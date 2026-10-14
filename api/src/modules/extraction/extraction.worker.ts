@@ -1,5 +1,4 @@
 import {
-  chemistrySourceText,
   type AiFilled,
   type Document,
   matchKeyToAnswer,
@@ -154,22 +153,18 @@ function normalizeQuestionType(raw: string | null): string | null {
  * operator's cut-time config. A concrete cut-time type is authoritative (except the comprehension
  * container, whose children legitimately carry their own types).
  */
-function sourceImageProjection(draft: ExtractedQuestion, options: QuestionOption[]): Pick<NewQuestion, 'stem' | 'options' | 'isQuestionImage' | 'questionImage' | 'isOptionImage' | 'optionImages' | 'answerImages' | 'explanationImages' | 'imageCrops'> & Partial<Pick<NewQuestion, 'answer' | 'explanation'>> {
+function molecularTranscriptionProjection(draft: ExtractedQuestion, options: QuestionOption[]): Pick<NewQuestion, 'stem' | 'options' | 'isQuestionImage' | 'questionImage' | 'isOptionImage' | 'optionImages' | 'answerImages' | 'explanationImages' | 'imageCrops'> {
   const visuals = draft.chemistry?.visuals ?? [];
-  const stem = visuals.find((visual) => visual.field === 'stem');
-  const optionImages = options.map((option) => visuals.find((visual) => visual.field === 'option' && visual.optionLabel?.trim().toUpperCase() === option.label.trim().toUpperCase())?.cropUrl ?? '');
-  const answerImages = visuals.filter((visual) => visual.field === 'answer').flatMap((visual) => visual.cropUrl ? [visual.cropUrl] : []);
-  const explanationImages = visuals.filter((visual) => visual.field === 'explanation').flatMap((visual) => visual.cropUrl ? [visual.cropUrl] : []);
-  if (visuals.some((visual) => !visual.cropUrl)) throw errors.extractionFailed('A chemistry diagram has no preserved source image.');
+  const evidenceUrls = new Set(visuals.flatMap((visual) => visual.cropUrl ? [visual.cropUrl] : []));
   return {
-    stem: stem ? chemistrySourceText(draft.questionText) : draft.questionText,
-    options: options.map((option, index) => ({ ...option, body: optionImages[index] ? chemistrySourceText(option.body) : option.body })),
-    ...(answerImages.length ? { answer: chemistrySourceText(draft.answer ?? '') } : {}),
-    ...(explanationImages.length ? { explanation: chemistrySourceText(draft.explanation ?? '') || null } : {}),
-    isQuestionImage: Boolean(stem?.cropUrl), questionImage: stem?.cropUrl ?? null,
-    isOptionImage: optionImages.some(Boolean), optionImages: optionImages.some(Boolean) ? optionImages : [],
-    answerImages: [...new Set(answerImages)], explanationImages: [...new Set(explanationImages)],
-    imageCrops: draft.imageCrops ?? [],
+    stem: draft.questionText,
+    options,
+    isQuestionImage: false, questionImage: null,
+    isOptionImage: false, optionImages: [],
+    answerImages: [], explanationImages: [],
+    // Source crops are evidence in chemistry.visuals. They must not become student-facing figures
+    // merely because molecular recognition is uncertain; an operator can add a figure explicitly.
+    imageCrops: (draft.imageCrops ?? []).filter((crop) => !evidenceUrls.has(crop.url)),
   };
 }
 
@@ -245,7 +240,7 @@ export function toNewQuestion(
       documentId: document.id,
       questionNumber: draft.questionNumber,
       printedLabel: draft.printedLabel ?? null,
-      chemistry: draft.chemistry ?? null,
+      chemistry: draft.chemistry ? { ...draft.chemistry, representation: 'transcription' } : null,
       path: document.path,
       answer,
       match: completedMatch,
@@ -265,7 +260,7 @@ export function toNewQuestion(
       subject: binding?.subject ?? null,
       ...pyq,
       sourceRegion: { page: draft.sourcePage, bbox: draft.sourceBbox ?? [0, 0, 1, 1] },
-      ...sourceImageProjection(draft, options),
+      ...molecularTranscriptionProjection(draft, options),
     };
   }
 
@@ -276,7 +271,7 @@ export function toNewQuestion(
     documentId: document.id,
     questionNumber: draft.questionNumber,
     printedLabel: draft.printedLabel ?? null,
-    chemistry: draft.chemistry ?? null,
+    chemistry: draft.chemistry ? { ...draft.chemistry, representation: 'transcription' } : null,
     path: document.path,
     answer: canonicalOptionAnswer(draft.answer, answerLabels, questionType),
     match: null,
@@ -293,7 +288,7 @@ export function toNewQuestion(
     subject: binding?.subject ?? null,
     ...pyq,
     sourceRegion: { page: draft.sourcePage, bbox: draft.sourceBbox ?? [0, 0, 1, 1] },
-    ...sourceImageProjection(draft, storedOptions),
+    ...molecularTranscriptionProjection(draft, storedOptions),
   };
 }
 

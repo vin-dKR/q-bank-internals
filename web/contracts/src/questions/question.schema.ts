@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { SourcePathSchema } from '../common/source-path.js';
 import { PaperMetadataSchema } from '../common/paper-metadata.js';
 import { AiFilledSchema } from '../common/ai-filled.js';
-import { ChemistryExtractionSchema } from './chemistry-extraction.schema.js';
+import { ChemistryExtractionSchema, MolecularReadDiagnosticsSchema } from './chemistry-extraction.schema.js';
 
 /** A figure extracted from the page, stored in Drive and referenced by the question. */
 export const QuestionImageSchema = z.object({
@@ -422,7 +422,7 @@ export const TranscribeAreaRequestSchema = z.object({
 export type TranscribeAreaRequest = z.infer<typeof TranscribeAreaRequestSchema>;
 
 /** Exact text the vision reader transcribed from one operator-selected source area. */
-export const TranscribedAreaSchema = z.object({ text: z.string() });
+export const TranscribedAreaSchema = MolecularReadDiagnosticsSchema.extend({ text: z.string() });
 export type TranscribedArea = z.infer<typeof TranscribedAreaSchema>;
 
 /**
@@ -481,7 +481,7 @@ export type ReExtractQuestion = z.infer<typeof ReExtractQuestionSchema>;
  * `answer`/`explanation` are best-effort: a question paper rarely prints them, so they come back
  * empty/null unless the page itself shows the correct choice or a worked solution.
  */
-export const ReExtractedQuestionSchema = z.object({
+export const ReExtractedQuestionSchema = MolecularReadDiagnosticsSchema.extend({
   stem: z.string(),
   options: z.array(QuestionOptionSchema),
   answer: z.string(),
@@ -534,7 +534,7 @@ export type ReExtractedSubQuestion = z.infer<typeof ReExtractedSubQuestionSchema
  * current draft; extras it invented (no matching row) are dropped server-side, so the array only ever
  * addresses real rows.
  */
-export const ReExtractedGroupSchema = z.object({
+export const ReExtractedGroupSchema = MolecularReadDiagnosticsSchema.extend({
   // Default accepts a response from an older API during a rolling deploy.
   mode: ReExtractGroupModeSchema.default('passage_and_questions'),
   passage: z.string(),

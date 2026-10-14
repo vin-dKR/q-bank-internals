@@ -9,7 +9,7 @@ import { ExtractionVisualsService } from '../src/modules/extraction/extraction-v
 import { mergeAnswers } from '../src/modules/extraction/merge-answers.js';
 import { mergeAnswerEntries } from '../src/modules/extraction/vision-extractor.js';
 import { toNewQuestion } from '../src/modules/extraction/extraction.worker.js';
-import type { ExtractedQuestion, PageImage, SourcePageLayout } from '../src/modules/extraction/index.js';
+import type { AnswerEntry, ExtractedQuestion, PageImage, SourcePageLayout } from '../src/modules/extraction/index.js';
 
 const document = DocumentSchema.parse({
   id: 'solution-doc', driveFileId: 'drive', fileName: 'solutions.pdf', path: { module: 'provider', chapter: 'Chemistry', section: 'exercise' },
@@ -36,7 +36,7 @@ function question(): ExtractedQuestion {
   return { questionNumber: 1, printedLabel: 'A-1', questionText: 'Identify the product.', options: ['(A) First', '(B) Second', '(C) Third'], answer: null, explanation: null, sectionName: 'exercise', questionType: 'single_correct', level: null, difficultyConfidence: null, sourcePage: 1, pyqExam: null, pyqYear: null, match: null, passage: null, passageId: null, groupOrder: null };
 }
 
-void test('native solution blocks preserve source images through answer-key merge without rendering guessed molecules', async () => {
+void test('native solution blocks preserve audit evidence through key merge while rendering the molecular transcription', async () => {
   const source = await page();
   const sheets = await attachChemistryAnswerSources([{ sectionName: 'exercise', entries: { 'A-1': { answer: 'B', explanation: molecular, answerSource: 'solution' } } }], document, source);
   const names: string[] = [];
@@ -52,17 +52,17 @@ void test('native solution blocks preserve source images through answer-key merg
   const row = toNewQuestion({ ...document, id: 'question-doc', kind: 'question', questionType: 'single_correct' }, draft, { model: 'test', at: new Date(0).toISOString() });
   assert.equal(row.answer, 'C');
   assert.equal(row.options[2]?.isCorrect, true);
-  assert.doesNotMatch(row.explanation ?? '', /<smiles/i);
-  assert.match(row.explanation ?? '', /Reduction yields/);
-  assert.deepEqual(row.explanationImages, ['https://source.test/1.png']);
-  assert.equal(row.imageCrops?.[0]?.type, 'solution');
-  assert.equal(row.imageCrops[0].sourceDocumentId, document.id);
-  assert.equal(row.imageCrops[0].sourcePage, 4);
+  assert.equal(row.explanation, molecular);
+  assert.deepEqual(row.explanationImages, []);
+  assert.deepEqual(row.imageCrops, []);
+  assert.equal(row.chemistry?.visuals[0]?.sourceDocumentId, document.id);
+  assert.equal(row.chemistry.visuals[0].sourcePage, 4);
+  assert.equal(row.chemistry.representation, 'transcription');
   assert.equal((await sharp(bytes[0]).metadata()).height, 90);
   assert.match(names[0] ?? '', /extraction\/solution-doc\/page-4-/);
 });
 
-void test('a drawn final answer receives its own answer image and retains its raw candidate for audit', async () => {
+void test('a drawn final answer renders SMILES and keeps its source crop only as audit evidence', async () => {
   const source = await page();
   const answer = '<smiles>Oc1ccccc1</smiles>';
   const sheets = await attachChemistryAnswerSources([{ sectionName: 'exercise', entries: { 'A-1': { answer, explanation: null } } }], document, source);
@@ -72,9 +72,10 @@ void test('a drawn final answer receives its own answer image and retains its ra
   assert.ok(draft?.chemistry);
   const row = toNewQuestion(document, draft, { model: 'test', at: new Date(0).toISOString() });
   assert.equal(row.chemistry?.candidateAnswer, answer);
-  assert.deepEqual(row.answerImages, ['https://source.test/answer.png']);
-  assert.doesNotMatch(row.answer, /<smiles/i);
-  assert.equal(row.imageCrops?.[0]?.type, 'answer');
+  assert.deepEqual(row.answerImages, []);
+  assert.equal(row.answer, answer);
+  assert.deepEqual(row.imageCrops, []);
+  assert.equal(row.chemistry.visuals[0]?.cropUrl, 'https://source.test/answer.png');
 });
 
 void test('multi-page solution continuations retain both source images while an explicit answer key replaces only the answer candidate', async () => {
@@ -86,6 +87,68 @@ void test('multi-page solution continuations retain both source images while an 
   assert.match(reconciled.explanation ?? '', /Reduction yields/);
   assert.match(reconciled.explanation ?? '', /Then/);
   assert.deepEqual(reconciled.chemistryVisuals?.map((visual) => [visual.field, visual.sourcePage]), [['explanation', 4], ['explanation', 5]]);
+});
+
+function workedFragment(explanation: string, sourcePage: number): AnswerEntry {
+  const id = `solution:${String(sourcePage)}:explanation`;
+  const smiles = [...explanation.matchAll(/<smiles>([^<]+)<\/smiles>/g)].map((match) => match[1] ?? '');
+  const url = `https://source.test/page-${String(sourcePage)}.png`;
+  return {
+    answer: null, explanation, answerSource: 'solution',
+    chemistryVisuals: [{ id, field: 'explanation', optionLabel: null, kind: 'reaction', bbox: [.1, .1, .8, .3], candidateSmiles: smiles, graphValid: true, cropUrl: url, sourcePage, moleculeCount: smiles.length }],
+    molecularAudits: smiles.map((canonicalSmiles, index) => ({ candidateId: `${id}/${String(index)}`, fieldPath: `/${id}/explanation`, status: 'matched', message: 'Source graph matches.', canonicalSmiles })),
+    imageCrops: [{ url, type: 'solution', optionIndex: 0, nx: 20, ny: 30, nw: 160, nh: 90, sourcePage }],
+    sourceVisualKinds: { explanation: 'reaction' },
+  };
+}
+
+void test('duplicate and subset explanations retain only the surviving source molecule ledger', () => {
+  const prior = workedFragment('First <smiles>CCO</smiles>. Then <smiles>CC=O</smiles>.', 4);
+  for (const explanation of [prior.explanation ?? '', 'First <smiles>CCO</smiles>.']) {
+    const incoming = { ...workedFragment(explanation, 5), unresolvedSourceFields: ['explanation' as const] };
+    const merged = mergeAnswerEntries({ ...prior, answer: 'C', answerSource: 'answer_key' }, { ...incoming, answer: 'A' });
+    assert.equal(merged.answer, 'C');
+    assert.equal(merged.answerSource, 'answer_key');
+    assert.equal(merged.explanation, prior.explanation);
+    assert.deepEqual(merged.chemistryVisuals?.map((visual) => [visual.sourcePage, visual.moleculeCount]), [[4, 2]]);
+    assert.deepEqual(merged.molecularAudits?.map((audit) => audit.canonicalSmiles), ['CCO', 'CC=O']);
+    assert.deepEqual(merged.imageCrops?.map((crop) => crop.sourcePage), [4]);
+    assert.equal(merged.unresolvedSourceFields, undefined);
+  }
+});
+
+void test('a complete replacement explanation uses its own source ledger and preserves canonical answer priority', () => {
+  const prior = { ...workedFragment('First <smiles>CCO</smiles>.', 4), answer: 'B', answerSource: 'answer_key' as const, unresolvedSourceFields: ['explanation' as const] };
+  const incoming = { ...workedFragment('First <smiles>CCO</smiles>. Then <smiles>CC=O</smiles>.', 5), answer: 'A' };
+  const merged = mergeAnswerEntries(prior, incoming);
+  assert.equal(merged.answer, 'B');
+  assert.equal(merged.explanation, incoming.explanation);
+  assert.deepEqual(merged.chemistryVisuals?.map((visual) => [visual.sourcePage, visual.moleculeCount]), [[5, 2]]);
+  assert.deepEqual(merged.molecularAudits?.map((audit) => audit.canonicalSmiles), ['CCO', 'CC=O']);
+  assert.deepEqual(merged.imageCrops?.map((crop) => crop.sourcePage), [5]);
+  assert.equal(merged.unresolvedSourceFields, undefined);
+});
+
+void test('genuine working continuations retain both ledgers in the same order as their molecular prose', () => {
+  const prior = workedFragment('First <smiles>CCO</smiles>.', 4);
+  const incoming = workedFragment('Then <smiles>CC=O</smiles>.', 5);
+  const merged = mergeAnswerEntries(prior, incoming);
+  assert.equal(merged.explanation, `${prior.explanation ?? ''}\n\n${incoming.explanation ?? ''}`);
+  assert.deepEqual(merged.chemistryVisuals?.map((visual) => [visual.sourcePage, visual.moleculeCount]), [[4, 1], [5, 1]]);
+  assert.deepEqual(merged.molecularAudits?.map((audit) => audit.canonicalSmiles), ['CCO', 'CC=O']);
+  assert.deepEqual(merged.imageCrops?.map((crop) => crop.sourcePage), [4, 5]);
+});
+
+void test('a repeated complete solution remains reviewable after sheet merge and question finalization', () => {
+  const complete = 'First <smiles>CCO</smiles>. Then <smiles>CC=O</smiles>.';
+  const sheets = [4, 5].map((sourcePage) => ({ sectionName: 'exercise', entries: { 'A-1': workedFragment(complete, sourcePage) } }));
+  const draft = mergeAnswers([question()], sheets, [])[0];
+  assert.ok(draft);
+  const row = toNewQuestion(document, draft, { model: 'test', at: new Date(0).toISOString() });
+  const saved = QuestionSchema.parse({ ...row, id: 'question', flagged: false, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() });
+  assert.equal(saved.explanation, complete);
+  assert.equal(saved.chemistry?.visuals.length, 1);
+  assert.deepEqual(chemistrySourceReviewIssues(saved), []);
 });
 
 void test('missing, foreign-label and overlapping fallback geometry remain explicit unresolved sources', async () => {
@@ -129,6 +192,21 @@ void test('source preservation refuses a sibling document mismatch rather than u
   const sheets = await attachChemistryAnswerSources([{ sectionName: 'exercise', entries: { 'A-1': { answer: null, explanation: molecular } } }], document, source);
   const visuals = new ExtractionVisualsService({ upload: async () => { throw new Error('No upload should occur'); } }, new SharpImageCropper());
   await assert.rejects(visuals.preserveSheets('another-doc', [source], sheets), /source page is unavailable/);
+});
+
+void test('a solution comparison upload outage retains the recognized answer and solution with a visible diagnostic', async () => {
+  const source = await page();
+  const answer = '<smiles>Oc1ccccc1</smiles>';
+  const sheets = await attachChemistryAnswerSources([{ sectionName: 'exercise', entries: { 'A-1': { answer, explanation: molecular } } }], document, source);
+  const visuals = new ExtractionVisualsService({ upload: async () => { throw new Error('Storage unavailable'); } }, new SharpImageCropper());
+  const preserved = await visuals.preserveSheets(document.id, [source], sheets);
+  const entry = preserved[0]?.entries['A-1'];
+  assert.ok(entry);
+  assert.equal(entry.answer, answer);
+  assert.equal(entry.explanation, molecular);
+  assert.ok(entry.chemistryIssues?.some((issue) => issue.includes('Comparison crop unavailable')));
+  assert.ok(entry.chemistryVisuals?.every((visual) => visual.cropUrl === null && visual.sourceDocumentId === document.id && visual.sourcePage === source.pageNumber));
+  assert.deepEqual(entry.imageCrops, []);
 });
 
 void test('unreadable source diagrams still receive authoritative images when no molecular candidate is emitted', async () => {
@@ -184,14 +262,14 @@ void test('inline molecular answers and working are preserved from their owned q
   assert.ok(draft);
   const row = toNewQuestion(questionDocument, draft, { model: 'test', at: new Date(0).toISOString() });
   assert.equal(row.stem, 'Identify the printed product.');
-  assert.equal(row.answerImages.length, 1);
-  assert.equal(row.explanationImages.length, 1);
-  assert.doesNotMatch(row.answer, /<smiles/i);
+  assert.equal(row.answerImages.length, 0);
+  assert.equal(row.explanationImages.length, 0);
+  assert.equal(row.answer, '<smiles>CCO</smiles>');
   assert.match(row.explanation ?? '', /Product is/);
-  assert.doesNotMatch(row.explanation ?? '', /<smiles/i);
+  assert.equal(row.explanation, 'Product is <smiles>CCO</smiles>.');
 });
 
-void test('a missing continuation stays blocked even after a different solution fragment was preserved', async () => {
+void test('a missing source continuation stays explicit while SMILES working remains visible', async () => {
   const source = await page();
   const initial = await attachChemistryAnswerSources([{ sectionName: 'exercise', entries: { 'A-1': { answer: 'B', explanation: molecular, answerSource: 'solution' } } }], document, source);
   const visuals = new ExtractionVisualsService({ upload: async () => 'https://source.test/first.png' }, new SharpImageCropper());
@@ -202,8 +280,9 @@ void test('a missing continuation stays blocked even after a different solution 
   const row = toNewQuestion(document, draft, { model: 'test', at: new Date(0).toISOString() });
   const saved = QuestionSchema.parse({ ...row, id: 'question', flagged: false, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() });
   assert.deepEqual(saved.chemistry?.unresolvedSourceFields, ['explanation']);
-  assert.equal(saved.explanationImages.length, 1);
-  assert.ok(chemistrySourceReviewIssues(saved).some((issue) => /solution.*incomplete|solution.*missing|solution.*unresolved/i.test(issue)));
+  assert.equal(saved.explanationImages.length, 0);
+  assert.ok(saved.chemistry.unresolvedSourceFields.includes('explanation'));
+  assert.match(saved.explanation ?? '', /<smiles>/);
 });
 
 void test('a canonical answer key clears a failed solution answer-source stamp without dropping unresolved working', () => {

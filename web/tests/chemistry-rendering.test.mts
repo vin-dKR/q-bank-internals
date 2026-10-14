@@ -84,3 +84,14 @@ void test('legacy source-owned fields show readable extracted text without molec
   assert.equal(chemistryResultText(question, 'stem', 'My corrected text'), 'My corrected text');
   assert.equal(chemistryResultText({ ...question, chemistry: null }, 'stem', '<smiles>C1CC1</smiles>'), '<smiles>C1CC1</smiles>', 'Ordinary extraction keeps its existing rendering behavior.');
 });
+
+void test('SMILES-first fields render their actual transcription including manual corrections in every question field', () => {
+  const question: Parameters<typeof chemistryResultText>[0] = {
+    options: [{ label: 'A', body: '<smiles>CO</smiles>', isCorrect: false }],
+    chemistry: { version: 1, representation: 'transcription', status: 'needs_review', issues: [], candidateStem: 'Old <smiles>CC</smiles>', candidateOptions: ['(A) <smiles>CC</smiles>'], visuals: [] },
+  };
+  for (const field of ['stem', 'option', 'answer', 'explanation'] as const) {
+    assert.equal(chemistryResultText(question, field, 'Corrected <smiles>CO</smiles>', 0), 'Corrected <smiles>CO</smiles>');
+    assert.equal(chemistryResultText(question, field, '', 0), '', 'A missing transcription must remain explicitly incomplete rather than silently showing an older prediction.');
+  }
+});

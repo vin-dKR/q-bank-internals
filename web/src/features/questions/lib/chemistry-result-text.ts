@@ -10,6 +10,7 @@ export function chemistryResultText(
 ): string {
   const chemistry = question.chemistry;
   if (!chemistry) return text;
+  if (chemistry.representation === 'transcription') return text;
   const option = optionIndex === undefined ? undefined : question.options[optionIndex];
   const sourceOwned = chemistry.visuals.some((visual) => visual.field === field && Boolean(visual.cropUrl?.trim())
     && (field !== 'option' || (option && optionLabelKey(visual.optionLabel ?? '') === optionLabelKey(option.label))));

@@ -75,7 +75,7 @@ function mergeChemistrySources(question: ExtractedQuestion, entry: AnswerEntry):
   const incoming = entry.chemistryVisuals ?? [];
   const molecularAnswer = /<smiles\b/iu.test(entry.answer ?? '');
   const molecularExplanation = /<smiles\b/iu.test(entry.explanation ?? '');
-  if (!current && !incoming.length && !entry.chemistryIssues?.length && !molecularAnswer && !molecularExplanation) return {};
+  if (!current && !incoming.length && !entry.chemistryIssues?.length && !molecularAnswer && !molecularExplanation && !Object.values(entry.sourceMoleculeCounts ?? {}).some((count) => count !== undefined && count > 0)) return {};
   const retained = (current?.visuals ?? []).filter((visual) =>
     visual.field === 'stem' || visual.field === 'option' ||
     (visual.field === 'answer' && entry.answer === null && !entry.answerConflict) ||
@@ -86,14 +86,30 @@ function mergeChemistrySources(question: ExtractedQuestion, entry: AnswerEntry):
     ...(current?.unresolvedSourceFields?.filter((field) => (field === 'answer' && entry.answer === null && !entry.answerConflict) || (field === 'explanation' && entry.explanation === null)) ?? []),
     ...(entry.unresolvedSourceFields?.filter((field) => field !== 'answer' || !entry.answerConflict) ?? []),
   ])];
+  const molecularAudits = [
+    ...(current?.molecularAudits?.filter((audit) =>
+      (!audit.fieldPath.endsWith('/answer') || (entry.answer === null && !entry.answerConflict)) &&
+      (!audit.fieldPath.endsWith('/explanation') || entry.explanation === null),
+    ) ?? []),
+    ...(entry.molecularAudits?.filter((audit) => !entry.answerConflict || !audit.fieldPath.endsWith('/answer')) ?? []),
+  ];
+  const answerCount = entry.answerConflict ? undefined : entry.sourceMoleculeCounts?.answer ?? (entry.answer === null ? current?.sourceMoleculeCounts?.answer : undefined);
+  const explanationCount = entry.sourceMoleculeCounts?.explanation ?? (entry.explanation === null ? current?.sourceMoleculeCounts?.explanation : undefined);
+  const sourceMoleculeCounts = {
+    ...(answerCount !== undefined ? { answer: answerCount } : {}),
+    ...(explanationCount !== undefined ? { explanation: explanationCount } : {}),
+  };
   const chemistry: ChemistryExtraction = {
     version: 1, status: 'needs_review',
+    representation: current?.representation ?? 'transcription',
     issues: [...new Set([...(current?.issues ?? []), ...(entry.chemistryIssues ?? [])])],
     candidateStem: current?.candidateStem ?? question.questionText,
     candidateOptions: current?.candidateOptions ?? question.options,
     ...(entry.answer !== null ? { candidateAnswer: entry.answer } : current?.candidateAnswer !== undefined ? { candidateAnswer: current.candidateAnswer } : {}),
     ...(entry.explanation !== null ? { candidateExplanation: entry.explanation } : current?.candidateExplanation !== undefined ? { candidateExplanation: current.candidateExplanation } : {}),
     ...(unresolvedSourceFields.length ? { unresolvedSourceFields } : {}),
+    ...(molecularAudits.length ? { molecularAudits } : {}),
+    ...(Object.keys(sourceMoleculeCounts).length ? { sourceMoleculeCounts } : {}),
     visuals,
   };
   const discardedUrls = new Set((current?.visuals ?? []).filter((visual) => !retained.includes(visual)).flatMap((visual) => visual.cropUrl ? [visual.cropUrl] : []));

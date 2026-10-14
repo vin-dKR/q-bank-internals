@@ -44,11 +44,65 @@ void test('source review displays the worked-solution blocker before an acceptan
     question, onReview: () => undefined, onRepair: () => undefined,
   }));
   assert.match(html, /The worked solution still renders an unverified molecular candidate/);
-  assert.match(html, /Source review cannot be saved yet/);
-  assert.match(html, /Restore extracted content/);
+  assert.match(html, /Chemistry review cannot be saved yet/);
+  assert.match(html, /Restore extracted SMILES/);
   const button = html.match(/<button[^>]*title="The worked solution[^>]*>/)?.[0];
   assert.ok(button);
   assert.match(button, /disabled=""/);
+});
+
+void test('a transcription question renders SMILES in the actual question field and keeps full-page crops inside the closed comparison panel', () => {
+  const transcription = QuestionSchema.parse({ ...question, stem: 'Write the products <smiles>C1CC1</smiles>', explanation: null, isQuestionImage: false, questionImage: null, chemistry: { ...question.chemistry, representation: 'transcription' } });
+  const draft: QuestionDraft = {
+    stem: transcription.stem, answer: '', explanation: '', questionType: 'subjective', level: '',
+    sectionName: '', topic: '', pyqExam: '', pyqYear: '', options: [], match: null,
+  };
+  const queryClient = new QueryClient();
+  const html = renderToStaticMarkup(createElement(QueryClientProvider, { client: queryClient },
+    createElement(ToastProvider, null, createElement(EditableQuestionCard, {
+      question: transcription, number: 1, draft, dirty: false, saving: false, boxes: [], drawTarget: null,
+      onDraftUpdate: () => undefined, onSave: () => undefined, onDelete: () => undefined,
+      onRequestCrop: () => Promise.resolve(null), onRequestTranscription: () => Promise.resolve(null),
+      onDrawRegion: () => undefined, onSaveBox: () => undefined, onDeleteBox: () => undefined, onTranscribeRegion: () => undefined,
+    })),
+  ));
+  queryClient.clear();
+  const result = html.match(/<section aria-labelledby="question-fixture"[\s\S]*?<\/section>/)?.[0];
+  assert.ok(result);
+  assert.match(result, /Write the products/);
+  assert.match(result, /aria-label="Chemical structure C1CC1"/);
+  assert.doesNotMatch(result, /See source diagram|<img|Source diagram · displayed result/);
+  assert.match(html, /Source crop · comparison only/);
+  assert.match(html, /Mark SMILES transcription reviewed/);
+  assert.doesNotMatch(html, /<details[^>]*\sopen[\s>]/);
+});
+
+void test('matrix and shared-passage transcription views retain drawn SMILES without hiding them behind placeholders', () => {
+  const matrix = renderToStaticMarkup(createElement(ToastProvider, null, createElement(MatchTableEditor, {
+    value: { columns: [{ title: 'Reactants', entries: [{ label: 'A', body: 'Reactant <smiles>C1CC1</smiles>', image: null }] }, { title: 'Products', entries: [] }], key: {} },
+    onChange: () => undefined,
+  })));
+  assert.match(matrix, /aria-label="Chemical structure C1CC1"/);
+  assert.doesNotMatch(matrix, /See source diagram/);
+  const passage = renderToStaticMarkup(createElement(ToastProvider, null, createElement(ComprehensionGroupPanel, {
+    documentId: 'document', passageId: 'passage', count: 1, passage: 'Reaction <smiles>C1CC1</smiles>', passageImage: null,
+    dirty: false, onPassageChange: () => undefined, onReExtracted: () => undefined,
+    onUngroup: () => undefined, onRequestCrop: () => Promise.resolve(null), onImageChange: () => undefined,
+  })));
+  assert.match(passage, /aria-label="Chemical structure C1CC1"/);
+  assert.doesNotMatch(passage, /See source diagram/);
+});
+
+void test('a valid transcription can be checked against the original PDF when optional comparison storage is unavailable', () => {
+  const transcription = QuestionSchema.parse({
+    ...question, stem: 'Write the products <smiles>C1CC1</smiles>', explanation: null, questionImage: null, isQuestionImage: false,
+    chemistry: { ...question.chemistry, representation: 'transcription', visuals: [{ id: 'stem', field: 'stem', optionLabel: null, kind: 'reaction', bbox: [0, 0, 0.2, 0.2], candidateSmiles: ['C1CC1'], graphValid: true, cropUrl: null, sourcePage: 3 }] },
+  });
+  const html = renderToStaticMarkup(createElement(ChemistrySourceReview, { question: transcription, onReview: () => undefined, onRepair: () => undefined }));
+  assert.match(html, /Check the structure directly on the original PDF, page 3/);
+  const review = html.match(/<button[^>]*title="Confirm that the displayed molecular structures[^>]*>/)?.[0];
+  assert.ok(review);
+  assert.doesNotMatch(review, /disabled=""/);
 });
 
 void test('the main question field shows readable legacy text and a full source diagram instead of an empty edit field', () => {

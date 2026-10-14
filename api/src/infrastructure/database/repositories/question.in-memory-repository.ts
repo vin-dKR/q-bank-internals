@@ -156,6 +156,14 @@ export class InMemoryQuestionRepository implements QuestionRepository {
     throw new Error(`Question ${id} not found in the in-memory store.`);
   }
 
+  findPassageById(id: string): Promise<Passage | null> {
+    for (const rows of this.passagesByDocument.values()) {
+      const passage = rows.find((row) => row.id === id);
+      if (passage) return Promise.resolve(passage);
+    }
+    return Promise.resolve(null);
+  }
+
   updatePassage(id: string, patch: UpdatePassage): Promise<Passage> {
     for (const [documentId, rows] of this.passagesByDocument) {
       const existing = rows.find((row) => row.id === id);

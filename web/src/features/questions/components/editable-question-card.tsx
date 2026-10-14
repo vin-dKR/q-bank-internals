@@ -44,6 +44,7 @@ import type { QuestionDraft } from '../hooks/use-question-drafts.js';
 import { ChemistrySourceReview } from './chemistry-source-review.js';
 import { chemistrySourceReviewBlockers } from '../lib/chemistry-source-review.js';
 import { chemistryResultText } from '../lib/chemistry-result-text.js';
+import { chemistryReadWarning } from '../lib/chemistry-read-diagnostics.js';
 
 /** A not-yet-saved crop region of this question: uploading (`saving`) or awaiting a manual retry. */
 export type CardBox = {
@@ -971,9 +972,10 @@ export function EditableQuestionCard({
     try {
       // Pass the type the operator currently has selected (the local draft), so a re-read honours a
       // just-changed type before the draft is saved — not the stale stored type.
-      apply(
-        await questionsApi.reExtract(question.documentId, question.id, source, draft.questionType),
-      );
+      const fresh = await questionsApi.reExtract(question.documentId, question.id, source, draft.questionType);
+      apply(fresh);
+      const warning = chemistryReadWarning(fresh);
+      if (warning) toast.toast({ tone: 'info', title: 'SMILES reread needs review', description: warning });
     } catch (error) {
       // The page read failed (empty/truncated model reply, network, etc.). Surface it instead of
       // silently doing nothing — and critically, never touch the field, so the current value survives.
@@ -1032,10 +1034,11 @@ export function EditableQuestionCard({
           next.explanation = fresh.explanation;
         return next;
       });
+      const warning = chemistryReadWarning(fresh);
       toast.toast({
-        tone: 'success',
-        title: 'Re-extracted from the page',
-        description: 'Review the updated fields, then Update to save.',
+        tone: warning ? 'info' : 'success',
+        title: warning ? 'Re-extracted; chemistry needs review' : 'Re-extracted from the page',
+        description: warning ?? 'Review the updated fields, then Update to save.',
       });
     } catch (error) {
       toast.error(
@@ -1145,11 +1148,11 @@ export function EditableQuestionCard({
     if (!current.chemistry || passageDirty || chemistryRepairPending || chemistrySourceReviewBlockers(current, passage).length > 0) return;
     void update.mutateAsync({
       id: current.id,
-      patch: { chemistry: { ...current.chemistry, status: 'source_preserved' } },
+      patch: { chemistry: { ...current.chemistry, status: current.chemistry.representation === 'transcription' ? 'transcription_reviewed' : 'source_preserved' } },
     }).then(() => {
-      toast.toast({ tone: 'success', title: 'Source images reviewed', description: 'The source crops remain the displayed chemistry content.' });
+      toast.toast({ tone: 'success', title: 'Chemistry reviewed', description: current.chemistry?.representation === 'transcription' ? 'The displayed SMILES transcription was reviewed against the source.' : 'The selected source images were reviewed.' });
     }).catch((error: unknown) => {
-      toast.error('Could not save source review', error instanceof Error ? error.message : 'Please try again.');
+      toast.error('Could not save chemistry review', error instanceof Error ? error.message : 'Please try again.');
     });
   };
 
@@ -1746,7 +1749,7 @@ export function EditableQuestionCard({
             set('stem', v);
           }}
           multiline
-          placeholder={question.chemistry?.visuals.some((visual) => visual.field === 'stem') ? 'Question text is preserved in the source image below.' : 'Click to edit'}
+          placeholder="Click to edit"
         />
         {imageFlags.isQuestionImage ? (
           <div className="flex flex-col gap-2 border-t border-line pt-2">
@@ -1858,7 +1861,7 @@ export function EditableQuestionCard({
             />
             <MatchTableEditor
               value={draft.match}
-              displayText={question.chemistry ? chemistrySourceText : undefined}
+              displayText={question.chemistry && question.chemistry.representation !== 'transcription' ? chemistrySourceText : undefined}
               onChange={setMatch}
               disabled={saving}
               sourceActionsDisabled={cropDisabled}

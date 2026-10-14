@@ -171,11 +171,11 @@ export function useRepairChemistry(documentId: string): UseMutationResult<Chemis
       void queryClient.invalidateQueries({ queryKey: ['publish-issues', input.documentId] });
       toast.toast({
         tone: result.unresolved.length > 0 ? 'info' : 'success',
-        title: result.unresolved.length > 0 ? 'Content restored with remaining source issues' : 'Extracted content restored',
-        description: `${String(result.updated.length)} question(s) updated. ${result.unresolved.length > 0 ? `${String(result.unresolved.length)} field(s) still need source review; see the question or publish issues.` : 'Review the readable text and source diagrams before publishing.'}`,
+        title: result.unresolved.length > 0 ? 'SMILES restored with remaining issues' : 'Extracted SMILES restored',
+        description: `${String(result.updated.length)} question(s) updated. ${result.unresolved.length > 0 ? `${String(result.unresolved.length)} field(s) still need attention; see the question or publish issues.` : 'The extracted SMILES are restored. Check rings, bonds and substituent positions against the source before publishing.'}`,
       });
     },
-    onError: (error) => { toast.error('Could not restore extracted content', error.message); },
+    onError: (error) => { toast.error('Could not restore extracted SMILES', error.message); },
   });
 }
 

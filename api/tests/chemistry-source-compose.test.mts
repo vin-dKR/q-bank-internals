@@ -109,3 +109,41 @@ void test('optional source regions preserve legacy metadata and validate every p
   assert.equal(ChemistryExtractionSchema.safeParse({ ...chemistry, visuals: [{ ...first, regions: [] }] }).success, false);
   assert.equal(ChemistryExtractionSchema.safeParse({ ...chemistry, visuals: [{ ...first, regions: [[0.9, 0.1, 0.2, 0.2]] }] }).success, false);
 });
+
+void test('an optional comparison upload failure retains SMILES, geometry and diagnostics without inventing a student image', async () => {
+  const source = await sourcePage();
+  const chemistry = metadata();
+  chemistry.representation = 'transcription';
+  const draft = { ...question(chemistry), questionText: 'Use <smiles>CCO</smiles>' };
+  const service = new ExtractionVisualsService({ upload: async () => { throw new Error('Storage unavailable'); } }, new SharpImageCropper());
+  const saved = await service.preserve('doc', { pageNumber: 1, png: source }, [draft]);
+  const retained = saved[0];
+  assert.ok(retained?.chemistry);
+  assert.equal(retained.questionText, draft.questionText);
+  assert.equal(retained.chemistry.visuals[0]?.cropUrl, null);
+  assert.deepEqual(retained.chemistry.visuals[0].regions, PARTS);
+  assert.equal(retained.chemistry.visuals[0].sourceDocumentId, 'doc');
+  assert.equal(retained.chemistry.visuals[0].sourcePage, 1);
+  assert.equal(retained.chemistry.status, 'needs_review');
+  assert.match(retained.chemistry.issues[0] ?? '', /Comparison crop unavailable/);
+  assert.deepEqual(retained.imageCrops, []);
+});
+
+void test('explicit source image representation still requires its upload to succeed', async () => {
+  const source = await sourcePage();
+  const chemistry = metadata();
+  chemistry.representation = 'source';
+  const service = new ExtractionVisualsService({ upload: async () => { throw new Error('Storage unavailable'); } }, new SharpImageCropper());
+  await assert.rejects(service.preserve('doc', { pageNumber: 1, png: source }, [question(chemistry)]), /Storage unavailable/);
+});
+
+void test('optional comparison storage must never waive a foreign source document or option identity', async () => {
+  const source = await sourcePage();
+  const chemistry = metadata();
+  chemistry.representation = 'transcription';
+  const first = chemistry.visuals[0];
+  assert.ok(first);
+  const service = new ExtractionVisualsService({ upload: async () => { throw new Error('Upload must not run'); } }, new SharpImageCropper());
+  await assert.rejects(service.preserve('doc', { pageNumber: 1, png: source }, [question({ ...chemistry, visuals: [{ ...first, sourceDocumentId: 'foreign-doc' }] })]), /source page is unavailable/);
+  await assert.rejects(service.preserve('doc', { pageNumber: 1, png: source }, [question({ ...chemistry, visuals: [{ ...first, field: 'option', optionLabel: 'D' }] })]), /printed option label/);
+});

@@ -7,7 +7,7 @@ import { ExtractionVisualsService } from '../src/modules/extraction/extraction-v
 import { SharpImageCropper } from '../src/infrastructure/pdf/sharp-image-cropper.js';
 import { toNewQuestion } from '../src/modules/extraction/extraction.worker.js';
 import { parseChemistryInventory } from '../src/infrastructure/ai/chemistry-page-inventory.js';
-import type { SourcePageLayout } from '../src/modules/extraction/index.js';
+import type { ExtractedQuestion, SourcePageLayout } from '../src/modules/extraction/index.js';
 
 const document = DocumentSchema.parse({
   id: 'doc', driveFileId: 'drive', fileName: 'paper.pdf', path: { module: 'provider', chapter: 'Chemistry', section: 'exercise' },
@@ -37,7 +37,33 @@ async function image(): Promise<Buffer> {
   return sharp({ create: { width: 200, height: 300, channels: 3, background: '#fff' } }).png().toBuffer();
 }
 
-void test('diagram inventory preserves missing primary structures as owned source crops and keeps candidates audit-only', async () => {
+void test('final question fields retain every molecular SMILES and reaction condition without automatic image fallback', () => {
+  const stem = String.raw`Find the product: <smiles>Oc1ccccc1</smiles> \(\ce{->[HBr][\Delta]}\)`;
+  const answer = '<smiles>Brc1ccccc1</smiles>';
+  const explanation = 'The product remains <smiles>Brc1ccccc1</smiles>.';
+  const urls = ['https://source.test/stem.png', 'https://source.test/option.png', 'https://source.test/answer.png', 'https://source.test/solution.png'];
+  const draft: ExtractedQuestion = {
+    questionNumber: 1, printedLabel: 'A-1', questionText: stem, options: ['(A) <smiles>Brc1ccccc1</smiles>'], answer, explanation,
+    sectionName: 'exercise', questionType: 'subjective', level: null, difficultyConfidence: null, sourcePage: 1,
+    pyqExam: null, pyqYear: null, match: null, passage: null, passageId: null, groupOrder: null,
+    chemistry: {
+      version: 1, status: 'needs_review', issues: [], candidateStem: stem, candidateOptions: ['(A) <smiles>Brc1ccccc1</smiles>'], candidateAnswer: answer, candidateExplanation: explanation,
+      visuals: (['stem', 'option', 'answer', 'explanation'] as const).map((field, index) => ({ id: field, field, optionLabel: field === 'option' ? 'A' : null, kind: 'molecule', bbox: [0, 0, 0.2, 0.2], candidateSmiles: [field === 'stem' ? 'Oc1ccccc1' : 'Brc1ccccc1'], graphValid: true, cropUrl: urls[index] ?? '' })),
+    },
+    imageCrops: urls.map((url) => ({ url, type: 'question', optionIndex: 0, nx: 0, ny: 0, nw: 10, nh: 10 })),
+  };
+  const row = toNewQuestion({ ...document, questionType: 'subjective' }, draft, { model: 'test', at: new Date(0).toISOString() });
+  assert.equal(row.stem, stem);
+  assert.equal(row.options[0]?.body, '<smiles>Brc1ccccc1</smiles>');
+  assert.equal(row.answer, answer);
+  assert.equal(row.explanation, explanation);
+  assert.equal(row.questionImage, null);
+  assert.deepEqual([row.optionImages, row.answerImages, row.explanationImages, row.imageCrops], [[], [], [], []]);
+  assert.equal(row.chemistry?.visuals.length, 4);
+  assert.equal(row.chemistry.representation, 'transcription');
+});
+
+void test('diagram inventory retains source comparison evidence without projecting missing recognition into cropped question output', async () => {
   const png = await image();
   const vision = extractor([
     { page_role: 'questions', question_regions: [region] },
@@ -57,14 +83,18 @@ void test('diagram inventory preserves missing primary structures as owned sourc
   assert.ok(draft);
   const row = toNewQuestion(document, draft, { model: 'model', at: new Date(0).toISOString() });
   assert.equal(row.stem, 'Product?');
-  assert.equal(row.questionImage, 'https://images.example/1.png');
+  assert.equal(row.questionImage, null);
+  assert.equal(row.isQuestionImage, false);
   assert.deepEqual(row.options.map((option) => option.body), ['unreadable', 'unreadable']);
-  assert.deepEqual(row.optionImages, ['https://images.example/2.png', 'https://images.example/3.png']);
+  assert.deepEqual(row.optionImages, []);
+  assert.equal(row.isOptionImage, false);
   assert.ok(row.chemistry);
   assert.equal(row.chemistry.candidateStem, 'Product?');
   assert.equal(row.chemistry.status, 'needs_review');
+  assert.equal(row.chemistry.representation, 'transcription');
+  assert.deepEqual(row.chemistry.visuals.map((visual) => visual.cropUrl), ['https://images.example/1.png', 'https://images.example/2.png', 'https://images.example/3.png']);
   assert.deepEqual(row.sourceRegion.bbox, [.05, .1, .95, .9]);
-  assert.equal(row.imageCrops?.[0]?.ny, 30);
+  assert.deepEqual(row.imageCrops, []);
   assert.equal((await sharp(uploads[0]).metadata()).width, 180);
 });
 
@@ -92,7 +122,7 @@ void test('malformed source ownership fails rather than silently cropping anothe
   assert.throws(() => parseChemistryInventory(JSON.stringify({ page_role: 'questions', question_regions: [{ ...region, stem_bbox: [0, 0, 1000, 1000] }] })), /outside/);
 });
 
-void test('missing source uploads cannot materialize an image-free question with a dropped diagram', async () => {
+void test('missing optional comparison uploads cannot suppress a completed SMILES transcription', async () => {
   const vision = extractor([
     { page_role: 'questions', question_regions: [region] },
     { questions: [{ question_number: 3, question_text: 'Product?', options: ['(A) first', '(B) second'] }] },
@@ -100,7 +130,11 @@ void test('missing source uploads cannot materialize an image-free question with
   const result = await vision.extractQuestions({ pages: [{ pageNumber: 9, png: await image() }], document });
   const draft = result.questions[0];
   assert.ok(draft);
-  assert.throws(() => toNewQuestion(document, draft, { model: 'model', at: new Date(0).toISOString() }), /no preserved source/);
+  draft.questionText = 'Use <smiles>c1ccccc1</smiles>';
+  const row = toNewQuestion(document, draft, { model: 'model', at: new Date(0).toISOString() });
+  assert.equal(row.stem, 'Use <smiles>c1ccccc1</smiles>');
+  assert.equal(row.questionImage, null);
+  assert.equal(row.chemistry?.visuals[0]?.cropUrl, null);
 });
 
 void test('visible native anchors replace drifting model crops and retain exact option ownership', () => {

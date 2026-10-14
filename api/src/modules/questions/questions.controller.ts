@@ -93,7 +93,7 @@ export function createQuestionsController(service: QuestionsService): {
     transcribeArea: asyncHandler(async (req, res) => {
       if (!req.file) throw errors.uploadMissingFile();
       const { documentId, target } = parseOrThrow(TranscribeAreaRequestSchema, req.body);
-      ok(res, { text: await service.transcribeSourceArea(documentId, req.file.buffer, target) });
+      ok(res, await service.transcribeSourceArea(documentId, req.file.buffer, target));
     }),
 
     reExtract: asyncHandler(async (req, res) => {

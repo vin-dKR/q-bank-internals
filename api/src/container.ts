@@ -81,6 +81,7 @@ import { PrismaPromptOverrideStore } from './infrastructure/database/repositorie
 import { OpenAiLatexRefiner } from './infrastructure/ai/openai.latex-refiner.js';
 import { UnconfiguredLatexRefiner } from './infrastructure/ai/unconfigured.latex-refiner.js';
 import { OpenAiDiagramDetector } from './infrastructure/ai/openai.diagram-detector.js';
+import { RdkitSmilesValidator } from './infrastructure/ai/rdkit.smiles-validator.js';
 import { UnconfiguredDiagramDetector } from './infrastructure/ai/unconfigured.diagram-detector.js';
 import { OpenAiQuestionReExtractor } from './infrastructure/ai/openai.question-reextractor.js';
 import { UnconfiguredQuestionReExtractor } from './infrastructure/ai/unconfigured.question-reextractor.js';
@@ -392,7 +393,8 @@ export function createContainer(): Container {
       : new UnconfiguredBankQuestionStore();
   const imageStore = buildImageStore();
   const imageCropper = new SharpImageCropper();
-  const chemistryRepairService = new ChemistryRepairService(questions, documents, imageStore, pagesService, imageCropper);
+  const chemistryRepairService = new ChemistryRepairService(questions, documents);
+  const smilesValidator = new RdkitSmilesValidator();
   const questionsService = new QuestionsService(
     questions,
     documents,
@@ -405,12 +407,13 @@ export function createContainer(): Container {
     buildQuestionReExtractor(loadPromptOverrides),
     buildPaperMetadataExtractor(),
     chemistryRepairService,
+    smilesValidator,
   );
   const bankPublisher =
     env.DB_DRIVER === 'mongo'
       ? new MongoBankPublisher(getPrisma())
       : new UnconfiguredBankPublisher();
-  const publishService = new PublishService(documents, questions, bankPublisher, taxonomyResolver);
+  const publishService = new PublishService(documents, questions, bankPublisher, taxonomyResolver, smilesValidator);
   const bankService = new BankService(bankQuestionStore);
   const catalogStore =
     env.DB_DRIVER === 'mongo' ? new MongoCatalogStore(getPrisma()) : new UnconfiguredCatalogStore();

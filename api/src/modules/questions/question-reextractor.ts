@@ -1,10 +1,17 @@
 import type {
+  ChemistryExtraction,
   MatchData,
   QuestionOption,
   ReExtractGroupMode,
   TranscribeAreaTarget,
 } from '@ingest/contracts';
 import type { AiTokenUsage } from '../usage/index.js';
+
+/** Independent molecular reread evidence; syntax validity alone is not source agreement. */
+export type MolecularReadDiagnostics = {
+  molecularAudits?: NonNullable<ChemistryExtraction['molecularAudits']>;
+  chemistryIssues?: string[];
+};
 
 /** Which document layout the one-question re-read is looking at. */
 export type ReExtractSourceKind = 'question' | 'answer' | 'solution' | 'companion';
@@ -35,7 +42,7 @@ export type TranscribeRegionInput = {
 };
 
 /** The re-extracted fields plus the token spend the model reported producing them. */
-export type QuestionReExtraction = {
+export type QuestionReExtraction = MolecularReadDiagnostics & {
   stem: string;
   options: QuestionOption[];
   answer: string;
@@ -49,7 +56,7 @@ export type QuestionReExtraction = {
 export type SourceAreaTranscriptionInput = { png: Buffer; target: TranscribeAreaTarget };
 
 /** The exact text read from a selected source area, plus the vision call's token spend. */
-export type SourceAreaTranscription = { text: string; usage: AiTokenUsage };
+export type SourceAreaTranscription = MolecularReadDiagnostics & { text: string; usage: AiTokenUsage };
 
 /** One existing comprehension member, used to keep a group re-read in the right structural shape. */
 export type GroupReExtractMember = {
@@ -84,7 +91,7 @@ export type GroupReExtractInput = {
 };
 
 /** One re-extracted sub-question of a group as the model read it (before it is matched to a row). */
-export type ReExtractedSubDraft = {
+export type ReExtractedSubDraft = MolecularReadDiagnostics & {
   /** Model-returned stable member position; null on legacy/fallback replies. */
   memberIndex: number | null;
   questionNumber: number | null;
@@ -97,7 +104,7 @@ export type ReExtractedSubDraft = {
 };
 
 /** The whole-group re-read: the shared passage, its sub-questions, and the token spend. */
-export type GroupReExtraction = {
+export type GroupReExtraction = MolecularReadDiagnostics & {
   mode: ReExtractGroupMode;
   passage: string;
   subQuestions: ReExtractedSubDraft[];
@@ -119,5 +126,5 @@ export interface QuestionReExtractor {
   /** Read only an operator-selected source region, without re-extracting the full question/page. */
   transcribeArea(input: SourceAreaTranscriptionInput): Promise<SourceAreaTranscription>;
   /** Transcribe a field-specific crop into the question, answer, or solution. */
-  transcribeRegion(input: TranscribeRegionInput): Promise<{ text: string; usage: AiTokenUsage }>;
+  transcribeRegion(input: TranscribeRegionInput): Promise<SourceAreaTranscription>;
 }

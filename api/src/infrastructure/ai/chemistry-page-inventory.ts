@@ -20,7 +20,8 @@ const InventorySchema = z.object({
     stem_bbox: BoxSchema.nullable(),
     stem_regions: z.array(BoxSchema).max(8).default([]),
     visual_kind: KindSchema,
-    options: z.array(z.object({ label: z.string(), bbox: BoxSchema, visual_kind: KindSchema }).strict()),
+    molecule_count: z.number().int().min(0).max(512).optional(),
+    options: z.array(z.object({ label: z.string(), bbox: BoxSchema, visual_kind: KindSchema, molecule_count: z.number().int().min(0).max(512).optional() }).strict()),
   }).strict()),
 }).strict();
 
@@ -39,14 +40,15 @@ export const CHEMISTRY_INVENTORY_JSON_SCHEMA = {
       page_role: { type: 'string', enum: ['questions', 'answers', 'solutions', 'mixed', 'empty'] },
       question_regions: { type: 'array', items: {
         type: 'object', additionalProperties: false,
-        required: ['printed_label', 'source_section', 'bbox', 'source_regions', 'stem_bbox', 'stem_regions', 'visual_kind', 'options'],
+        required: ['printed_label', 'source_section', 'bbox', 'source_regions', 'stem_bbox', 'stem_regions', 'visual_kind', 'molecule_count', 'options'],
         properties: {
           printed_label: { type: ['string', 'null'] }, source_section: { type: ['string', 'null'] },
           bbox: BOX_JSON, source_regions: { type: 'array', items: BOX_JSON, maxItems: 8 },
           stem_bbox: { anyOf: [BOX_JSON, { type: 'null' }] }, stem_regions: { type: 'array', items: BOX_JSON, maxItems: 8 }, visual_kind: KIND_JSON,
+          molecule_count: { type: 'integer', minimum: 0, maximum: 512 },
           options: { type: 'array', items: {
-            type: 'object', additionalProperties: false, required: ['label', 'bbox', 'visual_kind'],
-            properties: { label: { type: 'string' }, bbox: BOX_JSON, visual_kind: KIND_JSON },
+            type: 'object', additionalProperties: false, required: ['label', 'bbox', 'visual_kind', 'molecule_count'],
+            properties: { label: { type: 'string' }, bbox: BOX_JSON, visual_kind: KIND_JSON, molecule_count: { type: 'integer', minimum: 0, maximum: 512 } },
           } },
         },
       } },
@@ -60,6 +62,7 @@ For questions/mixed only, list EVERY genuine question in reading order, using th
 All boxes use integer normalized coordinates [LEFT, TOP, RIGHT, BOTTOM] from 0 to 1000. bbox encloses ONE COMPLETE visible question, including its stem, reactions, tables and all options, but no neighboring question, footer or unrelated heading. stem_bbox encloses the complete stem INCLUDING its wording and all reaction schemes/conditions, but EXCLUDING the option panel; use null only if a separate stem is not visible. Include a little white space so bonds, charges and arrow labels are not clipped.
 For a question that CONTINUES from the bottom of one column to the top of the next, source_regions contains the separate actual content rectangles IN READING ORDER; never use one large rectangle that captures neighboring questions. stem_regions contains its separate stem rectangles excluding choices. For an ordinary contiguous question use [] for these two arrays. bbox/stem_bbox are enclosing bounds only when multiple regions are used. A statement or options above the next numbered question may belong to the preceding column's final question: inspect that continuation explicitly. Preserve all such statements and choices under the original question label.
 visual_kind describes the stem: reaction for any drawn arrow sequence with molecules/conditions, including cycles and unknown A/B/C products; molecule for drawn molecular bonds/rings; figure for other diagrams; none for text/formulas only. Count a Fischer/Haworth/chair or wedge/dash depiction as a molecule, even if recognition is difficult. A linear typeset formula alone is none.
+Independently count EVERY drawn molecular species in the complete stem as molecule_count. Include all reactants, repeated structures, intermediates, products, subpart drawings, matrices and shared passages belonging to this question. One connected molecule is one species; an explicitly drawn salt with disconnected counterions still counts as one depicted species. Never count arrows, unknown A/B/C placeholders or linear reagent formulas without drawn bonds. Text/figure-only stems use 0. Count every species even when it is difficult to recognize. Supply molecule_count separately for EACH option too; an option showing x and y structures has count 2, not 1.
 For EVERY printed selectable option, preserve its actual label and complete content box and visual_kind. Include text options too. Each option box includes the entire option and label, not another option. Preserve source order/count, including incomplete choice panels. Do not assume four options. For answer/solution/empty-only pages return question_regions: [].`;
 
 function validBox(box: ChemistryBox): boolean {

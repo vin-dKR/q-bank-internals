@@ -333,6 +333,11 @@ export class PrismaQuestionRepository implements QuestionRepository {
     return toQuestion(row);
   }
 
+  async findPassageById(id: string): Promise<Passage | null> {
+    const row = await this.prisma.passage.findUnique({ where: { id } });
+    return row ? toPassage(row) : null;
+  }
+
   async updatePassage(id: string, patch: UpdatePassage): Promise<Passage> {
     const row = await this.prisma.passage.update({
       where: { id },

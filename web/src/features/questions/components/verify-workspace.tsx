@@ -75,6 +75,7 @@ import { ComprehensionGroupPanel } from './comprehension-group.js';
 import { SourcePreviewPane, type SourcePreviewMagnifier } from './source-preview-pane.js';
 import { useVerifySources } from '../hooks/use-verify-sources.js';
 import type { VerifySibling } from '../lib/verify-sources.js';
+import { chemistryReadWarning } from '../lib/chemistry-read-diagnostics.js';
 import { PublishIssueActions } from './publish-issue-actions.js';
 
 /** Which source PDFs sit beside the question page: question only, + answer, or + answer & solution. */
@@ -1382,6 +1383,8 @@ export function VerifyWorkspace({
   const applyGroupReExtract = useCallback(
     (passageId: string, groupQuestions: Question[], result: ReExtractedGroup): void => {
       passageDrafts.setText(passageId, result.passage);
+      const warning = chemistryReadWarning(result);
+      if (warning) toast.toast({ tone: 'info', title: 'SMILES reread needs review', description: warning });
       // A passage-only operation deliberately has no authority to replace any child field, even if an
       // older/misbehaving server returned them. This keeps the selected Verify scope non-destructive.
       if (result.mode === 'passage_only') return;
@@ -2046,7 +2049,10 @@ export function VerifyWorkspace({
           req.resolve(null);
           return;
         }
-        req.resolve(await questionsApi.transcribeArea(documentId, req.transcribeTarget, blob));
+        const read = await questionsApi.transcribeArea(documentId, req.transcribeTarget, blob);
+        req.resolve(read.text);
+        const warning = chemistryReadWarning(read);
+        if (warning) toast.toast({ tone: 'info', title: 'SMILES reread needs review', description: warning });
         return;
       }
       const siblingSource =
@@ -2203,7 +2209,10 @@ export function VerifyWorkspace({
       destination: target.destination,
       ...(target.destination === 'option' ? { optionIndex: target.optionIndex } : {}),
       ...(target.source ? { source: target.source } : {}),
-    }).then(({ text }) => {
+    }).then((read) => {
+      const { text } = read;
+      const warning = chemistryReadWarning(read);
+      if (warning) toast.toast({ tone: 'info', title: 'SMILES reread needs review', description: warning });
       const currentQuestion = questionById.get(target.questionId);
       const currentDraft = currentQuestion ? drafts.draftFor(currentQuestion) : null;
       const optionIndex = target.optionIndex;
@@ -3615,11 +3624,11 @@ export function VerifyWorkspace({
                 <Button
                   size="xs"
                   disabled={runActive || chemistryRepairPending || drafts.dirtyIds.size + passageDrafts.dirtyIds.size > 0 || drafts.isSaving || passageDrafts.isSaving}
-                  title="Restore saved chemistry text and source diagrams across this document without a full extraction rerun"
+                  title="Restore saved molecular SMILES across this document and remove only automatically attached source crops"
                   onClick={() => { chemistryRepair.mutate({ documentId }); }}
                 >
                   {chemistryRepair.isPending ? <Spinner /> : null}
-                  {chemistryRepair.isPending ? 'Restoring chemistry…' : 'Restore chemistry content'}
+                  {chemistryRepair.isPending ? 'Restoring SMILES…' : 'Restore extracted SMILES'}
                 </Button>
               ) : null}
             </div>
@@ -3787,7 +3796,7 @@ export function VerifyWorkspace({
                   passageId={item.passageId}
                   count={item.questions.length}
                   passage={passageDrafts.textFor(item.passageId)}
-                  displayText={item.questions.some((question) => question.chemistry !== null) ? chemistrySourceText : undefined}
+                  displayText={item.questions.some((question) => question.chemistry !== null && question.chemistry.representation !== 'transcription') ? chemistrySourceText : undefined}
                   passageImage={passageById.get(item.passageId)?.passageImage ?? null}
                   dirty={passageDrafts.dirtyIds.has(item.passageId)}
                   disabled={runActive || chemistryRepairPending}

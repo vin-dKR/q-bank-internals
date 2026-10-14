@@ -23,6 +23,7 @@ import type { PromptOverrides } from '../src/modules/prompts/index.js';
 import type { AiTokenUsage } from '../src/modules/usage/index.js';
 import { mapWithConcurrency } from '../src/shared/async/map-with-concurrency.js';
 import { AppError } from '../src/shared/errors/app-error.js';
+import { ChemistryGraphGoldSchema, ChemistryGraphResultSchema, scoreChemistryGraphs, type ChemistryGraphGold } from './chemistry-graph-benchmark.mjs';
 
 const NITROGEN_ID = '6ac130a7488c2ce717aa9661';
 const ORGANIC_ID = '6abea8a437b8a045f2c79195';
@@ -45,7 +46,7 @@ const BaselineSchema = z.object({
   organicAnswerSolutionContamination: z.object({ records: z.number(), totalRecords: z.number() }),
 });
 
-type Options = { input: string; output: string; all: boolean; plan: boolean; auditOnly: boolean };
+type Options = { input: string; output: string; all: boolean; plan: boolean; auditOnly: boolean; pages: Map<string, number[]> | null; gold: string | null; questionsOnly: boolean };
 type SafeError = { name: string; message: string };
 type PageTask = { document: Document; pageNumber: number };
 type PageReceipt = {
@@ -98,7 +99,7 @@ async function writeJson(file: string, value: unknown): Promise<void> {
 function parseOptions(): Options | null {
   const args = process.argv.slice(2);
   if (args.includes('--help')) {
-    process.stdout.write('Usage: node --conditions=development --import tsx scripts/benchmark-chemistry-session.mts --input /private/tmp/chemistry-session-audit --output /absolute/artifact/folder [--all | --audit-pages-only] [--plan]\nDefault: nitrogen page9, organic pages1/54, Allen page1, and nitrogen scoped answerpage5. --audit-pages-only sends only nitrogen9/organic1/Allen1; the answerpage5 is local-only with no vision fallback. --all runs every source page. --plan writes a network-free manifest. Completed identical checkpoints are reused.\n');
+    process.stdout.write('Usage: node --conditions=development --import tsx scripts/benchmark-chemistry-session.mts --input /local/sources --output /absolute/artifact/folder [--all | --audit-pages-only | --pages "documentId:1,9,16,18"] [--questions-only] [--gold /frozen/smiles-graph-gold.json] [--plan]\nDefault: nitrogen page9, organic pages1/54, Allen page1, and nitrogen scoped answerpage5. --audit-pages-only sends only nitrogen9/organic1/Allen1; the answerpage5 is local-only with no vision fallback. --all runs every source page. --pages selects explicit document/page pairs separated by semicolons. --questions-only sends no answer-source pages. --gold scores rendered exact molecular graphs separately from candidate text and source crops. --plan writes a network-free manifest. Completed identical checkpoints are reused.\n');
     return null;
   }
   let input = '/private/tmp/chemistry-session-audit';
@@ -106,23 +107,39 @@ function parseOptions(): Options | null {
   let all = false;
   let plan = false;
   let auditOnly = false;
+  let pages: Map<string, number[]> | null = null;
+  let gold: string | null = null;
+  let questionsOnly = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === '--all') { all = true; continue; }
     if (arg === '--plan') { plan = true; continue; }
     if (arg === '--audit-pages-only') { auditOnly = true; continue; }
-    if (arg === '--input' || arg === '--output') {
+    if (arg === '--questions-only') { questionsOnly = true; continue; }
+    if (arg === '--input' || arg === '--output' || arg === '--pages' || arg === '--gold') {
       const value = args[index + 1];
       if (!value || value.startsWith('--')) throw new Error(`Missing value for ${arg}.`);
-      if (arg === '--input') input = value; else output = value;
+      if (arg === '--input') input = value;
+      else if (arg === '--output') output = value;
+      else if (arg === '--gold') gold = path.resolve(value);
+      else {
+        pages = new Map();
+        for (const selection of value.split(';')) {
+          const [id, numbers, extra] = selection.split(':');
+          if (!id || !SOURCE_IDS.includes(id) || !numbers || extra !== undefined || pages.has(id)) throw new Error('Explicit pages must use unique source-document IDs.');
+          const selected = numbers.split(',').map(Number);
+          if (selected.some((page) => !Number.isSafeInteger(page) || page < 1) || new Set(selected).size !== selected.length) throw new Error('Explicit page numbers must be unique positive integers.');
+          pages.set(id, selected);
+        }
+      }
       index += 1;
       continue;
     }
     throw new Error(`Unknown benchmark argument: ${arg ?? ''}.`);
   }
   if (!output) throw new Error('Supply --output with a local artifact folder.');
-  if (all && auditOnly) throw new Error('--all and --audit-pages-only are mutually exclusive.');
-  return { input: path.resolve(input), output: path.resolve(output), all, plan, auditOnly };
+  if (Number(all) + Number(auditOnly) + Number(pages !== null) > 1) throw new Error('--all, --audit-pages-only, and --pages are mutually exclusive.');
+  return { input: path.resolve(input), output: path.resolve(output), all, plan, auditOnly, pages, gold, questionsOnly };
 }
 
 async function sourceFiles(directory: string): Promise<string[]> {
@@ -136,7 +153,7 @@ async function sourceFiles(directory: string): Promise<string[]> {
 }
 
 async function codeSignature(): Promise<{ codeHash: string; fileHashes: Record<string, string> }> {
-  const files = [...await sourceFiles(path.join(API_ROOT, 'src')), ...await sourceFiles(path.join(API_ROOT, 'contracts/src')), SCRIPT_PATH, path.join(API_ROOT, 'package.json'), path.join(API_ROOT, 'package-lock.json')].sort();
+  const files = [...await sourceFiles(path.join(API_ROOT, 'src')), ...await sourceFiles(path.join(API_ROOT, 'contracts/src')), SCRIPT_PATH, path.join(API_ROOT, 'scripts/chemistry-graph-benchmark.mts'), path.join(API_ROOT, 'package.json'), path.join(API_ROOT, 'package-lock.json')].sort();
   const fileHashes: Record<string, string> = {};
   for (const file of files) fileHashes[path.relative(API_ROOT, file)] = hash(await readFile(file));
   return { codeHash: hash(JSON.stringify(fileHashes)), fileHashes };
@@ -292,6 +309,13 @@ async function main(): Promise<void> {
     pdfHashes[document.id] = hash(bytes);
   }
   const code = await codeSignature();
+  const goldBytes = options.gold ? await readFile(options.gold) : null;
+  const graphGold: ChemistryGraphGold | null = goldBytes ? ChemistryGraphGoldSchema.parse(JSON.parse(goldBytes.toString('utf8'))) : null;
+  if (graphGold) {
+    for (const [id, source] of Object.entries(graphGold.sources)) {
+      if (pdfHashes[id] !== source.sha256) throw new Error('Frozen graph gold does not identify these source PDF bytes.');
+    }
+  }
   const promptHash = hash(JSON.stringify({ prompts, masters, promptKeys: PROMPT_KEYS }));
   const documentHash = hash(JSON.stringify(documents));
   const fingerprint = hash(JSON.stringify({ schemaVersion: 1, codeHash: code.codeHash, promptHash, documentHash, model: env.EXTRACTION_MODEL, pdfHashes, scale: RASTER_SCALE }));
@@ -301,17 +325,18 @@ async function main(): Promise<void> {
   for (const document of sourceDocuments) {
     const count = await rasterizer.pageCount(pdfs.get(document.id) ?? Buffer.alloc(0));
     pageCounts[document.id] = count;
-    const selected = options.all ? Array.from({ length: count }, (_, index) => index + 1) : document.id === NITROGEN_ID ? [9] : document.id === ORGANIC_ID ? (options.auditOnly ? [1] : [1, 54]) : [1];
+    const selected = options.pages ? options.pages.get(document.id) ?? [] : options.all ? Array.from({ length: count }, (_, index) => index + 1) : document.id === NITROGEN_ID ? [9] : document.id === ORGANIC_ID ? (options.auditOnly ? [1] : [1, 54]) : [1];
     for (const pageNumber of selected) {
       if (pageNumber > count) throw new Error('A smoke case exceeds its source PDF page count.');
       tasks.push({ document, pageNumber });
     }
   }
-  const boundAnswers = answerTasks(nitrogen, answerDocument, options.all);
-  const manifest = { schemaVersion: 1, sessionId: nitrogen.sessionId, mode: options.all ? 'all-source-pages' : options.auditOnly ? 'approved-three-page-pilot' : 'smoke', fingerprint, model: env.EXTRACTION_MODEL, codeHash: code.codeHash, codeFileHashes: code.fileHashes, promptHash, documentHash, pdfHashes, sourceSnapshots: { input: options.input, files: ['documents.json', 'prompts.json', 'masters-questionType.json', 'masters-level.json', 'baseline-scorecard.json'] }, rasterScale: RASTER_SCALE, pageConcurrency: PAGE_CONCURRENCY, questionConcurrency: 3, timeoutMs: RUN_TIMEOUT_MS, pageCounts, selectedPages: tasks.map((task) => ({ documentId: task.document.id, pageNumber: task.pageNumber })), answerScopes: boundAnswers.map(({ task, scope }) => ({ documentId: task.document.id, pageNumber: task.pageNumber, scope })), answerExtractionMode: options.auditOnly ? 'local-native-key-no-vision-fallback' : 'native-key-or-vision', productionWrites: false, remoteImageUploads: false };
+  const boundAnswers = options.questionsOnly ? [] : answerTasks(nitrogen, answerDocument, options.all).filter(({ scope }) => tasks.some((task) => task.document.id === NITROGEN_ID && task.pageNumber >= scope.questionPageRange.from && task.pageNumber <= scope.questionPageRange.to));
+  const manifest = { schemaVersion: 1, sessionId: nitrogen.sessionId, mode: options.all ? 'all-source-pages' : options.auditOnly ? 'approved-three-page-pilot' : options.pages ? 'explicit-pages' : 'smoke', fingerprint, model: env.EXTRACTION_MODEL, codeHash: code.codeHash, codeFileHashes: code.fileHashes, promptHash, documentHash, pdfHashes, graphGold: options.gold ? { path: options.gold, sha256: goldBytes ? hash(goldBytes) : null, frozenAt: graphGold?.frozenAt } : null, sourceSnapshots: { input: options.input, files: ['documents.json', 'prompts.json', 'masters-questionType.json', 'masters-level.json', 'baseline-scorecard.json'] }, rasterScale: RASTER_SCALE, pageConcurrency: PAGE_CONCURRENCY, questionConcurrency: 3, timeoutMs: RUN_TIMEOUT_MS, pageCounts, selectedPages: tasks.map((task) => ({ documentId: task.document.id, pageNumber: task.pageNumber })), answerScopes: boundAnswers.map(({ task, scope }) => ({ documentId: task.document.id, pageNumber: task.pageNumber, scope })), answerExtractionMode: options.questionsOnly ? 'none' : options.auditOnly ? 'local-native-key-no-vision-fallback' : 'native-key-or-vision', productionWrites: false, remoteImageUploads: false };
   await writeJson(path.join(options.output, 'run-manifest.json'), manifest);
   await mkdir(path.join(options.output, 'sources'), { recursive: true });
   for (const filename of manifest.sourceSnapshots.files) await copyFile(path.join(options.input, filename), path.join(options.output, 'sources', filename));
+  if (goldBytes) await writeFile(path.join(options.output, 'sources', 'smiles-graph-gold.json'), goldBytes);
   if (options.plan) {
     process.stdout.write(JSON.stringify({ plan: true, fingerprint, questionPages: tasks.length, answerPages: boundAnswers.length, output: options.output }) + '\n');
     return;
@@ -358,6 +383,7 @@ async function main(): Promise<void> {
   }
   const nitrogenResult = finalized.find((result) => result.documentId === NITROGEN_ID);
   const pilot = await pilotGraphScore(options.input, nitrogenResult?.drafts ?? [], nitrogenResult?.rows ?? []);
+  const exactGraphs = graphGold && goldBytes ? await scoreChemistryGraphs({ ...graphGold, fields: graphGold.fields.filter((field) => tasks.some((task) => task.document.id === field.documentId && task.pageNumber === field.page)) }, ChemistryGraphResultSchema.parse(finalized), { origin: questionReceipts.some((receipt) => receipt.cached) ? 'fresh-and-reused-checkpoints' : 'fresh-model-recognition', goldHash: hash(goldBytes) }) : null;
   const rawDrafts = questionReceipts.flatMap((receipt) => receipt.extraction?.questions ?? []);
   const candidates = enumerateSmilesCandidates(rawDrafts);
   const validations = await Promise.all(candidates.map((candidate) => validateSmilesGraph(candidate.smiles)));
@@ -369,7 +395,7 @@ async function main(): Promise<void> {
   const receipts = [...questionReceipts, ...answerReceipts];
   const errors = [...receipts.filter((receipt) => receipt.error).map((receipt) => ({ documentId: receipt.documentId, page: receipt.pageNumber, phase: receipt.phase, error: receipt.error })), ...finalized.flatMap((result) => result.errors.map((error) => ({ documentId: result.documentId, phase: 'materialization', error })))];
   const tokenUsage = receipts.reduce((total, receipt) => ({ promptTokens: total.promptTokens + (receipt.usage?.promptTokens ?? 0), completionTokens: total.completionTokens + (receipt.usage?.completionTokens ?? 0), totalTokens: total.totalTokens + (receipt.usage?.totalTokens ?? 0), callCount: total.callCount + (receipt.usage?.callCount ?? 0) }), { promptTokens: 0, completionTokens: 0, totalTokens: 0, callCount: 0 });
-  const summary = { fingerprint, mode: manifest.mode, model: context.model, startedAt, finishedAt: new Date().toISOString(), plannedQuestionPages: tasks.length, completedQuestionPages: questionReceipts.filter((receipt) => receipt.status === 'complete').length, reusedCheckpoints: receipts.filter((receipt) => receipt.cached).length, materializedQuestions: finalized.reduce((sum, result) => sum + result.rows.length, 0), errors, tokenUsage, candidateSmiles: { total: candidates.length, parseValid: validations.filter((validation) => validation.ok).length, invalid: validations.filter((validation) => !validation.ok).length, graphAccuracyClaim: false }, sourcePreservation: { detectedVisuals: visualsDetected, preservedVisuals: preserved.filter((visual) => visual.cropUrl).length, questionsWithSourceCrop: finalized.flatMap((result) => result.rows).filter((row) => row.isQuestionImage || row.isOptionImage).length, ownershipAndCompletenessRequireReview: true }, answerSolutionContamination: { testedPages: testedContaminationPages, totalTargetPages: 13, baselineQuestionsOnTestedPages: baselineOrganic.filter((question) => testedContaminationPages.includes(question.sourceRegion.page)).length, currentQuestionsOnTestedPages: contaminatedPages.reduce((sum, receipt) => sum + (receipt.drafts?.length ?? 0), 0), entireRangeTested: testedContaminationPages.length === 13 }, pilot };
+  const summary = { fingerprint, mode: manifest.mode, model: context.model, startedAt, finishedAt: new Date().toISOString(), plannedQuestionPages: tasks.length, completedQuestionPages: questionReceipts.filter((receipt) => receipt.status === 'complete').length, reusedCheckpoints: receipts.filter((receipt) => receipt.cached).length, materializedQuestions: finalized.reduce((sum, result) => sum + result.rows.length, 0), errors, tokenUsage, candidateSmiles: { total: candidates.length, parseValid: validations.filter((validation) => validation.ok).length, invalid: validations.filter((validation) => !validation.ok).length, graphAccuracyClaim: false }, exactGraphs, sourcePreservation: { detectedVisuals: visualsDetected, preservedVisuals: preserved.filter((visual) => visual.cropUrl).length, questionsWithSourceCrop: finalized.flatMap((result) => result.rows).filter((row) => row.isQuestionImage || row.isOptionImage).length, ownershipAndCompletenessRequireReview: true }, answerSolutionContamination: { testedPages: testedContaminationPages, totalTargetPages: 13, baselineQuestionsOnTestedPages: baselineOrganic.filter((question) => testedContaminationPages.includes(question.sourceRegion.page)).length, currentQuestionsOnTestedPages: contaminatedPages.reduce((sum, receipt) => sum + (receipt.drafts?.length ?? 0), 0), entireRangeTested: testedContaminationPages.length === 13 }, pilot };
   await writeJson(path.join(options.output, 'page-receipts.json'), receipts);
   await writeJson(path.join(options.output, 'finalized-questions.json'), finalized);
   await writeJson(path.join(options.output, 'benchmark-scorecard.json'), summary);

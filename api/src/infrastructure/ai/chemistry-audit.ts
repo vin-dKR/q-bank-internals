@@ -3,11 +3,10 @@ import initRDKit, { type MainModule } from '@rdkit/rdkit';
 import { z } from 'zod';
 
 const MOLECULAR_TEXT_FIELDS = new Set([
-  'stem', 'question_text', 'questionText', 'passage', 'answer', 'explanation', 'body',
+  'stem', 'question_text', 'questionText', 'passage', 'answer', 'explanation', 'body', 'text',
 ]);
 const MAX_SMILES_LENGTH = 4096;
 const SMILES_TAG_PATTERN = /<smiles>([\s\S]*?)<\/smiles>/g;
-export const CHEMISTRY_STRUCTURE_AUDIT_PROMPT = `Compare every candidate molecule against its identified source image. Transcribe the drawing; do not choose the chemically plausible answer. Trace and count EACH ring's vertices, fused bonds, heteroatoms and carbonyl positions. Check substituent distances, charges, isotope and stereochemistry. Salts may contain disconnected components. Return only {"patches":[{"id":"exact candidate id","smiles":"raw SMILES"}]} containing EVERY supplied candidate ID in the same order, including unchanged values. Never return question JSON or change prose, option ownership, counts, or answers. If a structure is unreadable, return its existing token; the original image remains authoritative and human review is required.\nCANDIDATES:\n`;
 
 export type SmilesCandidate = {
   id: string;
@@ -20,7 +19,8 @@ export type SmilesCandidate = {
 
 export type ChemistryDiagnostic = {
   code: 'invalid_response' | 'candidate_ledger_mismatch' | 'invalid_smiles' |
-    'ambiguous_structure' | 'engine_unavailable' | 'graph_diagnostics_unavailable';
+    'ambiguous_structure' | 'engine_unavailable' | 'graph_diagnostics_unavailable' |
+    'invalid_topology' | 'source_coverage_mismatch';
   message: string;
   candidateId?: string;
 };
@@ -51,31 +51,6 @@ export const ChemistryAuditResponseSchema = z.object({
   }).strict()),
 }).strict();
 
-/** Used directly as an OpenAI strict response format, rather than accepting arbitrary JSON. */
-export const CHEMISTRY_AUDIT_RESPONSE_FORMAT = {
-  type: 'json_schema' as const,
-  json_schema: {
-    name: 'chemistry_structure_patches',
-    strict: true,
-    schema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['patches'],
-      properties: {
-        patches: {
-          type: 'array',
-          items: {
-            type: 'object',
-            additionalProperties: false,
-            required: ['id', 'smiles'],
-            properties: { id: { type: 'string' }, smiles: { type: 'string' } },
-          },
-        },
-      },
-    },
-  },
-};
-
 type PathPart = string | number;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -104,7 +79,7 @@ function visitMolecularText(
   if (!isRecord(value)) return;
   for (const [key, child] of Object.entries(value)) {
     const childPath = [...path, key];
-    if (typeof child === 'string' && MOLECULAR_TEXT_FIELDS.has(key)) {
+    if (typeof child === 'string' && (MOLECULAR_TEXT_FIELDS.has(key) || path.at(-1) === 'answers' || path.at(-1) === 'solutions')) {
       visit(child, fieldPath(childPath));
     } else if (typeof child !== 'string') {
       visitMolecularText(child, visit, childPath);
@@ -127,6 +102,14 @@ export function enumerateSmilesCandidates(value: unknown): SmilesCandidate[] {
     }
   });
   return candidates;
+}
+
+export function enumerateMolecularFields(value: unknown): Array<{ fieldPath: string; fieldText: string; moleculeCount: number }> {
+  const fields: Array<{ fieldPath: string; fieldText: string; moleculeCount: number }> = [];
+  visitMolecularText(value, (text, path) => {
+    fields.push({ fieldPath: path, fieldText: text, moleculeCount: Array.from(text.matchAll(SMILES_TAG_PATTERN)).length });
+  });
+  return fields;
 }
 
 const RdkitGraphSchema = z.object({
@@ -186,6 +169,18 @@ export async function validateSmilesGraph(smiles: string): Promise<SmilesValidat
   if (!smiles || smiles.length > MAX_SMILES_LENGTH || /[\s<>]/.test(smiles)) {
     return invalidSmiles('Expected one raw SMILES token, without markup, names, whitespace, or reaction arrows.');
   }
+  return validateMolecularInput(smiles);
+}
+
+/** The independently transcribed topology adapter emits V3000, never executable input. */
+export async function validateMolfileGraph(molfile: string): Promise<SmilesValidation> {
+  if (molfile.length > 262144 || !molfile.includes('M  V30 BEGIN CTAB') || !molfile.endsWith('M  END\n')) {
+    return { ok: false, diagnostic: { code: 'invalid_topology', message: 'Expected a bounded complete V3000 molecular graph.' } };
+  }
+  return validateMolecularInput(molfile);
+}
+
+async function validateMolecularInput(input: string): Promise<SmilesValidation> {
   let engine: MainModule;
   try {
     engine = await loadRdkit();
@@ -200,7 +195,9 @@ export async function validateSmilesGraph(smiles: string): Promise<SmilesValidat
   }
   let molecule: ReturnType<MainModule['get_mol']>;
   try {
-    molecule = engine.get_mol(smiles);
+    // Ordinary explicit H atoms in a Molfile and implicit H in SMILES denote the same molecule.
+    // Normalizing them retains isotope-labeled hydrogen and stereochemical information.
+    molecule = engine.get_mol(input, JSON.stringify({ removeHs: true }));
   } catch (error) {
     return invalidSmiles(`RDKit rejected the molecular input: ${error instanceof Error ? error.message : 'parser error'}`);
   }
@@ -220,6 +217,9 @@ export async function validateSmilesGraph(smiles: string): Promise<SmilesValidat
         ok: false,
         diagnostic: { code: 'ambiguous_structure', message: 'The graph contains unspecified atoms; preserve the source image for review.' },
       };
+    }
+    if (graph.extensions?.some((extension) => extension.name === 'rdkitQueries')) {
+      return { ok: false, diagnostic: { code: 'ambiguous_structure', message: 'The input describes a substructure query rather than a complete molecular graph.' } };
     }
     const representation = graph.extensions?.find((extension) => extension.name === 'rdkitRepresentation');
     const canonicalSmiles = molecule.get_smiles();
@@ -287,6 +287,13 @@ function replaceMolecularStrings(
   });
 }
 
+/** Callers must first validate the complete ownership ledger and each changed molecular graph. */
+export function replaceOwnedSmilesTokens<T>(value: T, replacements: Map<string, string>): T {
+  // The recursive rebuild changes only existing SMILES strings; object keys and all other values
+  // preserve the original runtime shape, so the input generic remains valid.
+  return replaceMolecularStrings(value, replacements) as T;
+}
+
 export type ChemistryPatchResult<T> = {
   ok: boolean;
   value: T;
@@ -333,6 +340,6 @@ export async function applySmilesPatches<T>(
   }
   if (diagnostics.length > 0) return { ok: false, value, applied: 0, diagnostics };
   // Reconstruction preserves the input shape and every non-SMILES value; only strings are edited.
-  const patched = replaceMolecularStrings(value, replacements) as T;
+  const patched = replaceOwnedSmilesTokens(value, replacements);
   return { ok: true, value: patched, applied, diagnostics: [] };
 }

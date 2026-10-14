@@ -15,7 +15,7 @@ function reply(content: unknown): FakeResponse {
   };
 }
 
-function reExtractor(create: () => Promise<FakeResponse>): OpenAiQuestionReExtractor {
+function reExtractor(create: (request?: unknown) => Promise<FakeResponse>): OpenAiQuestionReExtractor {
   const extractor = new OpenAiQuestionReExtractor('test-key', 'test-model', async () => ({}));
   Object.assign(extractor, { client: { chat: { completions: { create } } } });
   return extractor;
@@ -25,6 +25,51 @@ const matrixColumns = [
   { title: 'Column I', entries: [{ label: 'a', body: 'First' }, { label: 'b', body: 'Second' }] },
   { title: 'Column II', entries: [{ label: 'i', body: 'One' }, { label: 'ii', body: 'Two' }] },
 ];
+
+function sourceRing(id: string, size = 5): unknown {
+  return {
+    id, readability: 'clear',
+    atoms: Array.from({ length: size }, (_, index) => ({ id: index + 1, element: 'C', x: 500 + 200 * Math.cos(2 * Math.PI * index / size), y: 500 + 200 * Math.sin(2 * Math.PI * index / size), charge: 0, isotope: 0, hydrogens: null })),
+    bonds: Array.from({ length: size }, (_, index) => ({ begin: index + 1, end: ((index + 1) % size) + 1, order: 1, stereo: 'none' })),
+    rings: [Array.from({ length: size }, (_, index) => index + 1)], notes: [],
+  };
+}
+
+void test('interactive molecular re-extraction derives SMILES from independent topology while preserving other fields', async () => {
+  const responses = [
+    { stem: 'Identify <smiles>C1CCCCC1</smiles>.', options: [{ label: 'F', body: 'A product' }], answer: 'F' },
+    { molecules: [sourceRing('/stem/smiles/0')], source_counts: [{ field_path: '/stem', observed_molecule_count: 1 }] },
+  ];
+  const requests: unknown[] = [];
+  const extractor = reExtractor(async (request) => { requests.push(request); return reply(responses.shift()); });
+  const result = await extractor.reExtract({ png: Buffer.from('page'), questionNumber: 3, printedLabel: 'B-3', stemHint: 'Identify', questionType: 'single_correct' });
+  assert.equal(result.stem, 'Identify <smiles>C1CCCC1</smiles>.');
+  assert.equal(result.answer, 'F');
+  assert.deepEqual(result.options.map(({ label, body }) => ({ label, body })), [{ label: 'F', body: 'A product' }]);
+  assert.equal(result.molecularAudits?.[0]?.status, 'corrected');
+  assert.doesNotMatch(JSON.stringify(requests[1]), /C1CCCCC1/);
+});
+
+void test('legacy batch re-extraction keeps molecular audits only for the selected printed identity', async () => {
+  const responses = [
+    { questions: [
+      { question_number: 'A-3', question_text: 'First <smiles>C1CCCC1</smiles>.', options: [] },
+      { question_number: 'B-3', question_text: 'Target <smiles>C1CCCCC1</smiles>.', options: [] },
+    ] },
+    { molecules: [sourceRing('/questions/0/question_text/smiles/0', 6), sourceRing('/questions/1/question_text/smiles/0')], source_counts: [
+      { field_path: '/questions/0/question_text', observed_molecule_count: 1 },
+      { field_path: '/questions/1/question_text', observed_molecule_count: 1 },
+    ] },
+  ];
+  const extractor = reExtractor(async () => reply(responses.shift()));
+  const result = await extractor.reExtract({ png: Buffer.from('page'), questionNumber: 3, printedLabel: 'B-3', stemHint: 'Target', questionType: 'subjective' });
+  assert.equal(result.stem, 'Target <smiles>C1CCCC1</smiles>.');
+  assert.equal(result.molecularAudits?.length, 1);
+  const audit = result.molecularAudits[0];
+  assert.ok(audit);
+  assert.equal(audit.candidateId, '/questions/1/question_text/smiles/0');
+  assert.equal(audit.fieldPath, '/stem');
+});
 
 void test('a full printed label selects B-3 rather than neighboring A-3 in a legacy batch reply', async () => {
   const extractor = reExtractor(async () => reply({ questions: [
@@ -118,6 +163,8 @@ void test('a failed optional chemistry audit preserves an otherwise valid primar
   assert.equal(calls, 2);
   assert.equal(result.stem, 'Identify <smiles>c1ccccc1</smiles>.');
   assert.equal(result.answer, 'A');
+  assert.equal(result.molecularAudits?.[0]?.status, 'unresolved');
+  assert.match(result.chemistryIssues?.[0] ?? '', /did not complete/);
 });
 
 void test('a blank matrix-key retry cannot discard a usable first table read', async () => {

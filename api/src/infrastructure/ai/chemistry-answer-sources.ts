@@ -79,7 +79,7 @@ function ownedSourceRegions(label: string, section: string | null, entry: Answer
 export async function attachChemistryAnswerSources(sheets: AnswerSheet[], document: Document, page: PageImage): Promise<AnswerSheet[]> {
   const claims = sheets.flatMap((sheet) => Object.entries(sheet.entries).flatMap(([printedLabel, entry]) => {
     const label = normalizePrintedQuestionLabel(printedLabel);
-    if (!label || (enumerateSmilesCandidates({ answer: entry.answer, explanation: entry.explanation }).length === 0 && !Object.keys(entry.sourceVisualKinds ?? {}).length)) return [];
+    if (!label || (enumerateSmilesCandidates({ answer: entry.answer, explanation: entry.explanation }).length === 0 && !Object.keys(entry.sourceVisualKinds ?? {}).length && !Object.values(entry.sourceMoleculeCounts ?? {}).some((count) => count !== undefined && count > 0))) return [];
     return [{ key: `${sectionKey(sheet.sectionName)}:${label}`, regions: ownedSourceRegions(label, sheet.sectionName, entry, page) }];
   }));
   const enriched: AnswerSheet[] = [];
@@ -89,7 +89,8 @@ export async function attachChemistryAnswerSources(sheets: AnswerSheet[], docume
       const fields = ([['answer', entry.answer], ['explanation', entry.explanation]] as const).flatMap(([field, text]) => {
         const candidates = enumerateSmilesCandidates({ stem: text });
         const kind = entry.sourceVisualKinds?.[field];
-        return candidates.length > 0 || kind ? [{ field, candidates, kind: kind ?? 'reaction' }] : [];
+        const moleculeCount = entry.sourceMoleculeCounts?.[field];
+        return candidates.length > 0 || kind || (moleculeCount ?? 0) > 0 ? [{ field, candidates, kind: kind ?? 'reaction', moleculeCount }] : [];
       });
       if (fields.length === 0) { entries[printedLabel] = entry; continue; }
       const label = normalizePrintedQuestionLabel(printedLabel);
@@ -101,12 +102,12 @@ export async function attachChemistryAnswerSources(sheets: AnswerSheet[], docume
         continue;
       }
       const visuals: ChemistryExtraction['visuals'] = [];
-      for (const { field, candidates, kind } of fields) {
+      for (const { field, candidates, kind, moleculeCount } of fields) {
         const validation = await Promise.all(candidates.map((candidate) => validateSmilesGraph(candidate.smiles)));
         const boxes = regions.map(([left, top, right, bottom]): [number, number, number, number] => [left, top, right - left, bottom - top]);
         const bbox = boxes[0];
         if (!bbox) continue;
-        visuals.push({ id: `${field}:${document.id}:${String(page.pageNumber)}:${key}`, field, optionLabel: null, kind, bbox, ...(boxes.length > 1 ? { regions: boxes } : {}), candidateSmiles: candidates.map((candidate) => candidate.smiles), graphValid: candidates.length ? validation.every((result) => result.ok) : null, cropUrl: null, sourceDocumentId: document.id, sourcePage: page.pageNumber });
+        visuals.push({ id: `${field}:${document.id}:${String(page.pageNumber)}:${key}`, field, optionLabel: null, kind, bbox, ...(boxes.length > 1 ? { regions: boxes } : {}), candidateSmiles: candidates.map((candidate) => candidate.smiles), graphValid: candidates.length ? validation.every((result) => result.ok) : null, ...(moleculeCount !== undefined ? { moleculeCount } : {}), cropUrl: null, sourceDocumentId: document.id, sourcePage: page.pageNumber });
       }
       entries[printedLabel] = { ...entry, chemistryVisuals: visuals };
     }

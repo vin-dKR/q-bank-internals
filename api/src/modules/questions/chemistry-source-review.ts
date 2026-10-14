@@ -21,7 +21,17 @@ export function chemistryReviewPatch(
     }
   }
   const chemistry = patch.chemistry === undefined ? current.chemistry : patch.chemistry;
-  if (!chemistry || chemistry.status !== 'source_preserved') return {};
+  if (!chemistry || chemistry.status === 'needs_review') return {};
+  if (chemistry.representation === 'transcription' && chemistry.status !== 'transcription_reviewed') {
+    if (patch.chemistry) throw errors.chemistryReviewInvalid('Review the extracted transcription before accepting its molecular structures.');
+    return { chemistry: { ...chemistry, status: 'needs_review' } };
+  }
+  if (chemistry.representation === 'transcription' && patch.chemistry === undefined) {
+    const fields = ['stem', 'options', 'answer', 'explanation', 'match', 'isQuestionImage', 'questionImage', 'isOptionImage', 'optionImages', 'answerImages', 'explanationImages'] as const;
+    if (fields.some((field) => patch[field] !== undefined && !isDeepStrictEqual(patch[field], current[field]))) {
+      return { chemistry: { ...chemistry, status: 'needs_review' } };
+    }
+  }
   const issues = chemistrySourceReviewIssues({
     chemistry,
     stem: patch.stem ?? current.stem,
@@ -38,7 +48,7 @@ export function chemistryReviewPatch(
     passageId: current.passageId,
   }, passage);
   if (issues.length === 0) return {};
-  if (patch.chemistry?.status === 'source_preserved') throw errors.chemistryReviewInvalid(issues.join(' '));
+  if (patch.chemistry && patch.chemistry.status !== 'needs_review') throw errors.chemistryReviewInvalid(issues.join(' '));
   // Ordinary edits remain possible, but changed ownership invalidates the earlier review.
   return { chemistry: { ...chemistry, status: 'needs_review' } };
 }

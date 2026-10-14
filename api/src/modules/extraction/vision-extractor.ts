@@ -93,8 +93,11 @@ export type AnswerEntry = {
   /** Full numbered source blocks, in normalized left/top/right/bottom coordinates. */
   sourceRegions?: Array<[number, number, number, number]>;
   sourceVisualKinds?: Partial<Record<'answer' | 'explanation', 'molecule' | 'reaction' | 'figure'>>;
+  /** Drawn species counted independently, including fields whose primary SMILES were omitted. */
+  sourceMoleculeCounts?: ChemistryExtraction['sourceMoleculeCounts'];
   chemistryVisuals?: ChemistryExtraction['visuals'];
   chemistryIssues?: string[];
+  molecularAudits?: NonNullable<ChemistryExtraction['molecularAudits']>;
   unresolvedSourceFields?: Array<'answer' | 'explanation'>;
   imageCrops?: ImageCrop[];
 };
@@ -148,21 +151,41 @@ export function mergeAnswerEntries(
       : next.includes(prior)
         ? next
         : `${prior}\n\n${next}`;
+  // Metadata must follow the explanation fragment that survives prose deduplication. Keeping both
+  // source ledgers for a repeated or superseded block would count every drawn molecule twice.
+  const explanationSources = !prior
+    ? !next && (existing.chemistryVisuals?.some((visual) => visual.field === 'explanation') || existing.unresolvedSourceFields?.includes('explanation'))
+      ? [existing]
+      : [incoming]
+    : !next || prior === next || prior.includes(next)
+      ? [existing]
+      : next.includes(prior)
+        ? [incoming]
+        : [existing, incoming];
   const answerVisuals = chosen.chemistryVisuals?.filter((visual) => visual.field === 'answer') ?? [];
-  const explanationVisuals = [
-    ...(existing.chemistryVisuals?.filter((visual) => visual.field === 'explanation') ?? []),
-    ...(incoming.chemistryVisuals?.filter((visual) => visual.field === 'explanation') ?? []),
-  ];
+  const explanationVisuals = explanationSources.flatMap((entry) => entry.chemistryVisuals?.filter((visual) => visual.field === 'explanation') ?? []);
   const chemistryVisuals = [...new Map([...answerVisuals, ...explanationVisuals].map((visual) => [visual.id, visual])).values()];
   const sourceRegions = [...new Map([...(existing.sourceRegions ?? []), ...(incoming.sourceRegions ?? [])].map((box) => [box.join(':'), box])).values()];
   const chemistryIssues = [...new Set([...(existing.chemistryIssues ?? []), ...(incoming.chemistryIssues ?? [])])];
+  const molecularAudits = [
+    ...(chosen.molecularAudits?.filter((audit) => audit.fieldPath.endsWith('/answer')) ?? []),
+    ...explanationSources.flatMap((entry) => entry.molecularAudits?.filter((audit) => !audit.fieldPath.endsWith('/answer')) ?? []),
+  ];
   const selectedUrls = new Set(chemistryVisuals.flatMap((visual) => visual.cropUrl ? [visual.cropUrl] : []));
   const imageCrops = [...(existing.imageCrops ?? []), ...(incoming.imageCrops ?? [])].filter((crop) => selectedUrls.has(crop.url));
-  const explanationKind = incoming.sourceVisualKinds?.explanation ?? existing.sourceVisualKinds?.explanation;
+  const explanationKind = [...explanationSources].reverse().find((entry) => entry.sourceVisualKinds?.explanation)?.sourceVisualKinds?.explanation;
+  const explanationCounts = explanationSources.flatMap((entry) => entry.sourceMoleculeCounts?.explanation !== undefined ? [entry.sourceMoleculeCounts.explanation] : []);
+  const overlappingCounts = [existing, incoming].flatMap((entry) => entry.sourceMoleculeCounts?.explanation !== undefined ? [entry.sourceMoleculeCounts.explanation] : []);
+  const explanationCount = prior && next && (prior === next || prior.includes(next) || next.includes(prior)) && overlappingCounts.length
+    ? Math.max(...overlappingCounts)
+    : explanationCounts.length ? explanationCounts.reduce((sum, count) => sum + count, 0) : undefined;
+  const sourceMoleculeCounts = {
+    ...(chosen.sourceMoleculeCounts?.answer !== undefined ? { answer: chosen.sourceMoleculeCounts.answer } : {}),
+    ...(explanationCount !== undefined ? { explanation: explanationCount } : {}),
+  };
   const unresolvedSourceFields = [...new Set([
     ...(chosen.unresolvedSourceFields?.filter((field) => field === 'answer') ?? []),
-    ...(existing.unresolvedSourceFields?.filter((field) => field === 'explanation') ?? []),
-    ...(incoming.unresolvedSourceFields?.filter((field) => field === 'explanation') ?? []),
+    ...explanationSources.flatMap((entry) => entry.unresolvedSourceFields?.filter((field) => field === 'explanation') ?? []),
   ])];
   const sourceVisualKinds = {
     ...(chosen.sourceVisualKinds?.answer ? { answer: chosen.sourceVisualKinds.answer } : {}),
@@ -176,8 +199,10 @@ export function mergeAnswerEntries(
     ...(sourceRegions.length ? { sourceRegions } : {}),
     ...(chemistryVisuals.length ? { chemistryVisuals } : {}),
     ...(chemistryIssues.length ? { chemistryIssues } : {}),
+    ...(molecularAudits.length ? { molecularAudits } : {}),
     ...(imageCrops.length ? { imageCrops } : {}),
     ...(Object.keys(sourceVisualKinds).length ? { sourceVisualKinds } : {}),
+    ...(Object.keys(sourceMoleculeCounts).length ? { sourceMoleculeCounts } : {}),
     ...(unresolvedSourceFields.length ? { unresolvedSourceFields } : {}),
   };
 }
