@@ -865,6 +865,64 @@ export class QuestionsService {
     return { pages: results };
   }
 
+  /**
+   * Extraction-time counterpart to Verify's “Detect figures across all pages”. It deliberately
+   * runs only after question rows exist, because matching needs their printed-number/source ledger.
+   * A failed figure pass is non-fatal to the caller: text extraction has already completed.
+   */
+  async detectAndAttachFigures(documentId: string, pagesTotal: number): Promise<void> {
+    if (pagesTotal < 1) return;
+    const questions = await this.questions.findByDocument(documentId);
+    const source = await this.resolveFigureSource(documentId);
+    for (let page = 1; page <= pagesTotal; page += 1) {
+      const detected = await this.detectOnPage(documentId, page, questions, source);
+      if (detected.figures.length === 0) continue;
+      const png = await this.pages.renderPage(documentId, page);
+      for (const figure of detected.figures) {
+        // A passage crop needs the passage repository update path. Keep it in Verify for now rather
+        // than incorrectly duplicating a shared image on each member question.
+        if (figure.target === 'passage') continue;
+        const question = questions.find((candidate) => candidate.id === figure.questionId);
+        if (!question) continue;
+        const bytes = await sharp(png).extract({
+          left: Math.max(0, Math.round(figure.bbox[0])),
+          top: Math.max(0, Math.round(figure.bbox[1])),
+          width: Math.max(1, Math.round(figure.bbox[2])),
+          height: Math.max(1, Math.round(figure.bbox[3])),
+        }).png().toBuffer();
+        const url = await this.images.upload(
+          `extraction/${documentId}/figures/page-${String(page)}-${figure.questionId}-${String(Date.now())}.png`,
+          bytes,
+          'image/png',
+        );
+        const crop = {
+          url,
+          type: figure.target,
+          optionIndex: figure.target === 'option' ? figure.optionIndex : 0,
+          sourcePage: page,
+          nx: figure.bbox[0] / detected.imageWidth,
+          ny: figure.bbox[1] / detected.imageHeight,
+          nw: figure.bbox[2] / detected.imageWidth,
+          nh: figure.bbox[3] / detected.imageHeight,
+        };
+        if (figure.target === 'option') {
+          const optionImages = [...question.optionImages];
+          while (optionImages.length <= figure.optionIndex) optionImages.push('');
+          if (optionImages[figure.optionIndex]) continue;
+          optionImages[figure.optionIndex] = url;
+          await this.questions.update(question.id, { isOptionImage: true, optionImages, imageCrops: [...question.imageCrops, crop] });
+        } else if (figure.target === 'answer') {
+          await this.questions.update(question.id, { answerImages: [...question.answerImages, url], imageCrops: [...question.imageCrops, crop] });
+        } else if (figure.target === 'solution') {
+          await this.questions.update(question.id, { explanationImages: [...question.explanationImages, url], imageCrops: [...question.imageCrops, crop] });
+        } else {
+          if (question.questionImage) continue;
+          await this.questions.update(question.id, { isQuestionImage: true, questionImage: url, imageCrops: [...question.imageCrops, crop] });
+        }
+      }
+    }
+  }
+
   /** Resolve and validate an optional sibling PDF before it can be rendered for figure detection. */
   private async resolveFigureSource(
     documentId: string,

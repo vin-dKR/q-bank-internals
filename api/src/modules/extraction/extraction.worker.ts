@@ -30,6 +30,7 @@ import { materializePassages } from './group-comprehension.js';
 import { mergeAnswers } from './merge-answers.js';
 import { topicBindingForPage } from './topic-lookup.js';
 import type { ExtractionVisualsService } from './extraction-visuals.service.js';
+import type { QuestionsService } from '../questions/index.js';
 import { isChemistryDocument } from './chemistry-document.js';
 
 const OPTION_RE = /^\s*(?:\(\s*([^()]+?)\s*\)|([A-Za-z0-9]+)\s*[.)])\s*([\s\S]*)$/;
@@ -330,6 +331,7 @@ export class ExtractionWorker {
     private readonly pagesPerTask: number,
     private readonly pages: PagesService,
     private readonly visuals: ExtractionVisualsService | null = null,
+    private readonly questionService: QuestionsService | null = null,
   ) {}
 
   /**
@@ -357,14 +359,14 @@ export class ExtractionWorker {
     try {
       switch (payload.task ?? 'prepare') {
         case 'prepare':
-          await this.prepare(jobId, document, now);
+          await this.prepare(jobId, document, now, payload.detectFigures === true);
           return;
         case 'question-page':
           if (!payload.pageNumber) throw new Error('A question-page task is missing pageNumber.');
-          await this.extractQuestionPage(jobId, document, payload.pageNumber);
+          await this.extractQuestionPage(jobId, document, payload.pageNumber, payload.detectFigures === true);
           return;
         case 'finalize':
-          await this.finalize(jobId, document, now);
+          await this.finalize(jobId, document, now, payload.detectFigures === true);
           return;
       }
     } catch (error) {
@@ -374,7 +376,7 @@ export class ExtractionWorker {
     }
   }
 
-  private async prepare(jobId: string, document: Document, now: () => string): Promise<void> {
+  private async prepare(jobId: string, document: Document, now: () => string, detectFigures: boolean): Promise<void> {
     await this.documents.updateStatus(document.id, 'extracting');
     await this.jobs.update(jobId, { status: 'running', startedAt: now(), error: null, finishedAt: null });
     const pdf = await this.drive.downloadPdf(document.driveFileId);
@@ -384,8 +386,8 @@ export class ExtractionWorker {
     const nextPage = await this.firstMissingPage(jobId, pagesTotal);
     await this.queue.enqueue(
       nextPage === null
-        ? { jobId, documentId: document.id, task: 'finalize' }
-        : { jobId, documentId: document.id, task: 'question-page', pageNumber: nextPage },
+        ? { jobId, documentId: document.id, task: 'finalize', detectFigures }
+        : { jobId, documentId: document.id, task: 'question-page', pageNumber: nextPage, detectFigures },
     );
   }
 
@@ -393,6 +395,7 @@ export class ExtractionWorker {
     jobId: string,
     document: Document,
     pageNumber: number,
+    detectFigures: boolean,
   ): Promise<void> {
     const existing = await this.drafts.findQuestionPages(jobId);
     const completed = new Set(existing.map((draft) => draft.pageNumber));
@@ -441,13 +444,13 @@ export class ExtractionWorker {
     const nextPage = await this.firstMissingPage(jobId, job.pagesTotal);
     await this.queue.enqueue(
       nextPage === null
-        ? { jobId, documentId: document.id, task: 'finalize' }
-        : { jobId, documentId: document.id, task: 'question-page', pageNumber: nextPage },
+        ? { jobId, documentId: document.id, task: 'finalize', detectFigures }
+        : { jobId, documentId: document.id, task: 'question-page', pageNumber: nextPage, detectFigures },
     );
     logger.info({ jobId, documentId: document.id, pageNumber, pagesDone: progress.pagesDone }, 'Extraction page checkpointed');
   }
 
-  private async finalize(jobId: string, document: Document, now: () => string): Promise<void> {
+  private async finalize(jobId: string, document: Document, now: () => string, detectFigures = false): Promise<void> {
     const pageDrafts = await this.drafts.findQuestionPages(jobId);
     const drafts = pageDrafts.flatMap((page) => page.questions);
     // Answer/solution mapping is enrichment. Question text has already been durably checkpointed,
@@ -459,6 +462,13 @@ export class ExtractionWorker {
     const rows = grouped.map((draft) => toNewQuestion(document, draft, extraction));
     const count = await this.questions.replaceDocument(document.id, passages, rows);
     await this.documents.recordExtraction(document.id, { questionCount: count });
+    if (detectFigures && this.questionService) {
+      try {
+        await this.questionService.detectAndAttachFigures(document.id, (await this.jobs.findById(jobId))?.pagesTotal ?? 0);
+      } catch (error) {
+        logger.warn({ jobId, documentId: document.id, err: error instanceof Error ? error.message : String(error) }, 'Figure auto-attachment failed; text extraction remains complete');
+      }
+    }
     await this.jobs.update(jobId, {
       status: 'succeeded',
       questionsFound: count,

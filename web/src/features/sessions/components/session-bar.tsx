@@ -54,7 +54,7 @@ export function SessionBar({ compact = false }: { compact?: boolean } = {}): JSX
     const name = label.trim();
     if (!name) return;
     create.mutate(
-      { label: name, autoRun: false },
+      { label: name, autoRun: false, detectFigures: false },
       { onSuccess: (session) => { setCurrentId(session.id); cancel(); } },
     );
   };

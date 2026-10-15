@@ -17,6 +17,8 @@ type SessionRow = {
   subject: string | null;
   module: string | null;
   autoRun: boolean;
+  // Mongo rows created before this setting was introduced do not have the field yet.
+  detectFigures?: boolean;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -29,6 +31,7 @@ function toRecord(row: SessionRow): SessionRecord {
     subject: row.subject,
     module: row.module,
     autoRun: row.autoRun,
+    detectFigures: row.detectFigures ?? false,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -46,6 +49,7 @@ export class PrismaSessionRepository implements SessionRepository {
         subject: input.subject ?? null,
         module: input.module ?? null,
         autoRun: input.autoRun,
+        detectFigures: input.detectFigures,
       },
     });
     return toRecord(row);
@@ -86,6 +90,7 @@ export class PrismaSessionRepository implements SessionRepository {
         ...(patch.subject !== undefined ? { subject: patch.subject } : {}),
         ...(patch.module !== undefined ? { module: patch.module } : {}),
         ...(patch.autoRun !== undefined ? { autoRun: patch.autoRun } : {}),
+        ...(patch.detectFigures !== undefined ? { detectFigures: patch.detectFigures } : {}),
       },
     });
     return toRecord(row);
