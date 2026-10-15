@@ -1,6 +1,7 @@
 import type { Document, ExtractionJob } from '@ingest/contracts';
 import { errors } from '../../shared/errors/error-catalog.js';
 import type { DocumentRepository } from '../documents/index.js';
+import type { SessionRepository } from '../sessions/index.js';
 import type { UsageService } from '../usage/index.js';
 import type { ExtractionJobStore } from './extraction.repository.js';
 import type { ExtractionRunRegistry } from './extraction-run-registry.js';
@@ -15,6 +16,7 @@ import type { JobQueue } from './job-queue.js';
 export class ExtractionService {
   constructor(
     private readonly documents: DocumentRepository,
+    private readonly sessions: SessionRepository,
     private readonly jobs: ExtractionJobStore,
     private readonly queue: JobQueue,
     private readonly usage: UsageService,
@@ -31,7 +33,8 @@ export class ExtractionService {
 
     await this.documents.updateStatus(documentId, 'queued');
     const job = await this.jobs.create({ documentId, model: this.model });
-    await this.queue.enqueue({ jobId: job.id, documentId });
+    const session = document.sessionId ? await this.sessions.findById(document.sessionId) : null;
+    await this.queue.enqueue({ jobId: job.id, documentId, detectFigures: session?.detectFigures ?? false });
     return job;
   }
 
@@ -143,7 +146,8 @@ export class ExtractionService {
       finishedAt: null,
     });
     await this.documents.updateStatus(documentId, 'queued');
-    await this.queue.enqueue({ jobId: job.id, documentId, task: 'prepare' });
+    const session = document.sessionId ? await this.sessions.findById(document.sessionId) : null;
+    await this.queue.enqueue({ jobId: job.id, documentId, task: 'prepare', detectFigures: session?.detectFigures ?? false });
     return resumed;
   }
 

@@ -455,6 +455,7 @@ export function createContainer(): Container {
   const runRegistry = new ExtractionRunRegistry();
   const extractionService = new ExtractionService(
     documents,
+    sessions,
     jobs,
     jobQueue,
     usageService,
@@ -474,6 +475,7 @@ export function createContainer(): Container {
     env.EXTRACTION_PAGES_PER_TASK,
     pagesService,
     new ExtractionVisualsService(imageStore, imageCropper),
+    questionsService,
   );
   const ingestionService = new IngestionService(
     driveService,

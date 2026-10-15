@@ -8,6 +8,8 @@ export type ExtractionJobPayload = {
   documentId: string;
   task?: 'prepare' | 'question-page' | 'finalize';
   pageNumber?: number;
+  /** Snapshot of the session's optional figure-extraction setting for this run. */
+  detectFigures?: boolean;
 };
 
 /**

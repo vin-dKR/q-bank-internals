@@ -13,6 +13,7 @@ export type SessionRecord = {
   subject: string | null;
   module: Module | null;
   autoRun: boolean;
+  detectFigures: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -24,6 +25,7 @@ export type CreateSessionInput = {
   subject?: string | undefined;
   module?: Module | undefined;
   autoRun: boolean;
+  detectFigures: boolean;
 };
 
 /** Fields editable on an existing session. */
@@ -33,6 +35,7 @@ export type UpdateSessionInput = {
   subject?: string | undefined;
   module?: Module | undefined;
   autoRun?: boolean | undefined;
+  detectFigures?: boolean | undefined;
 };
 
 /**

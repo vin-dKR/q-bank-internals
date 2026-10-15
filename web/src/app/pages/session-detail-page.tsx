@@ -169,13 +169,27 @@ export function SessionDetailPage(): JSX.Element {
           )}
         </>
       ) : doc.kind === 'question' ? (
-        <FileExtractionControls
-          document={doc}
-          onRun={(target) => { runDoc.mutate(target.id); }}
-          onStop={stopExtraction}
-          runPending={runDoc.isPending}
-          stopPending={resetDoc.isPending}
-        />
+        <>
+          {doc.status === 'failed' || doc.status === 'paused' ? (
+            <label className="switch" title="Apply this session setting when this file is run again.">
+              <input
+                type="checkbox"
+                checked={s.detectFigures}
+                disabled={update.isPending || busy}
+                onChange={(e) => { update.mutate({ id: s.id, patch: { detectFigures: e.target.checked } }); }}
+              />
+              <span className="switch__track" />
+              <span>Extract figures</span>
+            </label>
+          ) : null}
+          <FileExtractionControls
+            document={doc}
+            onRun={(target) => { runDoc.mutate(target.id); }}
+            onStop={stopExtraction}
+            runPending={runDoc.isPending}
+            stopPending={resetDoc.isPending}
+          />
+        </>
       ) : null}
       {doc.kind === 'question' ? (
         <button
@@ -267,6 +281,21 @@ export function SessionDetailPage(): JSX.Element {
         </div>
 
         <div>
+          <label className="switch mb-2" title="After text extraction, find and attach figures from every page in each question PDF.">
+            <input
+              type="checkbox"
+              checked={s.detectFigures}
+              disabled={update.isPending || busy}
+              onChange={(e) => { update.mutate({ id: s.id, patch: { detectFigures: e.target.checked } }); }}
+            />
+            <span className="switch__track" />
+            <span>Extract images and figures</span>
+          </label>
+          <p className="muted text-sm">
+            {s.detectFigures
+              ? 'Figures will be detected and attached across every page after text extraction.'
+              : 'Text-only extraction. Turn on Extract figures to include detected figure crops.'}
+          </p>
           <button
             type="button"
             className="btn"

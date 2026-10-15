@@ -25,6 +25,7 @@ export class InMemorySessionRepository implements SessionRepository {
       subject: input.subject ?? null,
       module: input.module ?? null,
       autoRun: input.autoRun,
+      detectFigures: input.detectFigures,
       createdAt: now,
       updatedAt: now,
     };
@@ -66,6 +67,7 @@ export class InMemorySessionRepository implements SessionRepository {
       ...(patch.subject !== undefined ? { subject: patch.subject } : {}),
       ...(patch.module !== undefined ? { module: patch.module } : {}),
       ...(patch.autoRun !== undefined ? { autoRun: patch.autoRun } : {}),
+      ...(patch.detectFigures !== undefined ? { detectFigures: patch.detectFigures } : {}),
       updatedAt: new Date().toISOString(),
     };
     this.store.set(id, updated);

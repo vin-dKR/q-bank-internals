@@ -28,6 +28,8 @@ export const SessionSchema = z.object({
   module: ModuleSchema.nullable(),
   status: SessionStatusSchema,
   autoRun: z.boolean(), // enqueue extraction automatically as each file is uploaded
+  /** When enabled, extraction also finds, crops, and attaches figures from every question page. */
+  detectFigures: z.boolean(),
   documentCount: z.number().int().nonnegative(),
   extractedCount: z.number().int().nonnegative(),
   createdAt: z.string().datetime(),
@@ -46,6 +48,7 @@ export const CreateSessionSchema = z.object({
   subject: z.string().min(1).optional(),
   module: ModuleSchema.optional(),
   autoRun: z.boolean().default(false),
+  detectFigures: z.boolean().default(false),
 });
 export type CreateSession = z.infer<typeof CreateSessionSchema>;
 
@@ -57,6 +60,7 @@ export const UpdateSessionSchema = z
     subject: z.string().min(1),
     module: ModuleSchema,
     autoRun: z.boolean(),
+    detectFigures: z.boolean(),
   })
   .partial();
 export type UpdateSession = z.infer<typeof UpdateSessionSchema>;

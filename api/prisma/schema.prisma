@@ -105,6 +105,7 @@ model Session {
   subject   String?
   module    String?
   autoRun   Boolean    @default(false)
+  detectFigures Boolean @default(false)
   documents Document[]
   // Soft-delete tombstone: set when the operator removes the session so it hides from listings but
   // its documents + published questions survive and can be restored by editing a published question.

@@ -95,6 +95,7 @@ export class SessionsService {
       subject: input.subject,
       module: input.module,
       autoRun: input.autoRun,
+      detectFigures: input.detectFigures,
     });
     return this.enrich(record);
   }
@@ -190,6 +191,7 @@ export class SessionsService {
       subject: record.subject,
       module: record.module,
       autoRun: record.autoRun,
+      detectFigures: record.detectFigures,
       status: deriveSessionStatus(statuses),
       documentCount: statuses.length,
       extractedCount: statuses.filter((status) => EXTRACTED_STATUSES.has(status)).length,
